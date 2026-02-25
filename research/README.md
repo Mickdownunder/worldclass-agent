@@ -23,6 +23,11 @@ Autonomous multi-day research projects. Each project lives under `research/<proj
 - **research-cycle** — Run one phase of the cycle (explore→focus→connect→verify→synthesize→done). Call repeatedly for multi-day research.
 - **research-cross-domain** — Index all findings with embeddings; find high-similarity pairs across projects; optionally notify.
 
+## Feedback
+
+- **Telegram:** `/research-feedback <project_id> <dig_deeper|wrong|excellent|ignore> [comment]` or `redirect "new question"`.
+- **UI:** `POST /api/research/feedback` with body `{ project_id, type, comment? }`. Feedback is appended to `research/<id>/feedback.jsonl`. Use type `redirect` to add a new question and set phase back to focus.
+
 ## Usage (via job engine)
 
 ```bash

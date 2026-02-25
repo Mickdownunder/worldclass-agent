@@ -47,14 +47,14 @@ Ziel: Das Operator-System zu einem autonomen, mehrtägigen Forschungs-System aus
 
 ---
 
-## Phase 4 — Feedback & Lernschleife (Woche 4–5)
+## Phase 4 — Feedback & Lernschleife (Woche 4–5) ✅
 
 **Ziel:** Vom Nutzer lernen (Telegram + UI).
 
-- [ ] Telegram: "Dig deeper on X", "This is wrong", "Excellent", "Ignore Y"
-- [ ] UI: Per-Finding-Bewertung, Kommentare, Research-Redirect
-- [ ] Feedback → Memory → Playbook-Updates
-- [ ] Research-Redirect: neue Frage im laufenden Projekt
+- [x] Telegram: `/research-feedback <project_id> <dig_deeper|wrong|excellent|ignore> [comment]` und `redirect "question"`
+- [x] UI: `POST /api/research/feedback` (project_id, type, comment)
+- [x] Feedback gespeichert in `research/<id>/feedback.jsonl`
+- [x] Research-Redirect: type=redirect fügt Frage zu questions.json hinzu und setzt phase=focus
 
 **Deliverable:** Nutzerfeedback verbessert Playbooks und zukünftige Recherchen.
 

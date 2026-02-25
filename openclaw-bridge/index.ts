@@ -408,4 +408,29 @@ export default function (api: any) {
       return { text: "Queue acknowledged, skipped." };
     },
   });
+
+  api.registerCommand({
+    name: "research-feedback",
+    description: "Send feedback for a research project. Usage: /research-feedback <project_id> <dig_deeper|wrong|excellent|ignore> [comment]. Or: /research-feedback <project_id> redirect \"new question\"",
+    acceptsArgs: true,
+    requireAuth: true,
+    handler: async (ctx: any) => {
+      const raw = (ctx.args || "").trim();
+      if (!raw) return { text: "Usage: /research-feedback <project_id> <type> [comment]\ntype: dig_deeper | wrong | excellent | ignore | redirect" };
+      try {
+        const escaped = raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        const out = runShell(
+          `python3 /root/operator/tools/research_feedback.py "${escaped}"`,
+          15_000
+        );
+        const data = JSON.parse(out);
+        if (data.ok) {
+          return { text: `Feedback recorded: ${data.type}${data.type === "redirect" ? " (question added)" : ""}.` };
+        }
+        return { text: out };
+      } catch (e: any) {
+        return { text: `Feedback failed: ${e.message}` };
+      }
+    },
+  });
 }
