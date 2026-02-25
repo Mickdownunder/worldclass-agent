@@ -21,6 +21,7 @@ Autonomous multi-day research projects. Each project lives under `research/<proj
 - **research-read** — Fetch and extract content from URLs/PDFs; save to sources/findings.
 - **research-synthesize** — Combine findings, produce report draft.
 - **research-cycle** — Run one phase of the cycle (explore→focus→connect→verify→synthesize→done). Call repeatedly for multi-day research.
+- **research-cross-domain** — Index all findings with embeddings; find high-similarity pairs across projects; optionally notify.
 
 ## Usage (via job engine)
 

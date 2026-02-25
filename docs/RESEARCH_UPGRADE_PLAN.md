@@ -33,15 +33,15 @@ Ziel: Das Operator-System zu einem autonomen, mehrtägigen Forschungs-System aus
 
 ---
 
-## Phase 3 — Wissens-Vernetzung & Cross-Domain (Woche 3–4)
+## Phase 3 — Wissens-Vernetzung & Cross-Domain (Woche 3–4) ✅
 
 **Ziel:** Verbindungen zwischen Projekten und Domänen automatisch finden.
 
-- [ ] Embeddings in Memory aktivieren (text-embedding-3-small)
-- [ ] Neue Tabellen: entities, relations, cross_links
-- [ ] Semantische Suche über Findings
-- [ ] Cross-Domain Discovery Workflow (periodisch)
-- [ ] Notification bei relevanten Cross-Domain-Insights
+- [x] Embeddings in Memory (text-embedding-3-small via `research_embed.py`)
+- [x] Neue Tabellen: research_findings, cross_links in `lib/memory.py`
+- [x] Semantische Suche: Embeddings pro Finding; Cross-Domain = Cosine-Similarity
+- [x] Cross-Domain Discovery Workflow (`research-cross-domain.sh`)
+- [x] Notification bei neuen Insights (Telegram wenn `UI_TELEGRAM_NOTIFY` gesetzt)
 
 **Deliverable:** Das System schlägt Querverbindungen zwischen verschiedenen Research-Projekten vor.
 

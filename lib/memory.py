@@ -113,6 +113,29 @@ class Memory:
             CREATE INDEX IF NOT EXISTS idx_reflections_quality ON reflections(quality DESC);
             CREATE INDEX IF NOT EXISTS idx_decisions_trace ON decisions(trace_id);
             CREATE INDEX IF NOT EXISTS idx_quality_workflow ON quality_scores(workflow_id);
+
+            CREATE TABLE IF NOT EXISTS research_findings (
+                id              TEXT PRIMARY KEY,
+                project_id      TEXT NOT NULL,
+                finding_key     TEXT NOT NULL,
+                content_preview  TEXT NOT NULL,
+                embedding_json  TEXT,
+                ts              TEXT NOT NULL,
+                url             TEXT,
+                title           TEXT
+            );
+            CREATE TABLE IF NOT EXISTS cross_links (
+                id              TEXT PRIMARY KEY,
+                finding_a_id    TEXT NOT NULL,
+                finding_b_id    TEXT NOT NULL,
+                project_a       TEXT NOT NULL,
+                project_b       TEXT NOT NULL,
+                similarity      REAL NOT NULL,
+                ts              TEXT NOT NULL,
+                notified        INTEGER DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS idx_research_findings_project ON research_findings(project_id);
+            CREATE INDEX IF NOT EXISTS idx_cross_links_projects ON cross_links(project_a, project_b);
         """)
         self._conn.commit()
 
@@ -305,6 +328,60 @@ class Memory:
         else:
             row = self._conn.execute("SELECT AVG(score) as avg_score FROM quality_scores").fetchone()
         return row["avg_score"] if row and row["avg_score"] is not None else 0.0
+
+    # ------------------------------------------------------------------
+    # Research: findings with embeddings, cross-domain links
+    # ------------------------------------------------------------------
+
+    def insert_research_finding(
+        self,
+        project_id: str,
+        finding_key: str,
+        content_preview: str,
+        embedding_json: str | None = None,
+        url: str | None = None,
+        title: str | None = None,
+    ) -> str:
+        fid = _hash(f"rf:{project_id}:{finding_key}:{time.time_ns()}")
+        self._conn.execute(
+            "INSERT INTO research_findings (id, project_id, finding_key, content_preview, embedding_json, ts, url, title) VALUES (?,?,?,?,?,?,?,?)",
+            (fid, project_id, finding_key, content_preview[:4000], embedding_json, _utcnow(), url or "", title or ""),
+        )
+        self._conn.commit()
+        return fid
+
+    def get_research_findings_with_embeddings(self) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT id, project_id, finding_key, content_preview, embedding_json, url, title FROM research_findings WHERE embedding_json IS NOT NULL AND embedding_json != ''"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def insert_cross_link(
+        self,
+        finding_a_id: str,
+        finding_b_id: str,
+        project_a: str,
+        project_b: str,
+        similarity: float,
+    ) -> str:
+        lid = _hash(f"cl:{finding_a_id}:{finding_b_id}:{time.time_ns()}")
+        self._conn.execute(
+            "INSERT INTO cross_links (id, finding_a_id, finding_b_id, project_a, project_b, similarity, ts) VALUES (?,?,?,?,?,?,?)",
+            (lid, finding_a_id, finding_b_id, project_a, project_b, similarity, _utcnow()),
+        )
+        self._conn.commit()
+        return lid
+
+    def get_cross_links_unnotified(self, limit: int = 50) -> list[dict]:
+        rows = self._conn.execute(
+            "SELECT * FROM cross_links WHERE notified = 0 ORDER BY similarity DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def mark_cross_links_notified(self, link_ids: list[str]) -> None:
+        for lid in link_ids:
+            self._conn.execute("UPDATE cross_links SET notified = 1 WHERE id = ?", (lid,))
+        self._conn.commit()
 
     # ------------------------------------------------------------------
     # Semantic Search (keyword fallback when no embeddings)
