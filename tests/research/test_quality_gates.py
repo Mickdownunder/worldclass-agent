@@ -137,6 +137,29 @@ def test_preflight_structure():
     assert "message" in result
 
 
+def test_preflight_malformed_output_deterministic_fail():
+    """Preflight script returns malformed/empty output -> deterministic fail_code + informative reason (regression)."""
+    from tools.research_preflight import apply_preflight_fail_to_project
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        proj = root / "proj"
+        art = root / "art"
+        proj.mkdir()
+        art.mkdir()
+        (proj / "project.json").write_text(json.dumps({"id": "proj", "question": "?"}))
+        # Malformed stdout, no valid JSON
+        (art / "preflight_stdout.txt").write_text("not valid json\n")
+        (art / "preflight_stderr.txt").write_text("Traceback (most recent call last):\n  ...\n")
+        apply_preflight_fail_to_project(proj, art)
+        d = json.loads((proj / "project.json").read_text())
+        assert d["status"] == "failed_dependency_preflight_error"
+        reasons = d.get("quality_gate", {}).get("evidence_gate", {}).get("reasons", [])
+        assert reasons, "reasons must be non-empty"
+        msg = " ".join(str(r) for r in reasons)
+        assert "Preflight parse failed" in msg or "parse failed" in msg.lower()
+        assert "raw" in msg.lower() or "preflight_stderr" in msg or "stderr" in msg.lower()
+
+
 def test_preflight_passes_when_bs4_installed():
     """When bs4 is installed, preflight passes (required for reader). Skip when bs4 missing."""
     try:
@@ -231,6 +254,7 @@ def test_hallucinated_verified_tag_blocked():
 if __name__ == "__main__":
     test_evidence_gate_thresholds_exist()
     test_preflight_structure()
+    test_preflight_malformed_output_deterministic_fail()
     test_preflight_passes_when_bs4_installed()
     test_no_findings_should_not_done()
     test_single_source_claim_not_verified()

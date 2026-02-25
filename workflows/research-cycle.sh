@@ -60,28 +60,43 @@ case "$PHASE" in
   explore)
     log "Phase: EXPLORE — search and read initial sources"
     # Dependency preflight: must pass before any reader call (no silent 0 findings)
-    PREFLIGHT=$(python3 "$TOOLS/research_preflight.py" 2>> "$PWD/log.txt" || echo '{"ok":false,"fail_code":"failed_dependency_preflight_error","message":"Preflight script failed"}')
+    # Capture stdout and stderr separately so we can include root cause on parse failure
+    PREFLIGHT_ERR="$ART/preflight_stderr.txt"
+    PREFLIGHT=$(python3 "$TOOLS/research_preflight.py" 2>"$PREFLIGHT_ERR" || true)
+    echo "$PREFLIGHT" > "$ART/preflight_stdout.txt"
     PREFLIGHT_OK=$(echo "$PREFLIGHT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('ok') else 0, end='')" 2>/dev/null) || echo "0"
     if [ "$PREFLIGHT_OK" != "1" ]; then
       log "Preflight failed — not running explore"
-      python3 - "$PROJ_DIR" "$PREFLIGHT" <<'PREFLIGHT_FAIL'
+      python3 - "$PROJ_DIR" "$ART" <<'PREFLIGHT_FAIL'
 import json, sys
 from pathlib import Path
 from datetime import datetime, timezone
-proj_dir, preflight_str = Path(sys.argv[1]), sys.argv[2]
+proj_dir, art = Path(sys.argv[1]), Path(sys.argv[2])
+stdout_path = art / "preflight_stdout.txt"
+stderr_path = art / "preflight_stderr.txt"
+preflight_str = stdout_path.read_text().strip() if stdout_path.exists() else ""
+stderr_content = stderr_path.read_text().strip()[:500] if stderr_path.exists() else ""
+parse_msg = None
 try:
-  preflight = json.loads(preflight_str)
-except Exception:
-  preflight = {"fail_code": "failed_dependency_preflight_error", "message": "Preflight parse failed"}
+  preflight = json.loads(preflight_str) if preflight_str else {}
+except Exception as parse_err:
+  preflight = {}
+  stderr_suffix = f" stderr: {stderr_content}" if stderr_content else ""
+  parse_msg = f"Preflight parse failed: {str(parse_err)[:200]}; raw (first 200 chars): {repr(preflight_str[:200])}{stderr_suffix}"
+if not preflight or preflight.get("fail_code") is None:
+  preflight = {"fail_code": "failed_dependency_preflight_error", "message": parse_msg or "Preflight parse failed"}
+reasons = [preflight.get("message", "Dependency preflight failed")]
+if stderr_content and stderr_content not in str(reasons):
+  reasons.append("preflight_stderr: " + stderr_content[:300])
 d = json.loads((proj_dir / "project.json").read_text())
 d["status"] = preflight.get("fail_code") or "failed_dependency_preflight_error"
 d.setdefault("quality_gate", {})["evidence_gate"] = {
   "status": "failed",
   "fail_code": preflight.get("fail_code"),
-  "reasons": [preflight.get("message", "Dependency preflight failed")],
+  "reasons": reasons,
   "metrics": {},
 }
-d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M:%SZ")
 (proj_dir / "project.json").write_text(json.dumps(d, indent=2))
 PREFLIGHT_FAIL
       echo "Preflight failed — project status set."
