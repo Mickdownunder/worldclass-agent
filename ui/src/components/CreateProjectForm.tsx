@@ -50,7 +50,11 @@ export function CreateProjectForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="tron-panel space-y-5 p-6">
+    <form
+      onSubmit={handleSubmit}
+      className="tron-panel space-y-5 p-6"
+      suppressHydrationWarning
+    >
       <div>
         <h2 className="text-xl font-semibold tracking-tight text-tron-text">
           Neues Research-Projekt
@@ -72,6 +76,7 @@ export function CreateProjectForm() {
             rows={3}
             className="w-full rounded-sm border-2 border-tron-border bg-tron-bg px-4 py-3 text-sm text-tron-text placeholder-tron-dim focus:border-tron-accent focus:outline-none focus:shadow-[0_0_15px_var(--tron-glow)] transition-all"
             disabled={loading}
+            suppressHydrationWarning
           />
         </div>
         <div>
@@ -84,6 +89,7 @@ export function CreateProjectForm() {
             onChange={(e) => setPlaybookId(e.target.value)}
             className="w-full rounded-sm border-2 border-tron-border bg-tron-bg px-4 py-3 text-sm text-tron-text focus:border-tron-accent focus:outline-none focus:shadow-[0_0_15px_var(--tron-glow)] transition-all appearance-none"
             disabled={loading}
+            suppressHydrationWarning
           >
             {PLAYBOOKS.map((p) => (
               <option key={p.id} value={p.id} className="bg-tron-bg text-tron-text">
