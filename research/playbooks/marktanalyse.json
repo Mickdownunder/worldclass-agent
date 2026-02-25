@@ -1,0 +1,9 @@
+{
+  "id": "marktanalyse",
+  "domain": "market_analysis",
+  "name": "Marktanalyse",
+  "description": "Company and market research: players, size, gaps, trends.",
+  "strategy": "1) Broad search for market size and reports. 2) Identify top players and their positioning. 3) Check Glassdoor/reviews for execution signals. 4) Find gaps (features no one offers). 5) Cross-check numbers across sources; flag contradictions.",
+  "search_queries_template": ["{question}", "market size {topic}", "{topic} competitors", "{topic} trends"],
+  "synthesis_instructions": "Focus on: market size (with range and source), key players, white space, and confidence level per finding."
+}

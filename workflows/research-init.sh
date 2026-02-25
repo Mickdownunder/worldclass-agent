@@ -32,6 +32,8 @@ project = {
   "id": p.name,
   "question": question,
   "status": "active",
+  "phase": "explore",
+  "playbook_id": "general",
   "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
   "domain": "general",
   "config": {"max_sources": 50, "max_findings": 200}

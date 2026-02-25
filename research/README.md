@@ -16,10 +16,11 @@ Autonomous multi-day research projects. Each project lives under `research/<proj
 
 ## Workflows
 
-- **research-init** — Create a new project from a research question.
-- **research-search** — Run web + academic search for a project; append to sources/findings.
-- **research-read** — Fetch and extract content from URLs/PDFs; save to sources.
-- **research-synthesize** — Combine findings, detect contradictions, produce report draft.
+- **research-init** — Create a new project from a research question (sets phase=explore).
+- **research-search** — Run web + academic search for a project; append to sources.
+- **research-read** — Fetch and extract content from URLs/PDFs; save to sources/findings.
+- **research-synthesize** — Combine findings, produce report draft.
+- **research-cycle** — Run one phase of the cycle (explore→focus→connect→verify→synthesize→done). Call repeatedly for multi-day research.
 
 ## Usage (via job engine)
 

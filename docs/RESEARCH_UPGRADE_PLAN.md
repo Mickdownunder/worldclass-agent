@@ -4,30 +4,30 @@ Ziel: Das Operator-System zu einem autonomen, mehrtägigen Forschungs-System aus
 
 ---
 
-## Phase 1 — Augen und Hände (Woche 1–2)
+## Phase 1 — Augen und Hände (Woche 1–2) ✅
 
 **Ziel:** Das System kann die Welt sehen (Web, PDFs, akademische Quellen).
 
-- [ ] Web Search API (Brave Search oder Serper)
-- [ ] Web Reader (URL → strukturierter Text)
-- [ ] PDF Parser (Papers lesen)
-- [ ] Akademische APIs: Semantic Scholar, arXiv, PubMed, Google Patents, SEC EDGAR
-- [ ] Research-Projekt-Struktur unter `research/proj-<id>/`
-- [ ] Workflows: `research-init.sh`, `research-search.sh`, `research-read.sh`, `research-synthesize.sh`
+- [x] Web Search API (Brave Search oder Serper)
+- [x] Web Reader (URL → strukturierter Text)
+- [x] PDF Parser (Papers lesen)
+- [x] Akademische APIs: Semantic Scholar, arXiv, PubMed, Google Patents, SEC EDGAR
+- [x] Research-Projekt-Struktur unter `research/proj-<id>/`
+- [x] Workflows: `research-init.sh`, `research-search.sh`, `research-read.sh`, `research-synthesize.sh`
 
 **Deliverable:** Ein Research-Projekt kann angelegt werden; Quellen können gesucht, gelesen und als Findings gespeichert werden.
 
 ---
 
-## Phase 2 — Forschungs-Methodik (Woche 2–3)
+## Phase 2 — Forschungs-Methodik (Woche 2–3) ✅
 
 **Ziel:** Mehrtägiger autonomer Research-Cycle mit Lückenanalyse und Widerspruchserkennung.
 
-- [ ] Research Cycle: EXPLORE → FOCUS → CONNECT → VERIFY → SYNTHESIZE
-- [ ] Brain-Upgrade: Reasoning-Modi (hypothesis_formation, gap_analysis, contradiction_detection)
-- [ ] Research-Playbooks (Marktanalyse, Literatur-Review, Patent-Landscape, Due Diligence)
-- [ ] Source Management: Quelle + Confidence + Widerspruchserkennung
-- [ ] Multi-Model: gpt-4.1 für Synthese, gpt-4.1-mini für Search/Extract
+- [x] Research Cycle: EXPLORE → FOCUS → CONNECT → VERIFY → SYNTHESIZE (`research-cycle.sh`)
+- [x] Reasoning-Modi: `research_reason.py` (gap_analysis, hypothesis_formation, contradiction_detection)
+- [x] Research-Playbooks (Marktanalyse, Literatur-Review, Patent-Landscape, Due Diligence) in `research/playbooks/`
+- [x] Source Management: confidence/source_quality; contradictions in `contradictions.json`
+- [x] Multi-Model: `RESEARCH_SYNTHESIS_MODEL` / `RESEARCH_EXTRACT_MODEL` (env)
 
 **Deliverable:** Ein Research-Projekt läuft über mehrere Tage autonom und produziert strukturierte Findings mit Quellen.
 

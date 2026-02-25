@@ -1,0 +1,9 @@
+{
+  "id": "due-diligence",
+  "domain": "due_diligence",
+  "name": "Due Diligence",
+  "description": "Investment/company due diligence: financials, risks, team, traction.",
+  "strategy": "1) SEC EDGAR for filings. 2) News and press. 3) LinkedIn/careers for team. 4) Product reviews and sentiment. 5) Competitor comparison.",
+  "search_queries_template": ["{question}", "{company} SEC", "{company} funding", "{company} reviews"],
+  "synthesis_instructions": "Include: financial snapshot, risks, team quality signals, traction metrics, and red flags. Rate confidence per section."
+}

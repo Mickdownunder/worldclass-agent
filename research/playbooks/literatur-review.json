@@ -1,0 +1,9 @@
+{
+  "id": "literatur-review",
+  "domain": "literature_review",
+  "name": "Literatur-Review",
+  "description": "Scientific literature: papers, methods, consensus, contradictions.",
+  "strategy": "1) Semantic Scholar and PubMed for peer-reviewed sources. 2) Prefer recent and highly cited. 3) Extract methods and conclusions. 4) Note when studies disagree. 5) Identify open questions.",
+  "search_queries_template": ["{question}", "{topic} systematic review", "{topic} meta-analysis"],
+  "synthesis_instructions": "Structure by: consensus findings, contested points, methodology notes, and gaps in the literature. Cite by title and year."
+}

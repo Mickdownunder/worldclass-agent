@@ -1,0 +1,9 @@
+{
+  "id": "patent-landscape",
+  "domain": "patent_landscape",
+  "name": "Patent-Landscape",
+  "description": "Patent and prior art: key claims, assignees, freedom to operate.",
+  "strategy": "1) Search patents by topic and key terms. 2) Cluster by assignee and claim scope. 3) Note expiry dates and geography. 4) Flag potential FTO risks.",
+  "search_queries_template": ["{question}", "{topic} patent", "{topic} prior art"],
+  "synthesis_instructions": "Summarize: main assignees, key claims, potential blocking patents, and confidence. Include patent numbers and dates."
+}
