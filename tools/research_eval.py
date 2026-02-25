@@ -32,8 +32,19 @@ def _scorecard(project_id: str) -> dict:
         "novelty_score": 0.0,
     }
     verify = proj / "verify"
-    # claim_support_rate from claim_verification.json
-    if (verify / "claim_verification.json").exists():
+    # claim_support_rate: primary = claim_ledger.json (is_verified); fallback = claim_verification.json (verified) for projects without ledger
+    used_ledger = False
+    if (verify / "claim_ledger.json").exists():
+        try:
+            ledger = json.loads((verify / "claim_ledger.json").read_text())
+            claims = ledger.get("claims", [])
+            if claims:
+                supported = sum(1 for c in claims if c.get("is_verified"))
+                out["claim_support_rate"] = round(supported / len(claims), 3)
+            used_ledger = True
+        except Exception:
+            pass
+    if not used_ledger and (verify / "claim_verification.json").exists():
         try:
             cv = json.loads((verify / "claim_verification.json").read_text())
             claims = cv.get("claims", [])

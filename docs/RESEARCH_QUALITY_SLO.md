@@ -10,6 +10,9 @@ Runtime checks and targets for research quality and stability.
 | `failed_verification_inconclusive` | claim_support_rate or verified_claim_count too low |
 | `failed_quality_gate` | Report critic score < 0.6 |
 | `failed_source_diversity` | high_reliability_source_ratio below threshold |
+| `failed_dependency_missing_bs4` | Preflight: required module bs4 not installed (reader stack broken) |
+| `failed_reader_no_extractable_content` | Explore: sources present but 0 read_successes (reader failed for all URLs) |
+| `failed_reader_pipeline` | Evidence gate: 0 findings with sources and read_successes=0 (technical extraction failure) |
 
 Projects with these statuses do not reach `done`; they remain in a failed state until criteria are met or the project is reset.
 
@@ -27,6 +30,11 @@ Projects with these statuses do not reach `done`; they remain in a failed state 
 - **Admission gate:** Only findings passing `research_memory_policy.decide()` are stored as `accepted` and embedded (`research_embed.py`).
 - **Drift:** `research_watchdog.py check` alerts when avg scorecard drops by ≥ 0.15 over last 3 runs.
 - **Rate limit:** Max `MAX_NEW_FINDINGS_PER_PROJECT_PER_DAY` (50) new findings per project per 24h; enforced in `research-cycle.sh` explore phase.
+
+## Red-Team CI / Blocker (V3)
+
+- **Script:** `./scripts/run_quality_gate_tests.sh` — runs `tests/research/test_quality_gates.py`. Exit code = test exit code; **fail (≠ 0) = build/run must not succeed**.
+- **CI:** `.github/workflows/quality-gates.yml` runs this script on push/PR to main; job fails if tests fail.
 
 ## Thresholds (single source)
 

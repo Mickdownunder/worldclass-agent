@@ -183,12 +183,30 @@ export interface Source {
   id: string;
   url?: string;
   type?: string;
+  /** Initial confidence/source_quality (pre-verify); 0.5 = unknown. */
   confidence?: number;
+  /** Verified reliability from verify/source_reliability.json; set only after verify phase. */
+  reliability_score?: number;
+  /** "initial" = pre-verify (confidence only); "verified" = has reliability_score from verify. */
+  score_source?: "initial" | "verified";
 }
 
 export async function getSources(projectId: string): Promise<Source[]> {
   const projPath = safeProjectPath(projectId);
   const sourcesDir = path.join(projPath, "sources");
+  let reliabilityByUrl: Record<string, number> = {};
+  try {
+    const verifyPath = path.join(projPath, "verify", "source_reliability.json");
+    const raw = await readFile(verifyPath, "utf8");
+    const data = JSON.parse(raw) as { sources?: Array<{ url?: string; reliability_score?: number }> };
+    for (const s of data.sources ?? []) {
+      if (typeof s.url === "string" && typeof s.reliability_score === "number") {
+        reliabilityByUrl[s.url] = s.reliability_score;
+      }
+    }
+  } catch {
+    // no verify data yet
+  }
   try {
     const files = await readdir(sourcesDir);
     const jsonFiles = files.filter((f) => f.endsWith(".json") && !f.includes("_content"));
@@ -197,11 +215,15 @@ export async function getSources(projectId: string): Promise<Source[]> {
       try {
         const raw = await readFile(path.join(sourcesDir, f), "utf8");
         const data = JSON.parse(raw) as Record<string, unknown>;
+        const url = typeof data.url === "string" ? data.url : undefined;
+        const reliability_score = url ? reliabilityByUrl[url] : undefined;
         sources.push({
           id: f.replace(".json", ""),
-          url: typeof data.url === "string" ? data.url : undefined,
+          url,
           type: typeof data.source_quality === "string" ? data.source_quality : undefined,
           confidence: typeof data.confidence === "number" ? data.confidence : undefined,
+          reliability_score: typeof reliability_score === "number" ? reliability_score : undefined,
+          score_source: typeof reliability_score === "number" ? "verified" : "initial",
         });
       } catch {
         sources.push({ id: f.replace(".json", "") });
@@ -236,5 +258,49 @@ export async function getAllReports(projectId: string): Promise<ReportEntry[]> {
     return reports;
   } catch {
     return [];
+  }
+}
+
+export interface AuditClaim {
+  claim_id: string;
+  text: string;
+  is_verified: boolean;
+  verification_reason?: string;
+  supporting_source_ids: string[];
+}
+
+export interface AuditData {
+  claims: AuditClaim[];
+  source?: "claim_evidence_map_latest" | "claim_ledger";
+}
+
+export async function getAudit(projectId: string): Promise<AuditData | null> {
+  const projPath = safeProjectPath(projectId);
+  const verifyDir = path.join(projPath, "verify");
+  try {
+    const evidencePath = path.join(verifyDir, "claim_evidence_map_latest.json");
+    const ledgerPath = path.join(verifyDir, "claim_ledger.json");
+    let raw: string;
+    let source: "claim_evidence_map_latest" | "claim_ledger";
+    try {
+      raw = await readFile(evidencePath, "utf8");
+      source = "claim_evidence_map_latest";
+    } catch {
+      raw = await readFile(ledgerPath, "utf8");
+      source = "claim_ledger";
+    }
+    const data = JSON.parse(raw) as { claims?: unknown[] };
+    const claims = (data.claims ?? []).map((c: Record<string, unknown>) => ({
+      claim_id: String(c.claim_id ?? ""),
+      text: String(c.text ?? "").slice(0, 500),
+      is_verified: Boolean(c.is_verified),
+      verification_reason: c.verification_reason != null ? String(c.verification_reason) : undefined,
+      supporting_source_ids: Array.isArray(c.supporting_source_ids)
+        ? (c.supporting_source_ids as string[])
+        : [],
+    }));
+    return { claims, source };
+  } catch {
+    return null;
   }
 }

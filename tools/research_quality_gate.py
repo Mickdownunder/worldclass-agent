@@ -3,7 +3,7 @@
 Evidence Gate: hard check before synthesize. No report if gate fails.
 Central policy; result stored in project.json (quality_gate.status, fail_code, metrics).
 
-Standard fail codes: failed_insufficient_evidence | failed_verification_inconclusive | failed_quality_gate | failed_source_diversity
+Standard fail codes: failed_insufficient_evidence | failed_verification_inconclusive | failed_quality_gate | failed_source_diversity | failed_reader_pipeline | failed_dependency_missing_bs4 | failed_reader_no_extractable_content
 
 Usage:
   research_quality_gate.py <project_id>
@@ -42,8 +42,22 @@ def run_evidence_gate(project_id: str) -> dict:
         "verified_claim_count": 0,
         "claim_support_rate": 0.0,
         "high_reliability_source_ratio": 0.0,
+        "read_attempts": 0,
+        "read_successes": 0,
+        "read_failures": 0,
     }
     reasons = []
+
+    # Read stats from explore (for root-cause: reader vs evidence gap)
+    explore_stats = {}
+    if (proj / "explore" / "read_stats.json").exists():
+        try:
+            explore_stats = json.loads((proj / "explore" / "read_stats.json").read_text())
+            metrics["read_attempts"] = explore_stats.get("read_attempts", 0)
+            metrics["read_successes"] = explore_stats.get("read_successes", 0)
+            metrics["read_failures"] = explore_stats.get("read_failures", 0)
+        except Exception:
+            pass
 
     # findings_count
     if findings_dir.exists():
@@ -67,6 +81,15 @@ def run_evidence_gate(project_id: str) -> dict:
     metrics["unique_source_count"] = len(urls)
     if metrics["unique_source_count"] < EVIDENCE_GATE_THRESHOLDS["unique_source_count_min"]:
         reasons.append(f"unique_source_count {metrics['unique_source_count']} < {EVIDENCE_GATE_THRESHOLDS['unique_source_count_min']}")
+    # Root-cause: zero findings with sources present and 0 read_successes => reader pipeline failure
+    if (
+        metrics["findings_count"] == 0
+        and metrics["unique_source_count"] >= 1
+        and metrics.get("read_successes", -1) == 0
+        and metrics.get("read_attempts", 0) > 0
+    ):
+        reasons.append("zero_extractable_sources")
+        reasons.append("read_failures_high")
 
     # verified_claim_count, claim_support_rate from claim_verification / claim_ledger
     claims_data = []
@@ -81,6 +104,7 @@ def run_evidence_gate(project_id: str) -> dict:
             claims_data = ledger.get("claims", claims_data)
         except Exception:
             pass
+    # Ledger provides is_verified; claim_verification provides verified. Both supported for backward compat; Ledger preferred.
     verified_count = sum(1 for c in claims_data if c.get("is_verified") or c.get("verified"))
     metrics["verified_claim_count"] = verified_count
     if claims_data:
@@ -111,7 +135,15 @@ def run_evidence_gate(project_id: str) -> dict:
     pass_gate = len(reasons) == 0
     if pass_gate:
         return {"pass": True, "fail_code": None, "metrics": metrics, "reasons": []}
-    if metrics["findings_count"] < EVIDENCE_GATE_THRESHOLDS["findings_count_min"] or metrics["unique_source_count"] < EVIDENCE_GATE_THRESHOLDS["unique_source_count_min"]:
+    # Technical reader/dependency failure (0 extractable content despite sources)
+    if (
+        metrics["findings_count"] == 0
+        and metrics["unique_source_count"] >= 1
+        and metrics.get("read_successes", -1) == 0
+        and metrics.get("read_attempts", 0) > 0
+    ):
+        fail_code = "failed_reader_pipeline"
+    elif metrics["findings_count"] < EVIDENCE_GATE_THRESHOLDS["findings_count_min"] or metrics["unique_source_count"] < EVIDENCE_GATE_THRESHOLDS["unique_source_count_min"]:
         fail_code = "failed_insufficient_evidence"
     elif metrics["verified_claim_count"] < EVIDENCE_GATE_THRESHOLDS["verified_claim_count_min"] or metrics["claim_support_rate"] < EVIDENCE_GATE_THRESHOLDS["claim_support_rate_min"]:
         fail_code = "failed_verification_inconclusive"

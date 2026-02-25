@@ -59,6 +59,34 @@ PY
 case "$PHASE" in
   explore)
     log "Phase: EXPLORE — search and read initial sources"
+    # Dependency preflight: must pass before any reader call (no silent 0 findings)
+    PREFLIGHT=$(python3 "$TOOLS/research_preflight.py" 2>> "$PWD/log.txt" || echo '{"ok":false,"fail_code":"failed_dependency_preflight_error","message":"Preflight script failed"}')
+    PREFLIGHT_OK=$(echo "$PREFLIGHT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('ok') else 0, end='')" 2>/dev/null) || echo "0"
+    if [ "$PREFLIGHT_OK" != "1" ]; then
+      log "Preflight failed — not running explore"
+      python3 - "$PROJ_DIR" "$PREFLIGHT" <<'PREFLIGHT_FAIL'
+import json, sys
+from pathlib import Path
+from datetime import datetime, timezone
+proj_dir, preflight_str = Path(sys.argv[1]), sys.argv[2]
+try:
+  preflight = json.loads(preflight_str)
+except Exception:
+  preflight = {"fail_code": "failed_dependency_preflight_error", "message": "Preflight parse failed"}
+d = json.loads((proj_dir / "project.json").read_text())
+d["status"] = preflight.get("fail_code") or "failed_dependency_preflight_error"
+d.setdefault("quality_gate", {})["evidence_gate"] = {
+  "status": "failed",
+  "fail_code": preflight.get("fail_code"),
+  "reasons": [preflight.get("message", "Dependency preflight failed")],
+  "metrics": {},
+}
+d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+(proj_dir / "project.json").write_text(json.dumps(d, indent=2))
+PREFLIGHT_FAIL
+      echo "Preflight failed — project status set."
+      exit 1
+    fi
     # Rate-limit: throttle new findings per project per day (watchdog)
     OVER_LIMIT=0
     if [ -f "$TOOLS/research_watchdog.py" ]; then
@@ -96,17 +124,35 @@ print(0 if over else base, end='')
     if [ "$MAX_READ" -eq 0 ] && [ "$OVER_LIMIT" -eq 1 ]; then
       log "Rate limit reached — skipping new reads this cycle"
     fi
-    count=0
+    read_attempts=0
+    read_successes=0
     for f in "$PROJ_DIR/sources"/*.json; do
       [ -f "$f" ] || continue
-      [ $count -ge "$MAX_READ" ] && break
+      [ $read_attempts -ge "$MAX_READ" ] && break
       url=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('url',''), end='')")
       [ -n "$url" ] || continue
-      python3 "$TOOLS/research_web_reader.py" "$url" > "$ART/read_result.json" 2>> "$PWD/log.txt" || continue
+      read_attempts=$((read_attempts+1))
+      python3 "$TOOLS/research_web_reader.py" "$url" > "$ART/read_result.json" 2>> "$PWD/log.txt" || true
+      if [ -f "$ART/read_result.json" ]; then
+        if python3 -c "
+import json
+try:
+  d = json.load(open('$ART/read_result.json'))
+  text = (d.get('text') or '').strip()
+  err = (d.get('error') or '').strip()
+  exit(0 if text and not err else 1)
+except Exception:
+  exit(1)
+" 2>/dev/null; then
+          read_successes=$((read_successes+1))
+        fi
+      fi
       python3 - "$PROJ_DIR" "$ART" "$url" <<'INNER'
 import json, sys, hashlib
 from pathlib import Path
 proj_dir, art, url = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+if not (art / "read_result.json").exists():
+  sys.exit(0)
 data = json.loads((art / "read_result.json").read_text())
 key = hashlib.sha256(url.encode()).hexdigest()[:12]
 (proj_dir / "sources" / f"{key}_content.json").write_text(json.dumps(data))
@@ -115,8 +161,53 @@ if text:
   fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
   (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:2000], "source": "read", "confidence": 0.6}))
 INNER
-      count=$((count+1))
     done
+    # Persist read stats for gate diagnosis; fail fast if 0 extractable content despite sources
+    mkdir -p "$PROJ_DIR/explore"
+    python3 - "$PROJ_DIR" "$read_attempts" "$read_successes" <<'STATS'
+import json, sys
+from pathlib import Path
+proj_dir, attempts, successes = Path(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
+read_failures = max(0, attempts - successes)
+(proj_dir / "explore" / "read_stats.json").write_text(json.dumps({
+  "read_attempts": attempts,
+  "read_successes": successes,
+  "read_failures": read_failures,
+}, indent=2))
+STATS
+    SOURCES_COUNT=$(python3 -c "
+from pathlib import Path
+p = Path('$PROJ_DIR/sources')
+print(len([f for f in p.glob('*.json') if not f.name.endswith('_content.json')]), end='')
+")
+    if [ "$SOURCES_COUNT" -gt 0 ] && [ "$read_successes" -eq 0 ]; then
+      log "Reader pipeline: 0 extractable content from $read_attempts read(s) — status failed_reader_no_extractable_content"
+      python3 - "$PROJ_DIR" <<'READER_FAIL'
+import json, sys
+from pathlib import Path
+from datetime import datetime, timezone
+proj_dir = Path(sys.argv[1])
+d = json.loads((proj_dir / "project.json").read_text())
+d["status"] = "failed_reader_no_extractable_content"
+d.setdefault("quality_gate", {})["evidence_gate"] = {
+  "status": "failed",
+  "fail_code": "failed_reader_no_extractable_content",
+  "reasons": ["zero_extractable_sources", "read_successes=0 with sources present"],
+  "metrics": {"read_attempts": 0, "read_successes": 0, "read_failures": 0},
+}
+stats_file = proj_dir / "explore" / "read_stats.json"
+if stats_file.exists():
+  try:
+    stats = json.loads(stats_file.read_text())
+    d["quality_gate"]["evidence_gate"]["metrics"].update(stats)
+  except Exception:
+    pass
+d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+(proj_dir / "project.json").write_text(json.dumps(d, indent=2))
+READER_FAIL
+      echo "Reader pipeline: 0 extractable content — project status set."
+      exit 1
+    fi
     advance_phase "focus"
     ;;
   focus)
@@ -329,29 +420,26 @@ resp = client.responses.create(model=model, input=prompt)
 report = (resp.output_text or "").strip()
 from datetime import datetime, timezone
 ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-# Deterministic [VERIFIED] from claim_ledger (V3): only ledger-is_verified claims get the tag
+# Deterministic [VERIFIED] from claim_ledger (V3): strip all existing [VERIFIED] first, then only ledger-is_verified get the tag
 claim_ledger = []
 if (verify_dir / "claim_ledger.json").exists():
   try:
     claim_ledger = json.loads((verify_dir / "claim_ledger.json").read_text()).get("claims", [])
   except: pass
-for c in claim_ledger:
-  if not c.get("is_verified"):
-    continue
-  text = (c.get("text") or "").strip()
-  if not text or " [VERIFIED]" in text:
-    continue
-  if text in report:
-    report = report.replace(text, text + " [VERIFIED]", 1)
+import sys
+sys.path.insert(0, str(op_root))
+from tools.research_verify import apply_verified_tags_to_report
+report = apply_verified_tags_to_report(report, claim_ledger)
 (art / "report.md").write_text(report)
 (proj_dir / "reports" / f"report_{ts}.md").write_text(report)
-# Audit: claim_evidence_map per report
+# Audit: claim_evidence_map per report (include verification_reason for UI: verified/disputed/unverified)
 claim_evidence_map = {"report_id": f"report_{ts}.md", "ts": ts, "claims": []}
 for c in claim_ledger:
   claim_evidence_map["claims"].append({
     "claim_id": c.get("claim_id"),
     "text": (c.get("text") or "")[:500],
     "is_verified": c.get("is_verified"),
+    "verification_reason": c.get("verification_reason"),
     "supporting_source_ids": c.get("supporting_source_ids", []),
   })
 (proj_dir / "reports" / f"claim_evidence_map_{ts}.json").write_text(json.dumps(claim_evidence_map, indent=2))

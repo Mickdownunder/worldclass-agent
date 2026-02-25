@@ -10,6 +10,7 @@ Usage:
 """
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -156,6 +157,33 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
             "verification_reason": verification_reason,
         })
     return {"claims": claims_out}
+
+
+# Regex to strip all [VERIFIED] tags (with optional surrounding whitespace).
+# Used so only ledger-based is_verified claims get the tag; LLM-hallucinated tags are removed.
+_VERIFIED_TAG_PATTERN = re.compile(r"\s*\[VERIFIED\]", re.IGNORECASE)
+
+
+def apply_verified_tags_to_report(report: str, claims: list[dict]) -> str:
+    """
+    Deterministic [VERIFIED] tagging: strip all existing [VERIFIED], then add only for
+    claims with is_verified=True. Each claim text is tagged at most once.
+    Same logic as research-cycle.sh synthesis post-step; use this for tests and production.
+    """
+    if not report:
+        return report
+    # 1) Remove all existing [VERIFIED] tags (robust to optional spaces)
+    report = _VERIFIED_TAG_PATTERN.sub("", report)
+    # 2) Add [VERIFIED] only for ledger-verified claims; each claim at most once
+    for c in claims:
+        if not c.get("is_verified"):
+            continue
+        text = (c.get("text") or "").strip()
+        if not text or " [VERIFIED]" in text:
+            continue
+        if text in report:
+            report = report.replace(text, text + " [VERIFIED]", 1)
+    return report
 
 
 def fact_check(proj_path: Path, project: dict) -> dict:
