@@ -1,0 +1,48 @@
+# Research System
+
+Autonomous multi-day research projects. Each project lives under `research/<project_id>/`.
+
+## Layout (per project)
+
+```
+<project_id>/
+  project.json     # question, status, created_at, domain, config
+  findings/        # one JSON file per finding (id.json)
+  sources/         # cached source content (by URL hash or id)
+  reports/         # intermediate and final reports
+  questions.json   # open questions (evolving)
+  thesis.json      # current hypothesis (evolving)
+```
+
+## Workflows
+
+- **research-init** — Create a new project from a research question.
+- **research-search** — Run web + academic search for a project; append to sources/findings.
+- **research-read** — Fetch and extract content from URLs/PDFs; save to sources.
+- **research-synthesize** — Combine findings, detect contradictions, produce report draft.
+
+## Usage (via job engine)
+
+```bash
+# Create project
+op job new --workflow research-init --request "What is the market size for vertical SaaS in EU?"
+op run <job_id>
+# → artifacts/project_id.txt contains the new project id
+
+# Search (use project id from above)
+op job new --workflow research-search --request "proj-<id>"
+op run <job_id>
+
+# Read a specific URL (project_id and url in request)
+op job new --workflow research-read --request "proj-<id> https://example.com/page"
+op run <job_id>
+
+# Synthesize
+op job new --workflow research-synthesize --request "proj-<id>"
+op run <job_id>
+```
+
+## Dependencies (optional)
+
+- `pip install beautifulsoup4 pypdf` for web reader and PDF extraction.
+- `BRAVE_API_KEY` or `SERPER_API_KEY` in `conf/secrets.env` for web search.
