@@ -59,6 +59,30 @@ def main():
         sys.exit(2)
     url = sys.argv[1].strip()
     out = {"url": url, "title": "", "text": "", "error": ""}
+    # PDF: delegate to PDF reader for same JSON shape
+    if url.lower().endswith(".pdf"):
+        try:
+            import subprocess
+            tools_dir = Path(__file__).resolve().parent
+            pdf_script = tools_dir / "research_pdf_reader.py"
+            if pdf_script.exists():
+                r = subprocess.run(
+                    [sys.executable, str(pdf_script), url],
+                    capture_output=True, text=True, timeout=90,
+                )
+                if r.returncode == 0:
+                    data = json.loads(r.stdout)
+                    out["title"] = data.get("title", "")
+                    out["text"] = data.get("text", "")
+                    out["error"] = data.get("error", "")
+                else:
+                    out["error"] = (r.stderr or r.stdout or "PDF read failed").strip()[:500]
+            else:
+                out["error"] = "PDF reader not found"
+        except Exception as e:
+            out["error"] = str(e)
+        print(json.dumps(out, indent=2, ensure_ascii=False))
+        return
     try:
         raw = fetch_url(url)
         html = raw.decode("utf-8", errors="replace")

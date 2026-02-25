@@ -77,11 +77,19 @@ for name in ["web_search.json", "semantic_scholar.json", "arxiv.json"]:
     fid = hashlib.sha256(url.encode()).hexdigest()[:12]
     (proj_dir / "sources" / f"{fid}.json").write_text(json.dumps({**item, "confidence": 0.5, "source_quality": "unknown"}))
 PY
-    # Read first 5 sources
+    # Read sources: dynamic limit from project config (min 10, max 15 or config.max_sources)
+    MAX_READ=$(python3 -c "
+import json
+from pathlib import Path
+p = Path('$PROJ_DIR/project.json')
+d = json.loads(p.read_text()) if p.exists() else {}
+max_sources = d.get('config', {}).get('max_sources', 15)
+print(min(max(10, max_sources), 50), end='')
+")
     count=0
     for f in "$PROJ_DIR/sources"/*.json; do
       [ -f "$f" ] || continue
-      [ $count -ge 5 ] && break
+      [ $count -ge "$MAX_READ" ] && break
       url=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('url',''), end='')")
       [ -n "$url" ] || continue
       python3 "$TOOLS/research_web_reader.py" "$url" > "$ART/read_result.json" 2>> "$PWD/log.txt" || continue
@@ -104,41 +112,50 @@ INNER
   focus)
     log "Phase: FOCUS — gap analysis and targeted search"
     python3 "$TOOLS/research_reason.py" "$PROJECT_ID" gap_analysis > "$ART/gaps.json" 2>> "$PWD/log.txt" || true
-    # One extra search from top gap and merge to project sources
+    # Top 3 gaps: run one search per gap and merge to project sources
     if [ -f "$ART/gaps.json" ]; then
-      extra_query=$(python3 - "$ART/gaps.json" "$QUESTION" <<'GAPPY'
+      for gidx in 0 1 2; do
+        [ ! -f "$ART/gaps.json" ] && break
+        extra_query=$(python3 - "$ART/gaps.json" "$QUESTION" "$gidx" <<'GAPONE'
 import json, sys
-gaps_file, fallback = sys.argv[1], sys.argv[2]
+gaps_file, fallback, idx = sys.argv[1], sys.argv[2], int(sys.argv[3])
 try:
-    d = json.load(open(gaps_file))
-    gaps = d.get("gaps", [])[:1]
-    q = gaps[0].get("suggested_search", "") if gaps else ""
-    print(q or fallback, end="")
+  d = json.load(open(gaps_file))
+  gaps = d.get("gaps", [])[:3]
+  g = gaps[idx] if idx < len(gaps) else None
+  q = (g.get("suggested_search", "") or fallback).strip()
+  print(q, end="")
 except Exception:
-    print(fallback, end="")
-GAPPY
+  print(fallback, end="")
+GAPONE
 )
-      python3 "$TOOLS/research_web_search.py" "$extra_query" --max 5 > "$ART/focus_search.json" 2>> "$PWD/log.txt" || true
+        [ -z "$extra_query" ] && extra_query="$QUESTION"
+        python3 "$TOOLS/research_web_search.py" "$extra_query" --max 5 > "$ART/focus_search_$gidx.json" 2>> "$PWD/log.txt" || true
+      done
       python3 - "$PROJ_DIR" "$ART" <<'PY'
 import json, sys, hashlib
 from pathlib import Path
 proj_dir, art = Path(sys.argv[1]), Path(sys.argv[2])
-f = art / "focus_search.json"
-if f.exists():
+for name in ["focus_search.json", "focus_search_0.json", "focus_search_1.json", "focus_search_2.json"]:
+  f = art / name
+  if not f.exists():
+    continue
   try:
     data = json.loads(f.read_text())
-    for item in data:
+    for item in (data if isinstance(data, list) else []):
       url = (item.get("url") or "").strip()
       if url:
         fid = hashlib.sha256(url.encode()).hexdigest()[:12]
         (proj_dir / "sources" / f"{fid}.json").write_text(json.dumps({**item, "confidence": 0.5}))
-  except Exception: pass
+  except Exception:
+    pass
 PY
     fi
     advance_phase "connect"
     ;;
   connect)
-    log "Phase: CONNECT — contradictions and hypotheses"
+    log "Phase: CONNECT — contradictions, entity extraction, hypotheses"
+    python3 "$TOOLS/research_entity_extract.py" "$PROJECT_ID" >> "$PWD/log.txt" 2>&1 || true
     python3 "$TOOLS/research_reason.py" "$PROJECT_ID" contradiction_detection > "$PROJ_DIR/contradictions.json" 2>> "$PWD/log.txt" || true
     python3 "$TOOLS/research_reason.py" "$PROJECT_ID" hypothesis_formation > "$ART/hypotheses.json" 2>> "$PWD/log.txt" || true
     if [ -f "$ART/hypotheses.json" ]; then
@@ -163,6 +180,11 @@ PY
     python3 "$TOOLS/research_verify.py" "$PROJECT_ID" source_reliability > "$ART/source_reliability.json" 2>> "$PWD/log.txt" || true
     python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification > "$ART/claim_verification.json" 2>> "$PWD/log.txt" || true
     python3 "$TOOLS/research_verify.py" "$PROJECT_ID" fact_check > "$ART/fact_check.json" 2>> "$PWD/log.txt" || true
+    # Persist verify artifacts to project for synthesize phase (may run in another job)
+    mkdir -p "$PROJ_DIR/verify"
+    [ -f "$ART/source_reliability.json" ] && cp "$ART/source_reliability.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+    [ -f "$ART/claim_verification.json" ] && cp "$ART/claim_verification.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+    [ -f "$ART/fact_check.json" ] && cp "$ART/fact_check.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     # Mark low-reliability sources in project
     if [ -f "$ART/source_reliability.json" ]; then
       python3 - "$PROJ_DIR" "$ART" <<'VERIFY_PY'
@@ -194,7 +216,6 @@ VERIFY_PY
     if [ -f "$ART/claim_verification.json" ]; then
       unverified=$(python3 -c "
 import json, sys
-from pathlib import Path
 try:
   d = json.load(open(sys.argv[1]))
   claims = d.get('claims', [])
@@ -202,16 +223,20 @@ try:
   print(n, end='')
 except Exception:
   print(0, end='')
-" "$ART/claim_verification.json")
+" "$ART/claim_verification.json" 2>/dev/null) || unverified=0
     fi
+    unverified=${unverified:-0}
     focus_count=$(python3 -c "
 import json
-from pathlib import Path
-d = json.load(open('$PROJ_DIR/project.json'))
-hist = d.get('phase_history', [])
-print(hist.count('focus'), end='')
-")
-    if [ "$unverified" -gt 2 ] && [ "$focus_count" -lt 2 ]; then
+try:
+  d = json.load(open('$PROJ_DIR/project.json'))
+  hist = d.get('phase_history', [])
+  print(hist.count('focus'), end='')
+except Exception:
+  print(0, end='')
+" 2>/dev/null) || focus_count=0
+    focus_count=${focus_count:-0}
+    if [ "${unverified:-0}" -gt 2 ] && [ "${focus_count:-0}" -lt 2 ]; then
       log "Too many unverified claims ($unverified) — looping back to focus"
       advance_phase "focus"
     else
@@ -237,19 +262,51 @@ if (proj_dir / "contradictions.json").exists():
   try: contra = json.loads((proj_dir / "contradictions.json").read_text()).get("contradictions", [])
   except: pass
 thesis = json.loads((proj_dir / "thesis.json").read_text())
-items_text = json.dumps(findings[:30], indent=2, ensure_ascii=False)[:15000]
+# Verify artifacts: read from project verify/ (written by verify phase in same or previous run)
+verify_dir = proj_dir / "verify"
+rel_sources = {}
+claims_verified = []
+facts_note = ""
+if (verify_dir / "source_reliability.json").exists():
+  try:
+    rel = json.loads((verify_dir / "source_reliability.json").read_text())
+    rel_sources = {s.get("url"): s for s in rel.get("sources", [])}
+  except: pass
+if (verify_dir / "claim_verification.json").exists():
+  try:
+    cv = json.loads((verify_dir / "claim_verification.json").read_text())
+    claims_verified = [c.get("claim", "") for c in cv.get("claims", []) if c.get("verified")]
+  except: pass
+if (verify_dir / "fact_check.json").exists():
+  try:
+    fc = json.loads((verify_dir / "fact_check.json").read_text())
+    facts_note = json.dumps(fc.get("facts", [])[:15])[:800]
+  except: pass
+# Build findings text: mark low-reliability sources, add [VERIFIED] for verified claims
+def finding_line(f):
+  url = f.get("url", "")
+  low = rel_sources.get(url, {}).get("reliability_score", 1) < 0.3
+  tag = " [LOW RELIABILITY]" if low else ""
+  return json.dumps({**f, "url": url + tag}, ensure_ascii=False)
+items_text = json.dumps([json.loads(finding_line(f)) for f in findings[:30]], indent=2, ensure_ascii=False)[:15000]
+verify_instruction = ""
+if claims_verified or facts_note:
+  verify_instruction = "\nVERIFIED CLAIMS (mark with [VERIFIED] in report where applicable): " + json.dumps(claims_verified[:20])[:500]
+if facts_note:
+  verify_instruction += "\nFACT-CHECK SUMMARY: " + facts_note
 prompt = f"""You are a research analyst. Synthesize into a short structured report.
 
 RESEARCH QUESTION: {question}
 
-FINDINGS:
+FINDINGS (sources marked [LOW RELIABILITY] should be cited with caution):
 {items_text}
 
 CURRENT THESIS: {thesis.get('current', '')} (confidence: {thesis.get('confidence', 0)})
 
 CONTRADICTIONS TO NOTE: {json.dumps(contra)[:1000]}
+{verify_instruction}
 
-Produce markdown: 1) Executive Summary. 2) Key Findings (bulleted, with source). 3) Contradictions/Gaps. 4) Conclusion/Thesis. 5) Suggested Next Steps."""
+Produce markdown: 1) Executive Summary. 2) Key Findings (bulleted, with source; add [VERIFIED] for claims backed by 2+ sources). 3) Contradictions/Gaps. 4) Conclusion/Thesis. 5) Suggested Next Steps."""
 from openai import OpenAI
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 model = os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gpt-4.1-mini")
@@ -260,6 +317,42 @@ from datetime import datetime, timezone
 ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 (proj_dir / "reports" / f"report_{ts}.md").write_text(report)
 PY
+    # Quality Gate: critic pass, optionally revise if score < 0.6
+    python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$PWD/log.txt" || true
+    SCORE=0.5
+    if [ -f "$ART/critique.json" ]; then
+      SCORE=$(python3 -c "import json; d=json.load(open('$ART/critique.json')); print(d.get('score', 0.5), end='')" 2>/dev/null || echo "0.5")
+    fi
+    if [ -f "$ART/critique.json" ] && python3 -c "exit(0 if float('$SCORE') < 0.6 else 1)" 2>/dev/null; then
+      log "Report quality low (score $SCORE). Revising..."
+      python3 "$TOOLS/research_critic.py" "$PROJECT_ID" revise "$ART" > "$ART/revised_report.md" 2>> "$PWD/log.txt" || true
+      if [ -f "$ART/revised_report.md" ] && [ -s "$ART/revised_report.md" ]; then
+        cp "$ART/revised_report.md" "$ART/report.md"
+        REV_TS=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'), end='')")
+        cp "$ART/revised_report.md" "$PROJ_DIR/reports/report_${REV_TS}_revised.md"
+      fi
+    fi
+    # Persist quality_gate and critique to project
+    python3 - "$PROJ_DIR" "$ART" "$SCORE" <<'QG'
+import json, sys
+from pathlib import Path
+proj_dir, art, score = Path(sys.argv[1]), Path(sys.argv[2]), float(sys.argv[3])
+d = json.loads((proj_dir / "project.json").read_text())
+d.setdefault("quality_gate", {})["critic_score"] = score
+d["quality_gate"]["revision_count"] = 1 if (art / "revised_report.md").exists() and (art / "revised_report.md").stat().st_size > 0 else 0
+if (art / "critique.json").exists():
+  try:
+    c = json.loads((art / "critique.json").read_text())
+    d["quality_gate"]["weaknesses_addressed"] = c.get("weaknesses", [])[:5]
+  except Exception:
+    pass
+(proj_dir / "project.json").write_text(json.dumps(d, indent=2))
+(proj_dir / "verify").mkdir(parents=True, exist_ok=True)
+if (art / "critique.json").exists():
+  (proj_dir / "verify" / "critique.json").write_text((art / "critique.json").read_text())
+QG
+    mkdir -p "$PROJ_DIR/verify"
+    [ -f "$ART/critique.json" ] && cp "$ART/critique.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     advance_phase "done"
     # Telegram: Forschung abgeschlossen
     if [ -x "$TOOLS/send-telegram.sh" ]; then

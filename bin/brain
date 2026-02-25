@@ -11,6 +11,7 @@ Usage:
   brain playbooks
   brain quality [--workflow "..."]
   brain cross-links [--limit N]
+  brain entities [--type person|org|tech|concept|event] [--project <id>]
 """
 
 import sys, json, os
@@ -104,6 +105,19 @@ def cmd_cross_links(args: list[str]):
         print(json.dumps({"insights": links}, indent=2, default=str))
 
 
+def cmd_entities(args: list[str]):
+    entity_type = None
+    project_id = None
+    if "--type" in args:
+        entity_type = args[args.index("--type") + 1]
+    if "--project" in args:
+        project_id = args[args.index("--project") + 1]
+    with Memory() as mem:
+        entities = mem.get_entities(entity_type=entity_type, project_id=project_id)
+        relations = mem.get_entity_relations(project_id=project_id) if project_id else mem.get_entity_relations(limit=30)
+        print(json.dumps({"entities": entities, "relations": relations}, indent=2, default=str))
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__.strip(), file=sys.stderr)
@@ -121,6 +135,7 @@ def main():
         "playbooks": cmd_playbooks,
         "quality": cmd_quality,
         "cross-links": cmd_cross_links,
+        "entities": cmd_entities,
     }
 
     if cmd in commands:

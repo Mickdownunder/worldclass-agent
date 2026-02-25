@@ -37,3 +37,10 @@ except Exception:
   "$OP" run "$job_dir" --timeout 300
   echo "[$(date -Iseconds)] Done $project_id"
 done
+
+# Watch mode: check done projects with watch.enabled (e.g. weekly via interval_hours)
+WORKFLOWS_DIR="${OPERATOR_ROOT:-/root/operator}/workflows"
+if [ -x "$WORKFLOWS_DIR/research-watch.sh" ]; then
+  echo "[$(date -Iseconds)] Running research watch pass"
+  "$WORKFLOWS_DIR/research-watch.sh" || true
+fi

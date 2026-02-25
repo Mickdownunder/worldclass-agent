@@ -137,6 +137,34 @@ class Memory:
             );
             CREATE INDEX IF NOT EXISTS idx_research_findings_project ON research_findings(project_id);
             CREATE INDEX IF NOT EXISTS idx_cross_links_projects ON cross_links(project_a, project_b);
+
+            CREATE TABLE IF NOT EXISTS entities (
+                id              TEXT PRIMARY KEY,
+                name            TEXT NOT NULL,
+                type            TEXT NOT NULL,
+                properties_json  TEXT DEFAULT '{}',
+                first_seen_project TEXT,
+                created_at      TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS entity_relations (
+                id              TEXT PRIMARY KEY,
+                entity_a_id     TEXT NOT NULL,
+                entity_b_id     TEXT NOT NULL,
+                relation_type   TEXT NOT NULL,
+                source_project  TEXT NOT NULL,
+                evidence        TEXT DEFAULT '',
+                created_at     TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS entity_mentions (
+                id              TEXT PRIMARY KEY,
+                entity_id      TEXT NOT NULL,
+                project_id     TEXT NOT NULL,
+                finding_key    TEXT,
+                context_snippet TEXT DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
+            CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
+            CREATE INDEX IF NOT EXISTS idx_entity_mentions_project ON entity_mentions(project_id);
         """)
         self._conn.commit()
 
@@ -383,6 +411,111 @@ class Memory:
         for lid in link_ids:
             self._conn.execute("UPDATE cross_links SET notified = 1 WHERE id = ?", (lid,))
         self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Entities (knowledge graph)
+    # ------------------------------------------------------------------
+
+    def get_or_create_entity(
+        self,
+        name: str,
+        entity_type: str,
+        properties: dict | None = None,
+        first_seen_project: str | None = None,
+    ) -> str:
+        name_n = (name or "").strip()
+        if not name_n:
+            raise ValueError("Entity name required")
+        row = self._conn.execute(
+            "SELECT id FROM entities WHERE name = ? AND type = ?", (name_n, entity_type)
+        ).fetchone()
+        if row:
+            return row["id"]
+        eid = _hash(f"ent:{name_n}:{entity_type}:{time.time_ns()}")
+        now = _utcnow()
+        self._conn.execute(
+            "INSERT INTO entities (id, name, type, properties_json, first_seen_project, created_at) VALUES (?,?,?,?,?,?)",
+            (eid, name_n, entity_type, json.dumps(properties or {}), first_seen_project or "", now),
+        )
+        self._conn.commit()
+        return eid
+
+    def insert_entity_relation(
+        self,
+        entity_a_id: str,
+        entity_b_id: str,
+        relation_type: str,
+        source_project: str,
+        evidence: str = "",
+    ) -> str:
+        rid = _hash(f"er:{entity_a_id}:{entity_b_id}:{relation_type}:{time.time_ns()}")
+        self._conn.execute(
+            "INSERT OR IGNORE INTO entity_relations (id, entity_a_id, entity_b_id, relation_type, source_project, evidence, created_at) VALUES (?,?,?,?,?,?,?)",
+            (rid, entity_a_id, entity_b_id, relation_type, source_project, evidence[:2000], _utcnow()),
+        )
+        self._conn.commit()
+        return rid
+
+    def insert_entity_mention(
+        self,
+        entity_id: str,
+        project_id: str,
+        finding_key: str | None = None,
+        context_snippet: str = "",
+    ) -> str:
+        mid = _hash(f"em:{entity_id}:{project_id}:{finding_key or ''}:{time.time_ns()}")
+        self._conn.execute(
+            "INSERT OR IGNORE INTO entity_mentions (id, entity_id, project_id, finding_key, context_snippet) VALUES (?,?,?,?,?)",
+            (mid, entity_id, project_id, finding_key or "", context_snippet[:1000]),
+        )
+        self._conn.commit()
+        return mid
+
+    def get_entities(
+        self,
+        entity_type: str | None = None,
+        project_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        if project_id:
+            rows = self._conn.execute(
+                """SELECT e.* FROM entities e
+                   JOIN entity_mentions m ON m.entity_id = e.id
+                   WHERE m.project_id = ? AND (? = '' OR e.type = ?)
+                   GROUP BY e.id ORDER BY e.created_at DESC LIMIT ?""",
+                (project_id, entity_type or "", entity_type or "", limit),
+            ).fetchall()
+        elif entity_type:
+            rows = self._conn.execute(
+                "SELECT * FROM entities WHERE type = ? ORDER BY created_at DESC LIMIT ?",
+                (entity_type, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM entities ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_entity_relations(self, project_id: str | None = None, limit: int = 50) -> list[dict]:
+        if project_id:
+            rows = self._conn.execute(
+                """SELECT r.*, a.name as name_a, b.name as name_b
+                   FROM entity_relations r
+                   JOIN entities a ON a.id = r.entity_a_id
+                   JOIN entities b ON b.id = r.entity_b_id
+                   WHERE r.source_project = ? ORDER BY r.created_at DESC LIMIT ?""",
+                (project_id, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """SELECT r.*, a.name as name_a, b.name as name_b
+                   FROM entity_relations r
+                   JOIN entities a ON a.id = r.entity_a_id
+                   JOIN entities b ON b.id = r.entity_b_id
+                   ORDER BY r.created_at DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Semantic Search (keyword fallback when no embeddings)
