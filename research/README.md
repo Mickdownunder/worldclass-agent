@@ -28,6 +28,10 @@ Autonomous multi-day research projects. Each project lives under `research/<proj
 - **Telegram:** `/research-feedback <project_id> <dig_deeper|wrong|excellent|ignore> [comment]` or `redirect "new question"`.
 - **UI:** `POST /api/research/feedback` with body `{ project_id, type, comment? }`. Feedback is appended to `research/<id>/feedback.jsonl`. Use type `redirect` to add a new question and set phase back to focus.
 
+## Dashboard
+
+- **UI:** `/research` lists all projects; `/research/[id]` shows project detail and latest report with Download .md.
+
 ## Usage (via job engine)
 
 ```bash

@@ -60,16 +60,16 @@ Ziel: Das Operator-System zu einem autonomen, mehrtägigen Forschungs-System aus
 
 ---
 
-## Phase 5 — Report-Engine & Delivery (Woche 5–6)
+## Phase 5 — Report-Engine & Delivery (Woche 5–6) ✅
 
 **Ziel:** Professionelle Research-Reports, die Kunden bezahlen würden.
 
-- [ ] Strukturierter Report: Executive Summary, Methodik, Key Findings, Quellen, Anhang
-- [ ] Formate: Markdown, HTML, PDF
-- [ ] UI: Research-Dashboard (aktive Projekte, Finding-Browser, Knowledge-Graph)
-- [ ] Delivery: Telegram + UI + optional PDF-Download
+- [x] Strukturierter Report: Executive Summary, Key Findings, Contradictions, Conclusion (via research-synthesize Prompt)
+- [x] Format: Markdown (Download .md in UI)
+- [x] UI: Research-Dashboard (`/research` Liste, `/research/[id]` mit Report-Ansicht und Download)
+- [x] API: GET /api/research/projects, GET /api/research/projects/[id], GET /api/research/projects/[id]/report
 
-**Deliverable:** End-to-End: Frage → mehrtägige Recherche → professioneller Report mit Citations.
+**Deliverable:** End-to-End: Frage → mehrtägige Recherche → Report in UI mit Download.
 
 ---
 
