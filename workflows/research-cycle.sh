@@ -59,6 +59,11 @@ PY
 case "$PHASE" in
   explore)
     log "Phase: EXPLORE — search and read initial sources"
+    # Rate-limit: throttle new findings per project per day (watchdog)
+    OVER_LIMIT=0
+    if [ -f "$TOOLS/research_watchdog.py" ]; then
+      OVER_LIMIT=$(python3 "$TOOLS/research_watchdog.py" rate-limit "$PROJECT_ID" 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('over_limit') else 0, end='')" 2>/dev/null) || true
+    fi
     python3 "$TOOLS/research_web_search.py" "$QUESTION" --max 12 > "$ART/web_search.json" 2>> "$PWD/log.txt" || true
     python3 "$TOOLS/research_academic.py" semantic_scholar "$QUESTION" --max 5 > "$ART/semantic_scholar.json" 2>> "$PWD/log.txt" || true
     python3 "$TOOLS/research_academic.py" arxiv "$QUESTION" --max 5 > "$ART/arxiv.json" 2>> "$PWD/log.txt" || true
@@ -77,15 +82,20 @@ for name in ["web_search.json", "semantic_scholar.json", "arxiv.json"]:
     fid = hashlib.sha256(url.encode()).hexdigest()[:12]
     (proj_dir / "sources" / f"{fid}.json").write_text(json.dumps({**item, "confidence": 0.5, "source_quality": "unknown"}))
 PY
-    # Read sources: dynamic limit from project config (min 10, max 15 or config.max_sources)
+    # Read sources: dynamic limit from project config; cap to 0 if over rate-limit
     MAX_READ=$(python3 -c "
 import json
 from pathlib import Path
 p = Path('$PROJ_DIR/project.json')
 d = json.loads(p.read_text()) if p.exists() else {}
 max_sources = d.get('config', {}).get('max_sources', 15)
-print(min(max(10, max_sources), 50), end='')
+base = min(max(10, max_sources), 50)
+over = $OVER_LIMIT
+print(0 if over else base, end='')
 ")
+    if [ "$MAX_READ" -eq 0 ] && [ "$OVER_LIMIT" -eq 1 ]; then
+      log "Rate limit reached — skipping new reads this cycle"
+    fi
     count=0
     for f in "$PROJ_DIR/sources"/*.json; do
       [ -f "$f" ] || continue

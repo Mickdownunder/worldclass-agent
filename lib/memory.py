@@ -124,6 +124,17 @@ class Memory:
                 url             TEXT,
                 title           TEXT
             );
+            CREATE TABLE IF NOT EXISTS memory_admission_events (
+                id              TEXT PRIMARY KEY,
+                ts             TEXT NOT NULL,
+                project_id      TEXT NOT NULL,
+                finding_key     TEXT NOT NULL,
+                decision        TEXT NOT NULL,
+                reason         TEXT DEFAULT '',
+                scores_json    TEXT DEFAULT '{}'
+            );
+            CREATE INDEX IF NOT EXISTS idx_admission_events_project ON memory_admission_events(project_id);
+            CREATE INDEX IF NOT EXISTS idx_admission_events_ts ON memory_admission_events(ts DESC);
             CREATE TABLE IF NOT EXISTS cross_links (
                 id              TEXT PRIMARY KEY,
                 finding_a_id    TEXT NOT NULL,
@@ -166,6 +177,31 @@ class Memory:
             CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
             CREATE INDEX IF NOT EXISTS idx_entity_mentions_project ON entity_mentions(project_id);
         """)
+        self._conn.commit()
+        self._migrate_research_findings_quality()
+
+    def _migrate_research_findings_quality(self):
+        """Add quality/admission columns to research_findings if missing (backward compat)."""
+        cur = self._conn.execute("PRAGMA table_info(research_findings)")
+        existing = {row[1] for row in cur.fetchall()}
+        new_cols = [
+            ("relevance_score", "REAL"),
+            ("reliability_score", "REAL"),
+            ("verification_status", "TEXT"),
+            ("evidence_count", "INTEGER"),
+            ("critic_score", "REAL"),
+            ("importance_score", "REAL"),
+            ("admission_state", "TEXT"),
+        ]
+        for name, typ in new_cols:
+            if name not in existing:
+                self._conn.execute(f"ALTER TABLE research_findings ADD COLUMN {name} {typ}")
+        self._conn.execute(
+            "UPDATE research_findings SET admission_state = 'quarantined' WHERE admission_state IS NULL"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_research_findings_admission ON research_findings(admission_state)"
+        )
         self._conn.commit()
 
     # ------------------------------------------------------------------
@@ -370,19 +406,66 @@ class Memory:
         embedding_json: str | None = None,
         url: str | None = None,
         title: str | None = None,
+        relevance_score: float | None = None,
+        reliability_score: float | None = None,
+        verification_status: str | None = None,
+        evidence_count: int | None = None,
+        critic_score: float | None = None,
+        importance_score: float | None = None,
+        admission_state: str | None = None,
     ) -> str:
         fid = _hash(f"rf:{project_id}:{finding_key}:{time.time_ns()}")
+        state = (admission_state or "quarantined").lower()
+        if state not in ("accepted", "quarantined", "rejected"):
+            state = "quarantined"
         self._conn.execute(
-            "INSERT INTO research_findings (id, project_id, finding_key, content_preview, embedding_json, ts, url, title) VALUES (?,?,?,?,?,?,?,?)",
-            (fid, project_id, finding_key, content_preview[:4000], embedding_json, _utcnow(), url, title),
+            """INSERT INTO research_findings (id, project_id, finding_key, content_preview, embedding_json, ts, url, title,
+               relevance_score, reliability_score, verification_status, evidence_count, critic_score, importance_score, admission_state)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                fid, project_id, finding_key, content_preview[:4000], embedding_json, _utcnow(), url, title,
+                relevance_score, reliability_score, verification_status, evidence_count, critic_score, importance_score, state,
+            ),
         )
         self._conn.commit()
         return fid
+
+    def record_admission_event(
+        self,
+        project_id: str,
+        finding_key: str,
+        decision: str,
+        reason: str = "",
+        scores: dict | None = None,
+    ) -> str:
+        eid = _hash(f"ae:{project_id}:{finding_key}:{time.time_ns()}")
+        self._conn.execute(
+            "INSERT INTO memory_admission_events (id, ts, project_id, finding_key, decision, reason, scores_json) VALUES (?,?,?,?,?,?,?)",
+            (eid, _utcnow(), project_id, finding_key, decision, reason[:1000], json.dumps(scores or {})),
+        )
+        self._conn.commit()
+        return eid
 
     def get_research_findings_with_embeddings(self) -> list[dict]:
         rows = self._conn.execute(
             "SELECT id, project_id, finding_key, content_preview, embedding_json, url, title FROM research_findings WHERE embedding_json IS NOT NULL AND embedding_json != ''"
         ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_research_findings_accepted(self, project_id: str | None = None, limit: int = 200) -> list[dict]:
+        """High-signal findings only: admission_state = 'accepted'."""
+        if project_id:
+            rows = self._conn.execute(
+                """SELECT id, project_id, finding_key, content_preview, url, title, relevance_score, importance_score
+                   FROM research_findings WHERE admission_state = 'accepted' AND project_id = ? ORDER BY ts DESC LIMIT ?""",
+                (project_id, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                """SELECT id, project_id, finding_key, content_preview, url, title, relevance_score, importance_score
+                   FROM research_findings WHERE admission_state = 'accepted' ORDER BY ts DESC LIMIT ?""",
+                (limit,),
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def insert_cross_link(

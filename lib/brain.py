@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from .memory import Memory
+from . import brain_context
 
 BASE = Path.home() / "operator"
 CONF = BASE / "conf"
@@ -212,8 +213,13 @@ class Brain:
                     pass
         state["research_playbooks"] = research_playbooks
 
-        # Memory state
+        # Memory state (only high-quality reflections for planning; low-quality telemetry only)
         state["memory"] = self.memory.state_summary()
+        state["memory"]["recent_reflections"] = [
+            r for r in state["memory"].get("recent_reflections", [])
+            if (r.get("quality") or 0) >= 0.6
+        ]
+        state["research_context"] = brain_context.compile(self.memory)
 
         # Governance level
         state["governance"] = {

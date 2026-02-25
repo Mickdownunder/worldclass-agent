@@ -44,3 +44,14 @@ if [ -x "$WORKFLOWS_DIR/research-watch.sh" ]; then
   echo "[$(date -Iseconds)] Running research watch pass"
   "$WORKFLOWS_DIR/research-watch.sh" || true
 fi
+
+# Continuous eval: offline scorecard for research projects (daily/cyclic)
+if [ -x "$WORKFLOWS_DIR/research-eval.sh" ]; then
+  echo "[$(date -Iseconds)] Running research eval pass"
+  "$WORKFLOWS_DIR/research-eval.sh" >> "$LOG_DIR/research-eval.log" 2>&1 || true
+fi
+
+# Watchdog: drift check (log if quality drop over last 3 runs)
+if [ -f "$OPERATOR_ROOT/tools/research_watchdog.py" ]; then
+  python3 "$OPERATOR_ROOT/tools/research_watchdog.py" check >> "$LOG_DIR/research-watchdog.log" 2>&1 || true
+fi
