@@ -1,0 +1,20 @@
+# Research Quality Guardrails: red-team tests must pass (blocker for merge/deploy).
+name: Quality Gates
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+jobs:
+  red-team:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run quality gate tests
+        run: ./scripts/run_quality_gate_tests.sh
+        env:
+          OPERATOR_ROOT: ${{ github.workspace }}

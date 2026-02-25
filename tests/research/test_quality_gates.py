@@ -207,22 +207,25 @@ def test_reader_output_structured_error():
 
 def test_hallucinated_verified_tag_blocked():
     """[VERIFIED] only from claim_ledger; hallucinated LLM [VERIFIED] must be stripped (red-team: hallucinated_verified_tag_blocked)."""
+    invariant_msg = "critical red-team invariant failed: VERIFIED must come only from ledger"
     from tools.research_verify import apply_verified_tags_to_report
-    # Input: report contains non-legit [VERIFIED]; ledger has no such claim or is_verified=False
-    report_with_fake = "Fake claim [VERIFIED] and another sentence. Also X [VERIFIED] here."
-    empty_ledger = []
-    result = apply_verified_tags_to_report(report_with_fake, empty_ledger)
-    assert "[VERIFIED]" not in result, "Hallucinated [VERIFIED] must be stripped when ledger is empty"
-    assert "Fake claim" in result and "another sentence" in result
-    # Ledger has claim but is_verified=False -> still no [VERIFIED]
-    ledger_unverified = [{"text": "Fake claim", "is_verified": False, "claim_id": "c1"}]
-    result2 = apply_verified_tags_to_report("Fake claim [VERIFIED].", ledger_unverified)
-    assert "[VERIFIED]" not in result2
-    # Ledger has one verified claim -> only that gets [VERIFIED]
-    ledger_one_verified = [{"text": "Real claim", "is_verified": True, "claim_id": "c1"}]
-    result3 = apply_verified_tags_to_report("Fake [VERIFIED]. Real claim here.", ledger_one_verified)
-    assert "Fake." in result3 and "Real claim [VERIFIED] here" in result3
-    assert result3.count("[VERIFIED]") == 1
+
+    # Case A: Hallucinated [VERIFIED] + empty ledger => no [VERIFIED] in result
+    report_a = "Fake claim [VERIFIED] and another sentence. Also X [VERIFIED] here."
+    result_a = apply_verified_tags_to_report(report_a, [])
+    assert "[VERIFIED]" not in result_a, invariant_msg + " (A: empty ledger must strip all)"
+    assert "Fake claim" in result_a and "another sentence" in result_a
+
+    # Case B: Ledger with is_verified=False => no [VERIFIED]
+    ledger_b = [{"text": "Fake claim", "is_verified": False, "claim_id": "c1"}]
+    result_b = apply_verified_tags_to_report("Fake claim [VERIFIED].", ledger_b)
+    assert "[VERIFIED]" not in result_b, invariant_msg + " (B: is_verified=False must not tag)"
+
+    # Case C: Ledger with exactly one verified claim => exactly one [VERIFIED]
+    ledger_c = [{"text": "Real claim", "is_verified": True, "claim_id": "c1"}]
+    result_c = apply_verified_tags_to_report("Fake [VERIFIED]. Real claim here.", ledger_c)
+    assert "Fake." in result_c and "Real claim [VERIFIED] here" in result_c, invariant_msg + " (C: only ledger-verified gets tag)"
+    assert result_c.count("[VERIFIED]") == 1, invariant_msg + " (C: exactly one [VERIFIED] expected)"
 
 
 if __name__ == "__main__":
@@ -232,11 +235,8 @@ if __name__ == "__main__":
     test_no_findings_should_not_done()
     test_single_source_claim_not_verified()
     test_conflicting_sources_must_dispute()
+    test_hallucinated_verified_tag_blocked()  # must run; no fallback — exit != 0 if import/logic broken
     test_gate_failed_reader_pipeline_when_zero_extractable()
     test_reader_output_structured_error()
-    try:
-        test_hallucinated_verified_tag_blocked()
-    except (ImportError, AttributeError):
-        pass  # apply_verified_tags_to_report may not exist in all branches
     test_memory_quarantine_not_used_by_brain()
     print("All red-team tests passed.")
