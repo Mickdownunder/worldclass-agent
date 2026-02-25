@@ -1,0 +1,30 @@
+{
+  "description": "Red-team regression cases for Research Quality Guardrails V3. CI/run fails if a dangerous case passes.",
+  "cases": [
+    {
+      "id": "no_findings_should_not_done",
+      "description": "Project with 0 findings must not pass evidence gate (must not reach done)",
+      "expect": "evidence_gate_fail"
+    },
+    {
+      "id": "single_source_claim_not_verified",
+      "description": "Claim supported by only 1 source must not be is_verified in claim_ledger",
+      "expect": "claim_not_verified"
+    },
+    {
+      "id": "conflicting_sources_must_dispute",
+      "description": "Claim with disputed marking must have is_verified=false",
+      "expect": "dispute_blocks_verified"
+    },
+    {
+      "id": "hallucinated_verified_tag_blocked",
+      "description": "[VERIFIED] only from claim_ledger deterministically, not from LLM free text",
+      "expect": "verified_only_from_ledger"
+    },
+    {
+      "id": "memory_quarantine_not_used_by_brain",
+      "description": "Brain context must exclude quarantined/rejected findings (only accepted)",
+      "expect": "context_accepted_only"
+    }
+  ]
+}

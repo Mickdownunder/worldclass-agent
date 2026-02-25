@@ -100,6 +100,64 @@ verified = true only if at least 2 distinct sources support the claim. Be strict
     return {"claims": out if isinstance(out, list) else []}
 
 
+def build_claim_ledger(proj_path: Path, project: dict) -> dict:
+    """
+    Deterministic claim ledger from claim_verification + source_reliability.
+    [VERIFIED] only when: >=2 independent sources, no dispute, sources not low reliability.
+    Output: { "claims": [ { "claim_id", "text", "supporting_source_ids", "is_verified", "verification_reason" } ] }
+    """
+    ensure_project_layout(proj_path)
+    verify_dir = proj_path / "verify"
+    claims_in = []
+    if (verify_dir / "claim_verification.json").exists():
+        try:
+            data = json.loads((verify_dir / "claim_verification.json").read_text())
+            claims_in = data.get("claims", [])
+        except Exception:
+            pass
+    rel_by_url = {}
+    if (verify_dir / "source_reliability.json").exists():
+        try:
+            rel = json.loads((verify_dir / "source_reliability.json").read_text())
+            for s in rel.get("sources", []):
+                u = (s.get("url") or "").strip()
+                rel_by_url[u] = float(s.get("reliability_score", 0.5))
+        except Exception:
+            pass
+    claims_out = []
+    for i, c in enumerate(claims_in):
+        claim_id = f"cl_{i}_{hash(c.get('claim', '')[:100]) % 10000}"
+        text = (c.get("claim") or "").strip()
+        supporting = c.get("supporting_sources") or []
+        if isinstance(supporting, str):
+            supporting = [supporting] if supporting else []
+        supporting_source_ids = [s for s in supporting if s][:20]
+        # Deterministic is_verified: >=2 distinct sources, none low reliability, no dispute
+        low_rel = any((rel_by_url.get(u, 0.5) < 0.6) for u in supporting_source_ids)
+        dispute = (c.get("disputed") or c.get("verification_status", "") == "disputed" or
+                   str(c.get("verification_status", "")).lower() == "disputed")
+        distinct_count = len(set(supporting_source_ids))
+        is_verified = bool(distinct_count >= 2 and not low_rel and not dispute)
+        if is_verified:
+            verification_reason = f"{distinct_count} independent sources, reliability OK"
+        elif dispute:
+            verification_reason = "disputed"
+        elif low_rel:
+            verification_reason = "supporting source(s) low reliability"
+        elif distinct_count < 2:
+            verification_reason = f"only {distinct_count} source(s)"
+        else:
+            verification_reason = "not verified"
+        claims_out.append({
+            "claim_id": claim_id,
+            "text": text,
+            "supporting_source_ids": supporting_source_ids,
+            "is_verified": is_verified,
+            "verification_reason": verification_reason,
+        })
+    return {"claims": claims_out}
+
+
 def fact_check(proj_path: Path, project: dict) -> dict:
     """Identify verifiable facts (numbers, dates, names) and mark verification status."""
     ensure_project_layout(proj_path)
@@ -123,7 +181,7 @@ confirmed = multiple sources agree; disputed = sources disagree; unverifiable = 
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: research_verify.py <project_id> <source_reliability|claim_verification|fact_check>", file=sys.stderr)
+        print("Usage: research_verify.py <project_id> <source_reliability|claim_verification|fact_check|claim_ledger>", file=sys.stderr)
         sys.exit(2)
     project_id = sys.argv[1]
     mode = sys.argv[2].lower()
@@ -138,6 +196,8 @@ def main():
         result = claim_verification(proj_path, project)
     elif mode == "fact_check":
         result = fact_check(proj_path, project)
+    elif mode == "claim_ledger":
+        result = build_claim_ledger(proj_path, project)
     else:
         print(f"Unknown mode: {mode}", file=sys.stderr)
         sys.exit(2)

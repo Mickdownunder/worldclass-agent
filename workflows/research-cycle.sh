@@ -195,6 +195,47 @@ PY
     [ -f "$ART/source_reliability.json" ] && cp "$ART/source_reliability.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     [ -f "$ART/claim_verification.json" ] && cp "$ART/claim_verification.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     [ -f "$ART/fact_check.json" ] && cp "$ART/fact_check.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+    # Claim ledger: deterministic is_verified (V3)
+    python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_ledger > "$ART/claim_ledger.json" 2>> "$PWD/log.txt" || true
+    [ -f "$ART/claim_ledger.json" ] && cp "$ART/claim_ledger.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+    # Evidence Gate: must pass before synthesize
+    GATE_RESULT=$(python3 "$TOOLS/research_quality_gate.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || echo '{"pass":false}')
+    GATE_PASS=$(echo "$GATE_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('pass') else 0, end='')" 2>/dev/null) || echo "0"
+    if [ "$GATE_PASS" != "1" ]; then
+      log "Evidence gate failed — not advancing to synthesize"
+      python3 - "$PROJ_DIR" "$GATE_RESULT" <<'GATE_FAIL'
+import json, sys
+from pathlib import Path
+from datetime import datetime, timezone
+proj_dir, gate_str = Path(sys.argv[1]), sys.argv[2]
+try:
+  gate = json.loads(gate_str)
+except Exception:
+  gate = {"fail_code": "failed_insufficient_evidence", "metrics": {}, "reasons": []}
+d = json.loads((proj_dir / "project.json").read_text())
+d["status"] = gate.get("fail_code") or "failed_insufficient_evidence"
+d.setdefault("quality_gate", {})["evidence_gate"] = {"status": "failed", "fail_code": gate.get("fail_code"), "metrics": gate.get("metrics", {}), "reasons": gate.get("reasons", [])}
+d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+(proj_dir / "project.json").write_text(json.dumps(d, indent=2))
+GATE_FAIL
+    else
+    echo "$GATE_RESULT" > "$ART/evidence_gate_result.json" 2>/dev/null || true
+    python3 - "$PROJ_DIR" "$ART" <<'GATE_PASS'
+import json, sys
+from pathlib import Path
+from datetime import datetime, timezone
+proj_dir, art = Path(sys.argv[1]), Path(sys.argv[2])
+gate = {}
+if (art / "evidence_gate_result.json").exists():
+  try:
+    gate = json.loads((art / "evidence_gate_result.json").read_text())
+  except Exception:
+    pass
+d = json.loads((proj_dir / "project.json").read_text())
+d.setdefault("quality_gate", {})["evidence_gate"] = {"status": "passed", "metrics": gate.get("metrics", {}), "reasons": []}
+d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+(proj_dir / "project.json").write_text(json.dumps(d, indent=2))
+GATE_PASS
     # Mark low-reliability sources in project
     if [ -f "$ART/source_reliability.json" ]; then
       python3 - "$PROJ_DIR" "$ART" <<'VERIFY_PY'
@@ -221,36 +262,8 @@ for src in rel.get("sources", []):
       f.write_text(json.dumps(data, indent=2))
 VERIFY_PY
     fi
-    # Loop-back to focus if too many unverified claims (max 2 returns)
-    unverified=0
-    if [ -f "$ART/claim_verification.json" ]; then
-      unverified=$(python3 -c "
-import json, sys
-try:
-  d = json.load(open(sys.argv[1]))
-  claims = d.get('claims', [])
-  n = sum(1 for c in claims if not c.get('verified', False))
-  print(n, end='')
-except Exception:
-  print(0, end='')
-" "$ART/claim_verification.json" 2>/dev/null) || unverified=0
-    fi
-    unverified=${unverified:-0}
-    focus_count=$(python3 -c "
-import json
-try:
-  d = json.load(open('$PROJ_DIR/project.json'))
-  hist = d.get('phase_history', [])
-  print(hist.count('focus'), end='')
-except Exception:
-  print(0, end='')
-" 2>/dev/null) || focus_count=0
-    focus_count=${focus_count:-0}
-    if [ "${unverified:-0}" -gt 2 ] && [ "${focus_count:-0}" -lt 2 ]; then
-      log "Too many unverified claims ($unverified) — looping back to focus"
-      advance_phase "focus"
-    else
-      advance_phase "synthesize"
+    # Evidence gate passed — advance to synthesize (no loop-back; gate already enforces evidence)
+    advance_phase "synthesize"
     fi
     ;;
   synthesize)
@@ -272,36 +285,28 @@ if (proj_dir / "contradictions.json").exists():
   try: contra = json.loads((proj_dir / "contradictions.json").read_text()).get("contradictions", [])
   except: pass
 thesis = json.loads((proj_dir / "thesis.json").read_text())
-# Verify artifacts: read from project verify/ (written by verify phase in same or previous run)
+# Verify artifacts: read from project verify/ (written by verify phase)
 verify_dir = proj_dir / "verify"
 rel_sources = {}
-claims_verified = []
 facts_note = ""
 if (verify_dir / "source_reliability.json").exists():
   try:
     rel = json.loads((verify_dir / "source_reliability.json").read_text())
     rel_sources = {s.get("url"): s for s in rel.get("sources", [])}
   except: pass
-if (verify_dir / "claim_verification.json").exists():
-  try:
-    cv = json.loads((verify_dir / "claim_verification.json").read_text())
-    claims_verified = [c.get("claim", "") for c in cv.get("claims", []) if c.get("verified")]
-  except: pass
 if (verify_dir / "fact_check.json").exists():
   try:
     fc = json.loads((verify_dir / "fact_check.json").read_text())
     facts_note = json.dumps(fc.get("facts", [])[:15])[:800]
   except: pass
-# Build findings text: mark low-reliability sources, add [VERIFIED] for verified claims
+# Synthesis gets neutral data; [VERIFIED] is added deterministically later from claim_ledger
 def finding_line(f):
   url = f.get("url", "")
   low = rel_sources.get(url, {}).get("reliability_score", 1) < 0.3
   tag = " [LOW RELIABILITY]" if low else ""
   return json.dumps({**f, "url": url + tag}, ensure_ascii=False)
 items_text = json.dumps([json.loads(finding_line(f)) for f in findings[:30]], indent=2, ensure_ascii=False)[:15000]
-verify_instruction = ""
-if claims_verified or facts_note:
-  verify_instruction = "\nVERIFIED CLAIMS (mark with [VERIFIED] in report where applicable): " + json.dumps(claims_verified[:20])[:500]
+verify_instruction = "\nDo NOT add [VERIFIED] tags yourself; they will be added automatically from the claim ledger."
 if facts_note:
   verify_instruction += "\nFACT-CHECK SUMMARY: " + facts_note
 prompt = f"""You are a research analyst. Synthesize into a short structured report.
@@ -316,16 +321,41 @@ CURRENT THESIS: {thesis.get('current', '')} (confidence: {thesis.get('confidence
 CONTRADICTIONS TO NOTE: {json.dumps(contra)[:1000]}
 {verify_instruction}
 
-Produce markdown: 1) Executive Summary. 2) Key Findings (bulleted, with source; add [VERIFIED] for claims backed by 2+ sources). 3) Contradictions/Gaps. 4) Conclusion/Thesis. 5) Suggested Next Steps."""
+Produce markdown: 1) Executive Summary. 2) Key Findings (bulleted, with source). 3) Contradictions/Gaps. 4) Conclusion/Thesis. 5) Suggested Next Steps."""
 from openai import OpenAI
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 model = os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gpt-4.1-mini")
 resp = client.responses.create(model=model, input=prompt)
 report = (resp.output_text or "").strip()
-(art / "report.md").write_text(report)
 from datetime import datetime, timezone
 ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+# Deterministic [VERIFIED] from claim_ledger (V3): only ledger-is_verified claims get the tag
+claim_ledger = []
+if (verify_dir / "claim_ledger.json").exists():
+  try:
+    claim_ledger = json.loads((verify_dir / "claim_ledger.json").read_text()).get("claims", [])
+  except: pass
+for c in claim_ledger:
+  if not c.get("is_verified"):
+    continue
+  text = (c.get("text") or "").strip()
+  if not text or " [VERIFIED]" in text:
+    continue
+  if text in report:
+    report = report.replace(text, text + " [VERIFIED]", 1)
+(art / "report.md").write_text(report)
 (proj_dir / "reports" / f"report_{ts}.md").write_text(report)
+# Audit: claim_evidence_map per report
+claim_evidence_map = {"report_id": f"report_{ts}.md", "ts": ts, "claims": []}
+for c in claim_ledger:
+  claim_evidence_map["claims"].append({
+    "claim_id": c.get("claim_id"),
+    "text": (c.get("text") or "")[:500],
+    "is_verified": c.get("is_verified"),
+    "supporting_source_ids": c.get("supporting_source_ids", []),
+  })
+(proj_dir / "reports" / f"claim_evidence_map_{ts}.json").write_text(json.dumps(claim_evidence_map, indent=2))
+(proj_dir / "verify" / "claim_evidence_map_latest.json").write_text(json.dumps(claim_evidence_map, indent=2))
 PY
     # Quality Gate: critic pass, optionally revise if score < 0.6
     python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$PWD/log.txt" || true
@@ -341,14 +371,32 @@ PY
         REV_TS=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'), end='')")
         cp "$ART/revised_report.md" "$PROJ_DIR/reports/report_${REV_TS}_revised.md"
       fi
+      # Re-check score after revision; if still low, fail with failed_quality_gate (V3)
+      SCORE=$(python3 -c "import json; d=json.load(open('$ART/critique.json')); print(d.get('score', 0.5), end='')" 2>/dev/null || echo "0.5")
     fi
-    # Persist quality_gate and critique to project
+    if python3 -c "exit(0 if float('$SCORE') < 0.6 else 1)" 2>/dev/null; then
+      log "Quality gate failed (score $SCORE) — status failed_quality_gate"
+      python3 - "$PROJ_DIR" "$ART" "$SCORE" <<'QF_FAIL'
+import json, sys
+from pathlib import Path
+from datetime import datetime, timezone
+proj_dir, art, score = Path(sys.argv[1]), Path(sys.argv[2]), float(sys.argv[3])
+d = json.loads((proj_dir / "project.json").read_text())
+d["status"] = "failed_quality_gate"
+d.setdefault("quality_gate", {})["critic_score"] = score
+d["quality_gate"]["quality_gate_status"] = "failed"
+d["quality_gate"]["fail_code"] = "failed_quality_gate"
+(proj_dir / "project.json").write_text(json.dumps(d, indent=2))
+QF_FAIL
+    else
+    # Persist quality_gate and critique to project (passed)
     python3 - "$PROJ_DIR" "$ART" "$SCORE" <<'QG'
 import json, sys
 from pathlib import Path
 proj_dir, art, score = Path(sys.argv[1]), Path(sys.argv[2]), float(sys.argv[3])
 d = json.loads((proj_dir / "project.json").read_text())
 d.setdefault("quality_gate", {})["critic_score"] = score
+d["quality_gate"]["quality_gate_status"] = "passed"
 d["quality_gate"]["revision_count"] = 1 if (art / "revised_report.md").exists() and (art / "revised_report.md").stat().st_size > 0 else 0
 if (art / "critique.json").exists():
   try:
@@ -364,16 +412,16 @@ QG
     mkdir -p "$PROJ_DIR/verify"
     [ -f "$ART/critique.json" ] && cp "$ART/critique.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     advance_phase "done"
-    # Telegram: Forschung abgeschlossen
+    # Telegram: Forschung abgeschlossen (only when passed)
     if [ -x "$TOOLS/send-telegram.sh" ]; then
       MSG_FILE=$(mktemp)
       printf "Research abgeschlossen: %s\nFrage: %.200s\nReport: research/%s/reports/\n" "$PROJECT_ID" "$QUESTION" "$PROJECT_ID" >> "$MSG_FILE"
       "$TOOLS/send-telegram.sh" "$MSG_FILE" 2>/dev/null || true
       rm -f "$MSG_FILE"
     fi
-    # Auto-Follow-up: neue Projekte aus Suggested Next Steps (opt-in)
     if [ "${RESEARCH_AUTO_FOLLOWUP:-0}" = "1" ] && [ -f "$TOOLS/research_auto_followup.py" ]; then
       python3 "$TOOLS/research_auto_followup.py" "$PROJECT_ID" >> "$PWD/log.txt" 2>&1 || true
+    fi
     fi
     ;;
   done)
