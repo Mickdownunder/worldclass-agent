@@ -55,5 +55,9 @@ op run <job_id>
 
 ## Dependencies (optional)
 
-- `pip install beautifulsoup4 pypdf` for web reader and PDF extraction.
+- **Reader (required for research-cycle explore):** `beautifulsoup4` for web extraction. Workflows use `OPERATOR_ROOT/.venv` when present:
+  ```bash
+  python3 -m venv .venv && .venv/bin/pip install -r requirements-research.txt
+  ```
+  If `.venv` is missing, preflight fails with `failed_dependency_missing_bs4` and explore does not run.
 - `BRAVE_API_KEY` or `SERPER_API_KEY` in `conf/secrets.env` for web search.

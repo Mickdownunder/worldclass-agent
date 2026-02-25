@@ -7,6 +7,10 @@ OPERATOR_ROOT="${OPERATOR_ROOT:-/root/operator}"
 TOOLS="$OPERATOR_ROOT/tools"
 RESEARCH="$OPERATOR_ROOT/research"
 ART="$PWD/artifacts"
+# Use repo venv when present (research reader needs beautifulsoup4)
+if [ -x "$OPERATOR_ROOT/.venv/bin/python3" ]; then
+  export PATH="$OPERATOR_ROOT/.venv/bin:$PATH"
+fi
 mkdir -p "$ART"
 
 if [ -f "job.json" ]; then
