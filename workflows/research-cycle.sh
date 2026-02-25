@@ -36,6 +36,18 @@ from datetime import datetime, timezone
 p = Path(sys.argv[1])
 new_phase = sys.argv[2]
 d = json.loads((p / "project.json").read_text())
+# Phase history for loop-back limit (max 2 returns to same phase)
+d.setdefault("phase_history", []).append(new_phase)
+loop_count = d["phase_history"].count(new_phase)
+if loop_count > 2:
+  # Force advance to next phase instead of looping back
+  order = ["explore", "focus", "connect", "verify", "synthesize", "done"]
+  try:
+    idx = order.index(new_phase)
+    if idx < len(order) - 1:
+      new_phase = order[idx + 1]
+  except ValueError:
+    pass
 d["phase"] = new_phase
 d["last_phase_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 if new_phase == "done":
@@ -147,8 +159,64 @@ PY
     advance_phase "verify"
     ;;
   verify)
-    log "Phase: VERIFY — optional extra reads; then synthesize"
-    advance_phase "synthesize"
+    log "Phase: VERIFY — source reliability, claim verification, fact-check"
+    python3 "$TOOLS/research_verify.py" "$PROJECT_ID" source_reliability > "$ART/source_reliability.json" 2>> "$PWD/log.txt" || true
+    python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification > "$ART/claim_verification.json" 2>> "$PWD/log.txt" || true
+    python3 "$TOOLS/research_verify.py" "$PROJECT_ID" fact_check > "$ART/fact_check.json" 2>> "$PWD/log.txt" || true
+    # Mark low-reliability sources in project
+    if [ -f "$ART/source_reliability.json" ]; then
+      python3 - "$PROJ_DIR" "$ART" <<'VERIFY_PY'
+import json, sys
+from pathlib import Path
+proj_dir, art = Path(sys.argv[1]), Path(sys.argv[2])
+try:
+  rel = json.loads((art / "source_reliability.json").read_text())
+except Exception:
+  sys.exit(0)
+sources_dir = proj_dir / "sources"
+for src in rel.get("sources", []):
+  if src.get("reliability_score", 1.0) < 0.3:
+    url = src.get("url", "")
+    if not url:
+      continue
+    import hashlib
+    fid = hashlib.sha256(url.encode()).hexdigest()[:12]
+    f = sources_dir / f"{fid}.json"
+    if f.exists():
+      data = json.loads(f.read_text())
+      data["low_reliability"] = True
+      data["reliability_score"] = src.get("reliability_score", 0)
+      f.write_text(json.dumps(data, indent=2))
+VERIFY_PY
+    fi
+    # Loop-back to focus if too many unverified claims (max 2 returns)
+    unverified=0
+    if [ -f "$ART/claim_verification.json" ]; then
+      unverified=$(python3 -c "
+import json, sys
+from pathlib import Path
+try:
+  d = json.load(open(sys.argv[1]))
+  claims = d.get('claims', [])
+  n = sum(1 for c in claims if not c.get('verified', False))
+  print(n, end='')
+except Exception:
+  print(0, end='')
+" "$ART/claim_verification.json")
+    fi
+    focus_count=$(python3 -c "
+import json
+from pathlib import Path
+d = json.load(open('$PROJ_DIR/project.json'))
+hist = d.get('phase_history', [])
+print(hist.count('focus'), end='')
+")
+    if [ "$unverified" -gt 2 ] && [ "$focus_count" -lt 2 ]; then
+      log "Too many unverified claims ($unverified) — looping back to focus"
+      advance_phase "focus"
+    else
+      advance_phase "synthesize"
+    fi
     ;;
   synthesize)
     log "Phase: SYNTHESIZE — report"
@@ -193,6 +261,17 @@ ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 (proj_dir / "reports" / f"report_{ts}.md").write_text(report)
 PY
     advance_phase "done"
+    # Telegram: Forschung abgeschlossen
+    if [ -x "$TOOLS/send-telegram.sh" ]; then
+      MSG_FILE=$(mktemp)
+      printf "Research abgeschlossen: %s\nFrage: %.200s\nReport: research/%s/reports/\n" "$PROJECT_ID" "$QUESTION" "$PROJECT_ID" >> "$MSG_FILE"
+      "$TOOLS/send-telegram.sh" "$MSG_FILE" 2>/dev/null || true
+      rm -f "$MSG_FILE"
+    fi
+    # Auto-Follow-up: neue Projekte aus Suggested Next Steps (opt-in)
+    if [ "${RESEARCH_AUTO_FOLLOWUP:-0}" = "1" ] && [ -f "$TOOLS/research_auto_followup.py" ]; then
+      python3 "$TOOLS/research_auto_followup.py" "$PROJECT_ID" >> "$PWD/log.txt" 2>&1 || true
+    fi
     ;;
   done)
     log "Project already done."

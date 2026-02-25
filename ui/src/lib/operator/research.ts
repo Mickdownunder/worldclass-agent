@@ -140,3 +140,101 @@ export async function getLatestReportMarkdown(projectId: string): Promise<string
     return null;
   }
 }
+
+export interface Finding {
+  id: string;
+  url?: string;
+  title?: string;
+  excerpt?: string;
+  source?: string;
+  confidence?: number;
+}
+
+export async function getFindings(projectId: string): Promise<Finding[]> {
+  const projPath = safeProjectPath(projectId);
+  const findingsDir = path.join(projPath, "findings");
+  try {
+    const files = await readdir(findingsDir);
+    const jsonFiles = files.filter((f) => f.endsWith(".json") && !f.includes("_content"));
+    const findings: Finding[] = [];
+    for (const f of jsonFiles.sort()) {
+      try {
+        const raw = await readFile(path.join(findingsDir, f), "utf8");
+        const data = JSON.parse(raw) as Record<string, unknown>;
+        findings.push({
+          id: f.replace(".json", ""),
+          url: typeof data.url === "string" ? data.url : undefined,
+          title: typeof data.title === "string" ? data.title : undefined,
+          excerpt: typeof data.excerpt === "string" ? data.excerpt : undefined,
+          source: typeof data.source === "string" ? data.source : undefined,
+          confidence: typeof data.confidence === "number" ? data.confidence : undefined,
+        });
+      } catch {
+        findings.push({ id: f.replace(".json", "") });
+      }
+    }
+    return findings;
+  } catch {
+    return [];
+  }
+}
+
+export interface Source {
+  id: string;
+  url?: string;
+  type?: string;
+  confidence?: number;
+}
+
+export async function getSources(projectId: string): Promise<Source[]> {
+  const projPath = safeProjectPath(projectId);
+  const sourcesDir = path.join(projPath, "sources");
+  try {
+    const files = await readdir(sourcesDir);
+    const jsonFiles = files.filter((f) => f.endsWith(".json") && !f.includes("_content"));
+    const sources: Source[] = [];
+    for (const f of jsonFiles.sort()) {
+      try {
+        const raw = await readFile(path.join(sourcesDir, f), "utf8");
+        const data = JSON.parse(raw) as Record<string, unknown>;
+        sources.push({
+          id: f.replace(".json", ""),
+          url: typeof data.url === "string" ? data.url : undefined,
+          type: typeof data.source_quality === "string" ? data.source_quality : undefined,
+          confidence: typeof data.confidence === "number" ? data.confidence : undefined,
+        });
+      } catch {
+        sources.push({ id: f.replace(".json", "") });
+      }
+    }
+    return sources;
+  } catch {
+    return [];
+  }
+}
+
+export interface ReportEntry {
+  filename: string;
+  content: string;
+}
+
+export async function getAllReports(projectId: string): Promise<ReportEntry[]> {
+  const projPath = safeProjectPath(projectId);
+  const reportsDir = path.join(projPath, "reports");
+  try {
+    const files = await readdir(reportsDir);
+    const mdFiles = files.filter((f) => f.endsWith(".md")).sort().reverse();
+    const reports: ReportEntry[] = [];
+    for (const f of mdFiles) {
+      try {
+        const content = await readFile(path.join(reportsDir, f), "utf8");
+        reports.push({ filename: f, content });
+      } catch {
+        reports.push({ filename: f, content: "" });
+      }
+    }
+    return reports;
+  } catch {
+    return [];
+  }
+}

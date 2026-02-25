@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback } from "react";
+import { MarkdownView } from "@/components/MarkdownView";
 
 export function ReportView({
   markdown,
@@ -28,15 +29,13 @@ export function ReportView({
         <button
           type="button"
           onClick={downloadMd}
-          className="rounded border border-[#00d4ff]/40 px-3 py-1 text-sm text-[#00d4ff] hover:bg-[#00d4ff]/10"
+          className="rounded border border-tron-accent/40 px-3 py-1 text-sm text-tron-accent hover:bg-tron-accent/10"
         >
           Download .md
         </button>
       </div>
-      <div className="max-h-[70vh] overflow-auto rounded bg-[#0a0a0f] p-4">
-        <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-[#c0e0ff]">
-          {markdown}
-        </pre>
+      <div className="max-h-[70vh] overflow-auto rounded bg-tron-bg p-4">
+        <MarkdownView content={markdown} className="text-sm leading-relaxed" />
       </div>
     </div>
   );

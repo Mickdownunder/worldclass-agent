@@ -1,0 +1,239 @@
+@import "tailwindcss";
+
+/* 80s Synthwave / Tron — Dark (default) */
+:root {
+  --tron-bg: #05020a;
+  --tron-bg-panel: rgba(13, 6, 28, 0.85);
+  --tron-border: #00d4ff;
+  --tron-accent: #ff00aa;
+  --tron-accent-dim: rgba(255, 0, 170, 0.2);
+  --tron-text: #e0f2fe;
+  --tron-text-muted: #88aacc;
+  --tron-text-dim: #4a6b8c;
+  --tron-success: #00aa77;
+  --tron-error: #cc0044;
+  --tron-glow: rgba(0, 212, 255, 0.5);
+  --tron-glow-accent: rgba(255, 0, 170, 0.6);
+  --tron-grid: rgba(255, 0, 170, 0.2);
+}
+
+/* Light mode — same 80s vibe, bright background */
+html[data-theme="light"] {
+  --tron-bg: #f0f4ff;
+  --tron-bg-panel: rgba(255, 252, 245, 0.95);
+  --tron-border: #0099cc;
+  --tron-accent: #cc0088;
+  --tron-accent-dim: rgba(204, 0, 136, 0.25);
+  --tron-text: #1a1a2e;
+  --tron-text-muted: #4a5568;
+  --tron-text-dim: #718096;
+  --tron-success: #00885a;
+  --tron-error: #bb2244;
+  --tron-glow: rgba(0, 153, 204, 0.35);
+  --tron-glow-accent: rgba(204, 0, 136, 0.4);
+  --tron-grid: rgba(204, 0, 136, 0.12);
+}
+
+@theme inline {
+  --color-background: var(--tron-bg);
+  --color-foreground: var(--tron-text);
+  --color-tron-bg: var(--tron-bg);
+  --color-tron-panel: var(--tron-bg-panel);
+  --color-tron-border: var(--tron-border);
+  --color-tron-accent: var(--tron-accent);
+  --color-tron-accent-dim: var(--tron-accent-dim);
+  --color-tron-text: var(--tron-text);
+  --color-tron-muted: var(--tron-text-muted);
+  --color-tron-dim: var(--tron-text-dim);
+  --color-tron-success: var(--tron-success);
+  --color-tron-error: var(--tron-error);
+  --font-sans: "Inter", var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  background: var(--tron-bg);
+  background-attachment: fixed;
+  color: var(--tron-text);
+  font-family: var(--font-mono); /* Monospace gives a better 80s hacker vibe */
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  position: relative;
+  overflow-x: hidden;
+}
+
+/* 80s Synthwave Grid Background (dark only; light uses subtler grid) */
+body::before {
+  content: "";
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  width: 100vw;
+  height: 50vh;
+  background-image:
+    linear-gradient(transparent 60%, var(--tron-grid) 100%),
+    linear-gradient(90deg, transparent 96%, var(--tron-grid) 100%),
+    linear-gradient(0deg, transparent 96%, var(--tron-grid) 100%);
+  background-size: 100% 100%, 40px 40px, 40px 40px;
+  transform: perspective(600px) rotateX(60deg) translateY(100px) translateZ(-200px);
+  transform-origin: bottom center;
+  z-index: -2;
+  pointer-events: none;
+}
+
+html[data-theme="light"] body::before {
+  opacity: 0.5;
+}
+
+/* Subtle Scanlines (lighter in light mode) */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 212, 255, 0.03) 2px,
+    rgba(0, 212, 255, 0.03) 4px
+  );
+  z-index: 9999;
+}
+
+html[data-theme="light"] body::after {
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 153, 204, 0.04) 2px,
+    rgba(0, 153, 204, 0.04) 4px
+  );
+}
+
+/* 80s Panel styling - Blocky, glowing */
+.tron-panel {
+  background: var(--tron-bg-panel);
+  border: 2px solid var(--tron-border);
+  border-radius: 4px; /* Less rounded, more 80s */
+  box-shadow: 0 0 15px var(--tron-glow), inset 0 0 10px var(--tron-glow);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+/* Add corner brackets effect for true 80s sci-fi feel */
+.tron-panel::before,
+.tron-panel::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--tron-accent);
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+.tron-panel::before {
+  top: -2px;
+  left: -2px;
+  border-right: none;
+  border-bottom: none;
+  box-shadow: -2px -2px 5px var(--tron-glow-accent);
+}
+
+.tron-panel::after {
+  bottom: -2px;
+  right: -2px;
+  border-left: none;
+  border-top: none;
+  box-shadow: 2px 2px 5px var(--tron-glow-accent);
+}
+
+a.tron-panel:hover {
+  border-color: var(--tron-accent);
+  box-shadow: 0 0 20px var(--tron-glow-accent), inset 0 0 15px var(--tron-glow-accent);
+  transform: translateY(-2px);
+}
+
+/* Glowing text classes */
+.text-glow-cyan {
+  text-shadow: 0 0 8px var(--tron-glow);
+}
+
+.text-glow-pink {
+  text-shadow: 0 0 8px var(--tron-glow-accent);
+}
+
+/* Custom 80s scrollbar */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track {
+  background: var(--tron-bg);
+  border-left: 1px solid var(--tron-border);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--tron-border);
+  border: 1px solid var(--tron-bg);
+  box-shadow: 0 0 10px var(--tron-glow);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--tron-accent);
+  box-shadow: 0 0 10px var(--tron-glow-accent);
+}
+
+/* Page transition */
+@keyframes fade-in {
+  from { opacity: 0; filter: blur(4px) brightness(1.5); }
+  to { opacity: 1; filter: blur(0) brightness(1); }
+}
+.animate-fade-in {
+  animation: fade-in 0.4s ease-out forwards;
+}
+
+/* Global Typography tweaks for 80s feel */
+h1, h2, h3, h4, h5, h6 {
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* Leseschrift für Reports (Markdown) */
+.report-prose {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.125rem; /* Etwas größer für bessere Lesbarkeit */
+  line-height: 1.7;
+}
+
+.report-prose h1,
+.report-prose h2,
+.report-prose h3,
+.report-prose h4,
+.report-prose h5,
+.report-prose h6 {
+  text-transform: none; /* Im Report nicht zwingend uppercase */
+  letter-spacing: normal;
+  font-family: "Inter", sans-serif; /* Überschriften ruhig in sans-serif */
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  color: var(--tron-accent);
+}
+
+.report-prose p {
+  margin-bottom: 1em;
+  color: var(--tron-text);
+}
+
+.report-prose li {
+  margin-bottom: 0.5em;
+  color: var(--tron-text);
+}
+
+.report-prose code,
+.report-prose pre {
+  font-family: var(--font-mono);
+}
+

@@ -1,5 +1,8 @@
 import Link from "next/link";
 import { listResearchProjects } from "@/lib/operator/research";
+import { StatusBadge } from "@/components/StatusBadge";
+import { EmptyState } from "@/components/EmptyState";
+import { CreateProjectForm } from "@/components/CreateProjectForm";
 
 export const dynamic = "force-dynamic";
 
@@ -8,56 +11,56 @@ export default async function ResearchPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-wide text-[#00d4ff]">
-        Research
+      <h1 className="text-3xl font-bold tracking-tight text-tron-text">
+        Forschungsprojekte
       </h1>
 
-      <p className="max-w-xl text-sm text-[#88aacc]">
-        Autonome Forschungsprojekte. Jedes Projekt durchläuft Phasen: Explore → Focus → Connect → Verify → Synthesize. Reports erscheinen unter „Reports“ pro Projekt.
+      <p className="max-w-xl text-sm text-tron-muted">
+        Deine Forschungsprojekte. Klicke auf ein Projekt, um Fortschritt und Report zu sehen.
       </p>
 
+      <CreateProjectForm />
+
       {projects.length === 0 ? (
-        <div className="tron-panel p-6 text-[#6688aa]">
-          Noch keine Research-Projekte. Erstelle eines per Job: <code className="text-[#00d4ff]">op job new --workflow research-init --request &quot;Deine Frage&quot;</code>
-        </div>
+        <EmptyState
+          title="Noch keine Projekte."
+          description="Erstelle oben ein neues Forschungsprojekt."
+        />
       ) : (
-        <div className="tron-panel overflow-hidden">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-[#00d4ff]/20 text-[#88aacc]">
-                <th className="p-3">Projekt</th>
-                <th className="p-3">Frage</th>
-                <th className="p-3">Status / Phase</th>
-                <th className="p-3">Findings</th>
-                <th className="p-3">Reports</th>
-                <th className="p-3"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {projects.map((p) => (
-                <tr key={p.id} className="border-b border-[#00d4ff]/10">
-                  <td className="p-3 font-mono text-[#00d4ff]">{p.id}</td>
-                  <td className="max-w-md truncate p-3 text-[#c0e0ff]" title={p.question}>
-                    {p.question}
-                  </td>
-                  <td className="p-3">
-                    <span className="text-[#88aacc]">{p.status}</span>
-                    <span className="ml-1 text-[#6688aa]">/ {p.phase}</span>
-                  </td>
-                  <td className="p-3 text-[#c0e0ff]">{p.findings_count}</td>
-                  <td className="p-3 text-[#c0e0ff]">{p.reports_count}</td>
-                  <td className="p-3">
-                    <Link
-                      href={`/research/${p.id}`}
-                      className="text-[#00d4ff] hover:underline"
-                    >
-                      Öffnen
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="grid gap-4 mt-6">
+          {projects.map((p) => (
+            <Link
+              key={p.id}
+              href={`/research/${p.id}`}
+              className="tron-panel block border-tron-border p-5 transition-all hover:border-tron-accent hover:shadow-[0_0_20px_var(--tron-glow-accent)]"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
+                <div className="space-y-1.5">
+                  <h3 className="text-lg font-semibold text-tron-text leading-snug">
+                    {p.question || "Ohne Forschungsfrage"}
+                  </h3>
+                  <div className="text-xs text-tron-dim font-mono">Projekt-ID: {p.id}</div>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-2">
+                  <StatusBadge status={p.status} className="shadow-sm" />
+                  <span className="text-sm font-bold uppercase text-tron-accent tracking-widest text-shadow-[0_0_8px_var(--tron-glow)]">
+                    Phase: {p.phase}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="mt-4 flex flex-wrap gap-4 text-sm text-tron-muted border-t border-tron-border/30 pt-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-tron-text font-medium">{p.findings_count}</span>
+                  <span>Findings</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-tron-text font-medium">{p.reports_count}</span>
+                  <span>Reports</span>
+                </div>
+              </div>
+            </Link>
+          ))}
         </div>
       )}
     </div>

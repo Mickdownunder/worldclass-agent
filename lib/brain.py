@@ -34,6 +34,7 @@ JOBS = BASE / "jobs"
 WORKFLOWS = BASE / "workflows"
 KNOWLEDGE = BASE / "knowledge"
 FACTORY = BASE / "factory"
+RESEARCH = BASE / "research"
 
 GOVERNANCE_LEVELS = {
     0: "report_only",
@@ -167,6 +168,50 @@ class Brain:
             except OSError:
                 pass
 
+        # Research projects (phase, question, status; not done first)
+        research_projects = []
+        if RESEARCH.exists():
+            for proj_dir in sorted(RESEARCH.iterdir(), reverse=True):
+                if not proj_dir.is_dir() or not proj_dir.name.startswith("proj-"):
+                    continue
+                proj_json = proj_dir / "project.json"
+                if not proj_json.exists():
+                    continue
+                try:
+                    d = json.loads(proj_json.read_text())
+                    research_projects.append({
+                        "id": d.get("id", proj_dir.name),
+                        "question": (d.get("question", "") or "")[:150],
+                        "phase": d.get("phase", "?"),
+                        "status": d.get("status", "?"),
+                        "last_phase_at": d.get("last_phase_at", d.get("created_at", "")),
+                    })
+                except (json.JSONDecodeError, OSError):
+                    pass
+            # Sort: not done first, then by last_phase_at
+            def _research_sort(p):
+                return (0 if p.get("status") != "done" else 1, p.get("last_phase_at", "") or "")
+            research_projects.sort(key=_research_sort)
+            state["research_projects"] = research_projects[:25]
+        else:
+            state["research_projects"] = []
+
+        # Research playbooks (domain, strategy for Think)
+        research_playbooks = []
+        playbooks_dir = RESEARCH / "playbooks"
+        if playbooks_dir.exists():
+            for f in sorted(playbooks_dir.glob("*.json")):
+                try:
+                    d = json.loads(f.read_text())
+                    research_playbooks.append({
+                        "domain": d.get("domain", d.get("id", f.stem)),
+                        "name": d.get("name", ""),
+                        "strategy": (d.get("strategy", "") or "")[:400],
+                    })
+                except (json.JSONDecodeError, OSError):
+                    pass
+        state["research_playbooks"] = research_playbooks
+
         # Memory state
         state["memory"] = self.memory.state_summary()
 
@@ -176,7 +221,9 @@ class Brain:
             "mode": GOVERNANCE_LEVELS.get(self.governance_level, "unknown"),
         }
 
-        self.memory.record_episode("perceive", f"Perceived system state: {len(recent_jobs)} recent jobs, {len(clients)} clients", metadata={"state_keys": list(state.keys())})
+        n_research = len(state.get("research_projects", []))
+        n_not_done = sum(1 for p in state.get("research_projects", []) if p.get("status") != "done")
+        self.memory.record_episode("perceive", f"Perceived system state: {len(recent_jobs)} recent jobs, {len(clients)} clients, {n_research} research projects ({n_not_done} not done)", metadata={"state_keys": list(state.keys())})
 
         return state
 
@@ -204,7 +251,9 @@ Your output MUST be valid JSON with this structure:
 
 Be specific. Reference actual workflows, clients, and data from the state.
 If memory shows past failures, account for them.
-If playbooks exist for relevant domains, follow their strategies."""
+If playbooks exist for relevant domains, follow their strategies.
+
+Research: If state contains "research_projects" with projects where status != "done" and phase is not "done", consider suggesting "research-cycle" as an action with the project id as reason/context (e.g. action "research-cycle", reason "advance project <project_id>"). Prefer one research-cycle per plan step. Use the workflow id "research-cycle" and the request must be the project id. Research playbooks in state (research_playbooks) describe strategies for different research domains; use them when planning research-related actions."""
 
         state_compact = json.dumps(state, indent=2, default=str)
         if len(state_compact) > 12000:
@@ -317,8 +366,18 @@ If playbooks exist for relevant domains, follow their strategies."""
         if workflow:
             try:
                 op = str(BASE / "bin" / "op")
+                reason = (decision.get("reason") or "").strip()
+                if workflow == "research-cycle":
+                    import re
+                    if reason.startswith("proj-"):
+                        request = reason
+                    else:
+                        m = re.search(r"proj-[a-zA-Z0-9_-]+", reason)
+                        request = m.group(0) if m else reason or "unknown"
+                else:
+                    request = f"brain::{reason}"
                 job_dir = subprocess.check_output(
-                    [op, "job", "new", "--workflow", workflow, "--request", f"brain::{decision.get('reason', '')}"],
+                    [op, "job", "new", "--workflow", workflow, "--request", request],
                     text=True,
                 ).strip()
 
