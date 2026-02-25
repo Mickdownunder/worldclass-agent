@@ -50,7 +50,7 @@ for name in ["web_search.json", "semantic_scholar.json", "arxiv.json"]:
     data = json.loads(p.read_text())
   except Exception:
     continue
-  for item in data if isinstance(data, list) else []:
+  for item in (data if isinstance(data, list) else []):
     url = (item.get("url") or "").strip()
     if not url or url in seen:
       continue

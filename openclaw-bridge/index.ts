@@ -418,11 +418,17 @@ export default function (api: any) {
       const raw = (ctx.args || "").trim();
       if (!raw) return { text: "Usage: /research-feedback <project_id> <type> [comment]\ntype: dig_deeper | wrong | excellent | ignore | redirect" };
       try {
-        const escaped = raw.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-        const out = runShell(
-          `python3 /root/operator/tools/research_feedback.py "${escaped}"`,
-          15_000
-        );
+        const parts = raw.split(/\s+/);
+        const projectId = parts[0] || "";
+        const fbType = parts[1] || "";
+        const comment = parts.slice(2).join(" ");
+        const args = comment
+          ? ["/root/operator/tools/research_feedback.py", projectId, fbType, comment]
+          : ["/root/operator/tools/research_feedback.py", projectId, fbType];
+        const out = execFileSync("python3", args, {
+          encoding: "utf8",
+          timeout: 15_000,
+        }).trim();
         const data = JSON.parse(out);
         if (data.ok) {
           return { text: `Feedback recorded: ${data.type}${data.type === "redirect" ? " (question added)" : ""}.` };

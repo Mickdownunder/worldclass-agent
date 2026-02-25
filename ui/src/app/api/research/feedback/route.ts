@@ -41,6 +41,9 @@ export async function POST(request: NextRequest) {
       let stderr = "";
       proc.stdout?.on("data", (d) => { stdout += d.toString(); });
       proc.stderr?.on("data", (d) => { stderr += d.toString(); });
+      proc.on("error", (err) => {
+        resolve({ ok: false, error: err.message });
+      });
       proc.on("close", (code) => {
         if (code !== 0) {
           resolve({ ok: false, error: stderr || stdout || `Exit ${code}` });

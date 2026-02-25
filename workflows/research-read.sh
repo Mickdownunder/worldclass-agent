@@ -41,6 +41,12 @@ if [ ${#URLS[@]} -eq 0 ]; then
   done
 fi
 
+if [ ${#URLS[@]} -eq 0 ]; then
+  echo "No URLs to read" >> "$PWD/log.txt"
+  echo "done"
+  exit 0
+fi
+
 count=0
 for url in "${URLS[@]:0:$MAX_READ}"; do
   [ -n "$url" ] || continue

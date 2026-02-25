@@ -4,6 +4,19 @@ import { OPERATOR_ROOT } from "./config";
 
 const RESEARCH_ROOT = path.join(OPERATOR_ROOT, "research");
 
+const PROJECT_ID_RE = /^proj-[a-zA-Z0-9_-]+$/;
+
+function safeProjectPath(projectId: string): string {
+  if (!PROJECT_ID_RE.test(projectId)) {
+    throw new Error("Invalid project ID");
+  }
+  const resolved = path.resolve(RESEARCH_ROOT, projectId);
+  if (!resolved.startsWith(RESEARCH_ROOT + path.sep)) {
+    throw new Error("Invalid project path");
+  }
+  return resolved;
+}
+
 export interface ResearchProjectSummary {
   id: string;
   question: string;
@@ -68,7 +81,7 @@ export async function listResearchProjects(): Promise<ResearchProjectSummary[]> 
 }
 
 export async function getResearchProject(projectId: string): Promise<ResearchProjectDetail | null> {
-  const projPath = path.join(RESEARCH_ROOT, projectId);
+  const projPath = safeProjectPath(projectId);
   try {
     const raw = await readFile(path.join(projPath, "project.json"), "utf8");
     const data = JSON.parse(raw);
@@ -115,7 +128,7 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
 }
 
 export async function getLatestReportMarkdown(projectId: string): Promise<string | null> {
-  const projPath = path.join(RESEARCH_ROOT, projectId);
+  const projPath = safeProjectPath(projectId);
   try {
     const reportsDir = path.join(projPath, "reports");
     const files = await readdir(reportsDir);

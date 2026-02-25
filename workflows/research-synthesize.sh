@@ -61,8 +61,8 @@ resp = client.responses.create(model="gpt-4.1-mini", input=prompt)
 report = (resp.output_text or "").strip()
 (art / "report.md").write_text(report)
 # Also save to project reports
-import datetime
-ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+from datetime import datetime, timezone
+ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 (proj_dir / "reports" / f"report_{ts}.md").write_text(report)
 PY
 

@@ -132,7 +132,8 @@ class Memory:
                 project_b       TEXT NOT NULL,
                 similarity      REAL NOT NULL,
                 ts              TEXT NOT NULL,
-                notified        INTEGER DEFAULT 0
+                notified        INTEGER DEFAULT 0,
+                UNIQUE(finding_a_id, finding_b_id)
             );
             CREATE INDEX IF NOT EXISTS idx_research_findings_project ON research_findings(project_id);
             CREATE INDEX IF NOT EXISTS idx_cross_links_projects ON cross_links(project_a, project_b);
@@ -345,7 +346,7 @@ class Memory:
         fid = _hash(f"rf:{project_id}:{finding_key}:{time.time_ns()}")
         self._conn.execute(
             "INSERT INTO research_findings (id, project_id, finding_key, content_preview, embedding_json, ts, url, title) VALUES (?,?,?,?,?,?,?,?)",
-            (fid, project_id, finding_key, content_preview[:4000], embedding_json, _utcnow(), url or "", title or ""),
+            (fid, project_id, finding_key, content_preview[:4000], embedding_json, _utcnow(), url, title),
         )
         self._conn.commit()
         return fid
@@ -366,7 +367,7 @@ class Memory:
     ) -> str:
         lid = _hash(f"cl:{finding_a_id}:{finding_b_id}:{time.time_ns()}")
         self._conn.execute(
-            "INSERT INTO cross_links (id, finding_a_id, finding_b_id, project_a, project_b, similarity, ts) VALUES (?,?,?,?,?,?,?)",
+            "INSERT OR IGNORE INTO cross_links (id, finding_a_id, finding_b_id, project_a, project_b, similarity, ts) VALUES (?,?,?,?,?,?,?)",
             (lid, finding_a_id, finding_b_id, project_a, project_b, similarity, _utcnow()),
         )
         self._conn.commit()

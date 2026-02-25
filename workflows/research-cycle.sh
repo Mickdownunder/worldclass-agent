@@ -51,14 +51,14 @@ case "$PHASE" in
     python3 "$TOOLS/research_academic.py" semantic_scholar "$QUESTION" --max 5 > "$ART/semantic_scholar.json" 2>> "$PWD/log.txt" || true
     python3 "$TOOLS/research_academic.py" arxiv "$QUESTION" --max 5 > "$ART/arxiv.json" 2>> "$PWD/log.txt" || true
     python3 - "$PROJ_DIR" "$ART" <<'PY'
-import json, hashlib
+import json, sys, hashlib
 from pathlib import Path
 proj_dir, art = Path(sys.argv[1]), Path(sys.argv[2])
 for name in ["web_search.json", "semantic_scholar.json", "arxiv.json"]:
   f = art / name
   if not f.exists(): continue
   try: data = json.loads(f.read_text())
-  except: continue
+  except Exception: continue
   for item in (data if isinstance(data, list) else []):
     url = (item.get("url") or "").strip()
     if not url: continue
@@ -74,7 +74,7 @@ PY
       [ -n "$url" ] || continue
       python3 "$TOOLS/research_web_reader.py" "$url" > "$ART/read_result.json" 2>> "$PWD/log.txt" || continue
       python3 - "$PROJ_DIR" "$ART" "$url" <<'INNER'
-import json, hashlib
+import json, sys, hashlib
 from pathlib import Path
 proj_dir, art, url = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 data = json.loads((art / "read_result.json").read_text())
@@ -94,16 +94,21 @@ INNER
     python3 "$TOOLS/research_reason.py" "$PROJECT_ID" gap_analysis > "$ART/gaps.json" 2>> "$PWD/log.txt" || true
     # One extra search from top gap and merge to project sources
     if [ -f "$ART/gaps.json" ]; then
-      extra_query=$(python3 -c "
-import json
-d=json.load(open('$ART/gaps.json'))
-gaps=d.get('gaps',[])[:1]
-q=gaps[0].get('suggested_search','') if gaps else ''
-print(q or '$QUESTION', end='')
-")
+      extra_query=$(python3 - "$ART/gaps.json" "$QUESTION" <<'GAPPY'
+import json, sys
+gaps_file, fallback = sys.argv[1], sys.argv[2]
+try:
+    d = json.load(open(gaps_file))
+    gaps = d.get("gaps", [])[:1]
+    q = gaps[0].get("suggested_search", "") if gaps else ""
+    print(q or fallback, end="")
+except Exception:
+    print(fallback, end="")
+GAPPY
+)
       python3 "$TOOLS/research_web_search.py" "$extra_query" --max 5 > "$ART/focus_search.json" 2>> "$PWD/log.txt" || true
       python3 - "$PROJ_DIR" "$ART" <<'PY'
-import json, hashlib
+import json, sys, hashlib
 from pathlib import Path
 proj_dir, art = Path(sys.argv[1]), Path(sys.argv[2])
 f = art / "focus_search.json"
@@ -126,7 +131,7 @@ PY
     python3 "$TOOLS/research_reason.py" "$PROJECT_ID" hypothesis_formation > "$ART/hypotheses.json" 2>> "$PWD/log.txt" || true
     if [ -f "$ART/hypotheses.json" ]; then
       python3 - "$PROJ_DIR" "$ART" <<'PY'
-import json
+import json, sys
 from pathlib import Path
 p = Path(sys.argv[1])
 art = Path(sys.argv[2])
@@ -148,7 +153,7 @@ PY
   synthesize)
     log "Phase: SYNTHESIZE — report"
     export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
-    RESEARCH_SYNTHESIS_MODEL="${RESEARCH_SYNTHESIS_MODEL:-gpt-4.1-mini}"
+    export RESEARCH_SYNTHESIS_MODEL="${RESEARCH_SYNTHESIS_MODEL:-gpt-4.1-mini}"
     python3 - "$PROJ_DIR" "$ART" "$OPERATOR_ROOT" <<'PY'
 import json, os, sys
 from pathlib import Path
@@ -183,8 +188,8 @@ model = os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gpt-4.1-mini")
 resp = client.responses.create(model=model, input=prompt)
 report = (resp.output_text or "").strip()
 (art / "report.md").write_text(report)
-import datetime
-ts = datetime.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+from datetime import datetime, timezone
+ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 (proj_dir / "reports" / f"report_{ts}.md").write_text(report)
 PY
     advance_phase "done"
