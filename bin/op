@@ -1,0 +1,441 @@
+#!/usr/bin/env python3
+"""
+Operator CLI — Job lifecycle management.
+
+Usage:
+  op job new   --workflow <id> --request <text> [--timeout <secs>]
+  op job status [--limit N]
+  op job get    <job_id>
+  op run        <job_dir|job_id> [--timeout <secs>]
+  op retry      <job_dir|job_id> [--max-retries N]
+  op healthcheck
+"""
+
+import sys, json, time, uuid, subprocess, os, fcntl, signal
+from pathlib import Path
+from datetime import datetime, timezone
+
+BASE = Path.home() / "operator"
+JOBS = BASE / "jobs"
+WFS  = BASE / "workflows"
+CONF = BASE / "conf"
+LIB  = BASE / "lib"
+
+DEFAULT_TIMEOUT = 300
+MAX_RETRIES = 3
+
+sys.path.insert(0, str(BASE))
+
+
+def utcnow():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def today():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def job_dir_for_id(job_id: str) -> Path | None:
+    for day_dir in sorted(JOBS.glob("*"), reverse=True):
+        candidate = day_dir / job_id
+        if candidate.is_dir() and (candidate / "job.json").exists():
+            return candidate
+    return None
+
+
+def resolve_job_path(ref: str) -> Path:
+    """Accept either a full path or a bare job_id."""
+    p = Path(ref).expanduser().resolve()
+    if p.is_dir() and (p / "job.json").exists():
+        return p
+    found = job_dir_for_id(ref)
+    if found:
+        return found
+    print(f"ERROR: job not found: {ref}", file=sys.stderr)
+    sys.exit(2)
+
+
+def create_job_dir(job_id: str) -> Path:
+    d = JOBS / today() / job_id
+    (d / "artifacts").mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def load_policy() -> str:
+    penv = CONF / "policy.env"
+    if not penv.exists():
+        return "READ_ONLY"
+    for line in penv.read_text().splitlines():
+        if line.startswith("WRITE_SCOPE="):
+            return line.split("=", 1)[1].strip()
+    return "READ_ONLY"
+
+
+def load_job(d: Path) -> dict:
+    return json.loads((d / "job.json").read_text())
+
+
+def save_job(d: Path, job: dict):
+    (d / "job.json").write_text(json.dumps(job, indent=2) + "\n")
+
+
+def log_event(d: Path, message: str):
+    with open(d / "log.txt", "a") as f:
+        f.write(f"[{utcnow()}] {message}\n")
+
+
+class JobLock:
+    """File-based lock to prevent concurrent runs of the same job."""
+
+    def __init__(self, job_dir: Path):
+        self._path = job_dir / ".lock"
+        self._fd = None
+
+    def acquire(self) -> bool:
+        self._fd = open(self._path, "w")
+        try:
+            fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self._fd.write(str(os.getpid()))
+            self._fd.flush()
+            return True
+        except OSError:
+            self._fd.close()
+            self._fd = None
+            return False
+
+    def release(self):
+        if self._fd:
+            try:
+                fcntl.flock(self._fd, fcntl.LOCK_UN)
+                self._fd.close()
+            except OSError:
+                pass
+            try:
+                self._path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def cmd_job_new(args: list[str]):
+    if "--workflow" not in args or "--request" not in args:
+        print("Usage: op job new --workflow <id> --request <text> [--timeout <secs>]", file=sys.stderr)
+        sys.exit(2)
+
+    workflow = args[args.index("--workflow") + 1]
+    request = args[args.index("--request") + 1]
+
+    timeout = DEFAULT_TIMEOUT
+    if "--timeout" in args:
+        timeout = int(args[args.index("--timeout") + 1])
+
+    wf = WFS / f"{workflow}.sh"
+    if not wf.exists():
+        print(f"ERROR: workflow not found: {wf}", file=sys.stderr)
+        sys.exit(2)
+
+    job_id = uuid.uuid4().hex[:10]
+    d = create_job_dir(job_id)
+
+    job = {
+        "id": job_id,
+        "workflow_id": workflow,
+        "request": request,
+        "status": "CREATED",
+        "attempt": 0,
+        "timeout_s": timeout,
+        "created_at": utcnow(),
+        "started_at": None,
+        "finished_at": None,
+        "duration_s": None,
+        "exit_code": None,
+        "error": None,
+    }
+
+    save_job(d, job)
+    log_event(d, f"CREATED workflow={workflow}")
+    print(d)
+
+
+def cmd_job_status(args: list[str]):
+    if not JOBS.exists():
+        return
+
+    limit = 20
+    if "--limit" in args:
+        limit = int(args[args.index("--limit") + 1])
+
+    files = sorted(JOBS.glob("*/*/job.json"), reverse=True)
+    for f in files[:limit]:
+        j = json.loads(f.read_text())
+        dur = f" {j.get('duration_s', '?')}s" if j.get("duration_s") else ""
+        att = f" attempt={j['attempt']}" if j.get("attempt", 0) > 1 else ""
+        print(f"{j['id']} | {j['workflow_id']:20s} | {j['status']:7s} | {j['created_at']}{dur}{att}")
+
+
+def cmd_job_get(args: list[str]):
+    if not args:
+        print("Usage: op job get <job_id>", file=sys.stderr)
+        sys.exit(2)
+
+    d = resolve_job_path(args[0])
+    job = load_job(d)
+    print(json.dumps(job, indent=2))
+
+    artifacts_dir = d / "artifacts"
+    if artifacts_dir.exists():
+        arts = list(artifacts_dir.iterdir())
+        if arts:
+            print(f"\nArtifacts ({len(arts)}):")
+            for a in sorted(arts):
+                size = a.stat().st_size if a.is_file() else 0
+                print(f"  {a.name} ({size} bytes)")
+
+
+def run_job(d: Path, timeout_override: int | None = None) -> dict:
+    """Execute a job. Returns the final job dict."""
+    job = load_job(d)
+
+    if job["status"] == "RUNNING":
+        print(f"ERROR: job {job['id']} is already RUNNING (locked?)", file=sys.stderr)
+        sys.exit(1)
+
+    lock = JobLock(d)
+    if not lock.acquire():
+        print(f"ERROR: job {job['id']} is locked by another process", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        wf = WFS / f"{job['workflow_id']}.sh"
+        if not wf.exists():
+            job["status"] = "FAILED"
+            job["error"] = f"workflow not found: {wf}"
+            job["finished_at"] = utcnow()
+            save_job(d, job)
+            log_event(d, f"FAILED workflow not found: {wf}")
+            print("FAILED")
+            return job
+
+        policy = load_policy()
+        timeout = timeout_override or job.get("timeout_s", DEFAULT_TIMEOUT)
+        attempt = job.get("attempt", 0) + 1
+
+        job["status"] = "RUNNING"
+        job["attempt"] = attempt
+        job["started_at"] = utcnow()
+        job["error"] = None
+        save_job(d, job)
+        log_event(d, f"START workflow={job['workflow_id']} policy={policy} attempt={attempt} timeout={timeout}s")
+
+        env = dict(os.environ)
+        env["JOB_POLICY"] = policy
+        env["JOB_ID"] = job["id"]
+        env["JOB_DIR"] = str(d)
+        env["JOB_ATTEMPT"] = str(attempt)
+
+        secrets_path = CONF / "secrets.env"
+        if secrets_path.exists():
+            for line in secrets_path.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    env[k.strip()] = v.strip()
+
+        t_start = time.monotonic()
+
+        try:
+            with open(d / "log.txt", "a") as logf:
+                p = subprocess.run(
+                    ["bash", str(wf)],
+                    cwd=str(d),
+                    stdout=logf,
+                    stderr=logf,
+                    env=env,
+                    timeout=timeout,
+                )
+            exit_code = p.returncode
+            error_msg = None
+        except subprocess.TimeoutExpired:
+            exit_code = -1
+            error_msg = f"timeout after {timeout}s"
+            log_event(d, f"TIMEOUT after {timeout}s")
+        except Exception as e:
+            exit_code = -2
+            error_msg = str(e)
+            log_event(d, f"EXCEPTION {e}")
+
+        duration = round(time.monotonic() - t_start, 2)
+
+        job = load_job(d)
+        job["status"] = "DONE" if exit_code == 0 else "FAILED"
+        job["exit_code"] = exit_code
+        job["finished_at"] = utcnow()
+        job["duration_s"] = duration
+        if error_msg:
+            job["error"] = error_msg
+
+        save_job(d, job)
+        log_event(d, f"END status={job['status']} exit_code={exit_code} duration={duration}s")
+
+        # Record in structured memory
+        try:
+            from lib.memory import Memory
+            with Memory() as mem:
+                mem.record_episode(
+                    kind="job_complete",
+                    content=f"{job['workflow_id']} → {job['status']} in {duration}s (attempt {attempt})",
+                    job_id=job["id"],
+                    workflow_id=job["workflow_id"],
+                    metadata={"exit_code": exit_code, "duration_s": duration, "error": error_msg},
+                )
+        except Exception:
+            pass
+
+        # Auto-reflect on failed jobs (non-blocking)
+        if job["status"] == "FAILED":
+            try:
+                from lib.brain import Brain
+                with Brain() as brain:
+                    brain.reflect_on_job(str(d), goal=job.get("request", ""))
+            except Exception:
+                pass
+
+        print(job["status"])
+        return job
+
+    finally:
+        lock.release()
+
+
+def cmd_run(args: list[str]):
+    if not args:
+        print("Usage: op run <job_dir|job_id> [--timeout <secs>]", file=sys.stderr)
+        sys.exit(2)
+
+    d = resolve_job_path(args[0])
+
+    timeout = None
+    if "--timeout" in args:
+        timeout = int(args[args.index("--timeout") + 1])
+
+    run_job(d, timeout_override=timeout)
+
+
+def cmd_retry(args: list[str]):
+    if not args:
+        print("Usage: op retry <job_dir|job_id> [--max-retries N]", file=sys.stderr)
+        sys.exit(2)
+
+    d = resolve_job_path(args[0])
+    job = load_job(d)
+
+    max_retries = MAX_RETRIES
+    if "--max-retries" in args:
+        max_retries = int(args[args.index("--max-retries") + 1])
+
+    if job["status"] not in ("FAILED",):
+        print(f"ERROR: can only retry FAILED jobs (current: {job['status']})", file=sys.stderr)
+        sys.exit(1)
+
+    if job.get("attempt", 1) >= max_retries:
+        print(f"ERROR: max retries reached ({max_retries})", file=sys.stderr)
+        sys.exit(1)
+
+    log_event(d, f"RETRY requested (attempt {job.get('attempt', 1)} -> {job.get('attempt', 1) + 1})")
+    run_job(d)
+
+
+def cmd_healthcheck():
+    """System health summary."""
+    import shutil
+
+    checks = {}
+
+    disk = shutil.disk_usage("/")
+    disk_pct = round(disk.used / disk.total * 100, 1)
+    checks["disk_used_pct"] = disk_pct
+    checks["disk_ok"] = disk_pct < 90
+
+    try:
+        load_1, load_5, load_15 = os.getloadavg()
+        checks["load_1m"] = round(load_1, 2)
+        checks["load_ok"] = load_1 < os.cpu_count() * 2
+    except OSError:
+        checks["load_ok"] = True
+
+    total = failed = running = 0
+    recent_failures = []
+    if JOBS.exists():
+        for f in JOBS.glob("*/*/job.json"):
+            try:
+                j = json.loads(f.read_text())
+                total += 1
+                if j.get("status") == "FAILED":
+                    failed += 1
+                    recent_failures.append(f"{j['id']} ({j.get('workflow_id', '?')})")
+                elif j.get("status") == "RUNNING":
+                    running += 1
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    checks["jobs_total"] = total
+    checks["jobs_failed"] = failed
+    checks["jobs_running"] = running
+    checks["recent_failures"] = recent_failures[-5:]
+
+    wf_count = len(list(WFS.glob("*.sh"))) if WFS.exists() else 0
+    checks["workflows_available"] = wf_count
+
+    policy = load_policy()
+    checks["policy"] = policy
+
+    # Memory stats
+    try:
+        from lib.memory import Memory
+        with Memory() as mem:
+            ms = mem.state_summary()
+            checks["memory"] = ms["totals"]
+            checks["avg_quality"] = ms["totals"].get("avg_quality", 0)
+    except Exception:
+        checks["memory"] = "unavailable"
+
+    all_ok = checks["disk_ok"] and checks.get("load_ok", True)
+    checks["healthy"] = all_ok
+
+    print(json.dumps(checks, indent=2))
+    sys.exit(0 if all_ok else 1)
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__.strip(), file=sys.stderr)
+        sys.exit(2)
+
+    cmd = sys.argv[1]
+
+    if cmd == "job":
+        if len(sys.argv) < 3:
+            print("Usage: op job <new|status|get>", file=sys.stderr)
+            sys.exit(2)
+        sub = sys.argv[2]
+        if sub == "new":
+            cmd_job_new(sys.argv[3:])
+        elif sub == "status":
+            cmd_job_status(sys.argv[3:])
+        elif sub == "get":
+            cmd_job_get(sys.argv[3:])
+        else:
+            print(f"Unknown subcommand: job {sub}", file=sys.stderr)
+            sys.exit(2)
+    elif cmd == "run":
+        cmd_run(sys.argv[2:])
+    elif cmd == "retry":
+        cmd_retry(sys.argv[2:])
+    elif cmd == "healthcheck":
+        cmd_healthcheck()
+    else:
+        print(f"Unknown command: {cmd}", file=sys.stderr)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

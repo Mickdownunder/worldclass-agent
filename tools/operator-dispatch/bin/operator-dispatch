@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+OP="/root/operator/bin/op"
+JOBS_BASE="/root/operator/jobs"
+
+usage() {
+  echo "Usage:" >&2
+  echo "  operator-dispatch create --request <path>" >&2
+  echo "  operator-dispatch run <job_id>" >&2
+  echo "  operator-dispatch status <job_id>" >&2
+  echo "  operator-dispatch artifacts <job_id>" >&2
+  exit 2
+}
+
+find_job_dir() {
+  local job_id="$1"
+  local hit
+  hit="$(ls -d "$JOBS_BASE"/*/"$job_id" 2>/dev/null | head -n 1 || true)"
+  if [[ -z "$hit" || ! -d "$hit" ]]; then
+    echo "" ; return 1
+  fi
+  echo "$hit"
+}
+
+cmd_create() {
+  local req="$1"
+
+  local wf text job_path job_dir job_id
+
+  wf="$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); print((r.get("intent") or {}).get("workflow") or "planner")' "$req")"
+  text="$(python3 -c 'import json,sys; r=json.load(open(sys.argv[1])); t=((r.get("payload") or {}).get("text") or ""); print(t if t else json.dumps(r,ensure_ascii=False))' "$req")"
+
+  job_path="$("$OP" job new --workflow "$wf" --request "$text" | tail -n 1 | tr -d '\r\n')"
+  [[ -n "$job_path" ]] || { echo "ERROR: op job new returned empty" >&2; exit 1; }
+
+  job_dir="$job_path"
+  job_id="$(basename "$job_dir")"
+
+  # attach canonical request + minimal meta
+  cp -f "$req" "$job_dir/request.json" 2>/dev/null || true
+  python3 -c '
+import json,sys,time
+d=sys.argv[1]; wf=sys.argv[2]
+meta={"bridge":"operator-dispatch","workflow":wf,"ts":time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+open(f"{d}/job.meta.json","w").write(json.dumps(meta,indent=2))
+' "$job_dir" "$wf" >/dev/null 2>&1 || true
+
+  # IMPORTANT: create does NOT run
+  echo "$job_id"
+}
+
+cmd_run() {
+  local job_id="$1"
+  local job_dir
+  job_dir="$(find_job_dir "$job_id")" || { echo "ERROR: job not found: $job_id" >&2; exit 1; }
+  "$OP" run "$job_dir" >/dev/null 2>&1 || true
+  # return final status from job.json
+  python3 -c 'import json,sys; j=json.load(open(sys.argv[1])); print(j.get("status",""))' "$job_dir/job.json"
+}
+
+cmd_status() {
+  local job_id="$1"
+  local job_dir
+  job_dir="$(find_job_dir "$job_id")" || { echo "ERROR: job not found: $job_id" >&2; exit 1; }
+  python3 -c 'import json,sys; j=json.load(open(sys.argv[1])); print(j.get("status",""))' "$job_dir/job.json"
+}
+
+cmd_artifacts() {
+  local job_id="$1"
+  local job_dir
+  job_dir="$(find_job_dir "$job_id")" || { echo "ERROR: job not found: $job_id" >&2; exit 1; }
+  if [[ -d "$job_dir/artifacts" ]]; then
+    find "$job_dir/artifacts" -maxdepth 2 -type f -print | sort
+  fi
+}
+
+main() {
+  local cmd="${1:-}"
+  shift || true
+
+  case "$cmd" in
+    create)
+      [[ "${1:-}" == "--request" && -n "${2:-}" ]] || usage
+      [[ -f "${2}" ]] || { echo "ERROR: request file missing: ${2}" >&2; exit 1; }
+      cmd_create "${2}"
+      ;;
+    run)
+      [[ -n "${1:-}" ]] || usage
+      cmd_run "${1}"
+      ;;
+    status)
+      [[ -n "${1:-}" ]] || usage
+      cmd_status "${1}"
+      ;;
+    artifacts)
+      [[ -n "${1:-}" ]] || usage
+      cmd_artifacts "${1}"
+      ;;
+    *)
+      usage
+      ;;
+  esac
+}
+
+main "$@"

@@ -1,0 +1,9 @@
+{
+  "id": "growth",
+  "name": "Growth Radar",
+  "niche": "SaaS Growth",
+  "topics": ["growth","marketing","pricing"],
+  "min_score": 0.6,
+  "max_items_per_pack": 10,
+  "delivery": { "type": "telegram", "telegram_chat_id": "6615084677" }
+}

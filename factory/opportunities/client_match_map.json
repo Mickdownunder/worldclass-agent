@@ -1,0 +1,177 @@
+{
+  "generated_at": "2026-02-25T15:25:45.914842Z",
+  "clients": {
+    "demo": {
+      "client": {
+        "id": "demo",
+        "name": "Demo Client",
+        "niche": "B2B SaaS",
+        "topics": [
+          "pricing",
+          "growth",
+          "churn",
+          "competitors"
+        ],
+        "exclude_topics": [
+          "crypto"
+        ],
+        "min_score": 0.65,
+        "max_items_per_pack": 15,
+        "delivery": {
+          "type": "telegram",
+          "telegram_chat_id": "6615084677"
+        }
+      },
+      "matches": [
+        {
+          "id": "opp_6aeb3b526932",
+          "title": "Danish government agency to ditch Microsoft software (2025)",
+          "score": 0.8,
+          "topics": [
+            "churn",
+            "competitors"
+          ],
+          "summary": "A government agency in Denmark plans to move away from Microsoft software by 2025, indicating a significant competitor move and potential churn from a dominant vendor.",
+          "evidence": [
+            "https://therecord.media/denmark-digital-agency-microsoft-digital-independence"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_001",
+          "title": "Competitor changed pricing page",
+          "score": 0.72,
+          "topics": [
+            "pricing",
+            "competitors"
+          ],
+          "summary": "A competitor updated their pricing tiers; likely positioning shift.",
+          "evidence": [
+            "https://example.com/pricing-change"
+          ],
+          "source": "demo"
+        },
+        {
+          "id": "opp_5077d6e406f2",
+          "title": "Mercury 2: Fast reasoning LLM powered by diffusion",
+          "score": 0.7,
+          "topics": [
+            "growth",
+            "marketing",
+            "pricing"
+          ],
+          "summary": "Mercury 2 introduces a fast reasoning large language model powered by diffusion technology, presenting growth opportunities through new AI capabilities in marketing and pricing optimization.",
+          "evidence": [
+            "https://www.inceptionlabs.ai/blog/introducing-mercury-2"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_002",
+          "title": "SaaS complaining about churn in forum thread",
+          "score": 0.68,
+          "topics": [
+            "churn",
+            "growth"
+          ],
+          "summary": "Founder mentions churn spike and retention issues.",
+          "evidence": [
+            "https://example.com/churn-thread"
+          ],
+          "source": "demo"
+        },
+        {
+          "id": "opp_d065142ab0fe",
+          "title": "Mac mini will be made at a new facility in Houston",
+          "score": 0.65,
+          "topics": [
+            "competitors",
+            "growth"
+          ],
+          "summary": "Apple is accelerating US-based manufacturing by producing the Mac mini in Houston, potentially impacting supply chain dynamics and competitive growth in hardware markets.",
+          "evidence": [
+            "https://www.apple.com/newsroom/2026/02/apple-accelerates-us-manufacturing-with-mac-mini-production/"
+          ],
+          "source": "auto_discover"
+        }
+      ]
+    },
+    "growth": {
+      "client": {
+        "id": "growth",
+        "name": "Growth Radar",
+        "niche": "SaaS Growth",
+        "topics": [
+          "growth",
+          "marketing",
+          "pricing"
+        ],
+        "min_score": 0.6,
+        "max_items_per_pack": 10,
+        "delivery": {
+          "type": "telegram",
+          "telegram_chat_id": "6615084677"
+        }
+      },
+      "matches": [
+        {
+          "id": "opp_001",
+          "title": "Competitor changed pricing page",
+          "score": 0.72,
+          "topics": [
+            "pricing",
+            "competitors"
+          ],
+          "summary": "A competitor updated their pricing tiers; likely positioning shift.",
+          "evidence": [
+            "https://example.com/pricing-change"
+          ],
+          "source": "demo"
+        },
+        {
+          "id": "opp_5077d6e406f2",
+          "title": "Mercury 2: Fast reasoning LLM powered by diffusion",
+          "score": 0.7,
+          "topics": [
+            "growth",
+            "marketing",
+            "pricing"
+          ],
+          "summary": "Mercury 2 introduces a fast reasoning large language model powered by diffusion technology, presenting growth opportunities through new AI capabilities in marketing and pricing optimization.",
+          "evidence": [
+            "https://www.inceptionlabs.ai/blog/introducing-mercury-2"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_002",
+          "title": "SaaS complaining about churn in forum thread",
+          "score": 0.68,
+          "topics": [
+            "churn",
+            "growth"
+          ],
+          "summary": "Founder mentions churn spike and retention issues.",
+          "evidence": [
+            "https://example.com/churn-thread"
+          ],
+          "source": "demo"
+        },
+        {
+          "id": "opp_d065142ab0fe",
+          "title": "Mac mini will be made at a new facility in Houston",
+          "score": 0.65,
+          "topics": [
+            "competitors",
+            "growth"
+          ],
+          "summary": "Apple is accelerating US-based manufacturing by producing the Mac mini in Houston, potentially impacting supply chain dynamics and competitive growth in hardware markets.",
+          "evidence": [
+            "https://www.apple.com/newsroom/2026/02/apple-accelerates-us-manufacturing-with-mac-mini-production/"
+          ],
+          "source": "auto_discover"
+        }
+      ]
+    }
+  }
+}

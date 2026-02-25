@@ -1,0 +1,36 @@
+# Secrets and env
+conf/secrets.env
+*.env
+!.env.example
+
+# Runtime data
+memory/*.db
+memory/*.sqlite
+*.db
+*.sqlite
+jobs/
+logs/
+knowledge/opportunities.md
+factory/packs/
+factory/opportunities/discovered.jsonl
+factory/opportunities/opportunities.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Node (openclaw-bridge)
+openclaw-bridge/node_modules/
+openclaw-bridge/dist/
+
+# Artifacts and temp
+**/artifacts/
+*.log
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Daily Operator Run — Cognitive autonomous cycle.
+# Runs: healthcheck → brain cycle → factory cycle → reflection → report
+#
+# Cron: 0 8 * * * /root/operator/bin/daily-run >> /root/operator/logs/daily.log 2>&1
+
+OP="/root/operator/bin/op"
+BRAIN="/root/operator/bin/brain"
+TOOLS="/root/operator/tools"
+LOGS="/root/operator/logs"
+SECRETS="/root/operator/conf/secrets.env"
+
+mkdir -p "$LOGS"
+
+log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*"; }
+
+if [ -f "$SECRETS" ]; then
+  set -a; source "$SECRETS"; set +a
+fi
+
+log "=== Daily Run Start ==="
+
+# 1. Healthcheck
+log "Phase 1: Healthcheck..."
+HEALTH=$($OP healthcheck 2>&1 || true)
+log "Health: $(echo "$HEALTH" | python3 -c 'import sys,json; h=json.load(sys.stdin); print(f"disk={h.get(\"disk_used_pct\")}% load={h.get(\"load_1m\")} jobs={h.get(\"jobs_total\")} quality={h.get(\"avg_quality\",0)}")' 2>/dev/null || echo "parse error")"
+
+# 2. Brain cognitive cycle — the agent THINKS about what to do
+log "Phase 2: Cognitive cycle..."
+CYCLE=$($BRAIN cycle --goal "Daily autonomous run: assess system health, check if factory pipeline needs to run, evaluate recent work quality, and decide priority actions. Focus on revenue-generating activities and preventing problems." --governance 2 2>&1 || echo '{"error":"brain unavailable"}')
+log "Cycle: $(echo "$CYCLE" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(f"decision={d.get(\"decision\",\"?\")} status={d.get(\"status\",\"?\")} quality={d.get(\"quality\",\"?\")}")' 2>/dev/null || echo "parse error")"
+
+# 3. Factory cycle — always run for client delivery
+log "Phase 3: Factory cycle..."
+FACTORY_DIR=$($OP job new --workflow factory-cycle --request "daily scheduled factory run")
+$OP run "$FACTORY_DIR" --timeout 180 2>&1 || true
+FACTORY_ID=$(basename "$FACTORY_DIR")
+FACTORY_STATUS=$($OP job get "$FACTORY_ID" 2>&1 | python3 -c "import json,sys; print(json.load(sys.stdin).get('status','UNKNOWN'))" 2>/dev/null || echo "UNKNOWN")
+log "Factory: $FACTORY_STATUS"
+
+# 4. Reflect on the factory run
+log "Phase 4: Reflecting on factory run..."
+FACTORY_REFLECTION=$($BRAIN reflect "$FACTORY_DIR" --goal "Evaluate daily factory cycle for client delivery quality" 2>&1 || echo '{}')
+log "Factory reflection: $(echo "$FACTORY_REFLECTION" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(f"quality={d.get(\"quality_score\",\"?\")} learnings={d.get(\"learnings\",\"none\")[:100]}")' 2>/dev/null || echo "parse error")"
+
+# 5. Send daily summary via Telegram
+log "Phase 5: Sending report..."
+SUMMARY=$(mktemp /tmp/daily-summary-XXXXXX.txt)
+trap 'rm -f "$SUMMARY"' EXIT
+
+{
+  echo "🔄 Daily Operator Report — $(date -u +%Y-%m-%d)"
+  echo ""
+
+  echo "System:"
+  echo "$HEALTH" | python3 -c "
+import json, sys
+try:
+    h = json.load(sys.stdin)
+    print(f'  Disk: {h.get(\"disk_used_pct\")}% | Load: {h.get(\"load_1m\", \"n/a\")}')
+    print(f'  Jobs: {h.get(\"jobs_total\")} total, {h.get(\"jobs_failed\")} failed')
+    m = h.get('memory', {})
+    if isinstance(m, dict):
+        print(f'  Memory: {m.get(\"episodes\",0)} episodes, {m.get(\"reflections\",0)} reflections')
+        print(f'  Avg Quality: {m.get(\"avg_quality\",0):.2f}')
+    print(f'  Status: {\"HEALTHY\" if h.get(\"healthy\") else \"DEGRADED\"}')
+except:
+    print('  (unavailable)')
+" 2>/dev/null || echo "  (parse error)"
+
+  echo ""
+  echo "Brain:"
+  echo "$CYCLE" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(f'  Decision: {d.get(\"decision\", \"none\")}')
+    print(f'  Status: {d.get(\"status\", \"?\")}')
+    print(f'  Learnings: {d.get(\"learnings\", \"none\")[:200]}')
+except:
+    print('  (unavailable)')
+" 2>/dev/null || echo "  (parse error)"
+
+  echo ""
+  echo "Factory: $FACTORY_STATUS"
+
+  RESULT="$FACTORY_DIR/artifacts/result.md"
+  if [ -f "$RESULT" ]; then
+    head -n 20 "$RESULT"
+  fi
+} > "$SUMMARY"
+
+"$TOOLS/send-telegram.sh" "$SUMMARY" "6615084677" 2>&1 || log "WARN: Telegram send failed"
+
+log "=== Daily Run End ==="

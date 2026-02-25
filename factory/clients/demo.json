@@ -1,0 +1,10 @@
+{
+  "id": "demo",
+  "name": "Demo Client",
+  "niche": "B2B SaaS",
+  "topics": ["pricing", "growth", "churn", "competitors"],
+  "exclude_topics": ["crypto"],
+  "min_score": 0.65,
+  "max_items_per_pack": 15,
+  "delivery": { "type": "telegram", "telegram_chat_id": "6615084677" }
+}

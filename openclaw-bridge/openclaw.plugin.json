@@ -1,0 +1,11 @@
+{
+  "id": "operator-bridge",
+  "name": "Operator Bridge",
+  "description": "Telegram commands that dispatch Operator jobs.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

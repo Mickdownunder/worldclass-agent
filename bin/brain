@@ -1,0 +1,124 @@
+#!/usr/bin/env python3
+"""
+Operator Brain CLI — Cognitive core interface.
+
+Usage:
+  brain cycle [--goal "..."] [--governance 0-3]
+  brain perceive
+  brain think --goal "..."
+  brain reflect <job_dir> [--goal "..."]
+  brain memory [--query "..."]
+  brain playbooks
+  brain quality [--workflow "..."]
+"""
+
+import sys, json, os
+sys.path.insert(0, str(__import__("pathlib").Path.home() / "operator"))
+
+from lib.brain import Brain
+from lib.memory import Memory
+
+
+def cmd_cycle(args: list[str]):
+    goal = "Decide and execute the most impactful next action"
+    gov = 2
+    if "--goal" in args:
+        goal = args[args.index("--goal") + 1]
+    if "--governance" in args:
+        gov = int(args[args.index("--governance") + 1])
+
+    with Brain(governance_level=gov) as brain:
+        result = brain.run_cycle(goal=goal)
+        print(json.dumps(result, indent=2, default=str))
+
+
+def cmd_perceive(args: list[str]):
+    with Brain() as brain:
+        state = brain.perceive()
+        print(json.dumps(state, indent=2, default=str))
+
+
+def cmd_think(args: list[str]):
+    goal = "Decide the most impactful next action"
+    if "--goal" in args:
+        goal = args[args.index("--goal") + 1]
+
+    with Brain() as brain:
+        state = brain.perceive()
+        plan = brain.think(state, goal=goal)
+        print(json.dumps(plan, indent=2, default=str))
+
+
+def cmd_reflect(args: list[str]):
+    if not args:
+        print("Usage: brain reflect <job_dir> [--goal '...']", file=sys.stderr)
+        sys.exit(2)
+
+    job_dir = args[0]
+    goal = ""
+    if "--goal" in args:
+        goal = args[args.index("--goal") + 1]
+
+    with Brain() as brain:
+        reflection = brain.reflect_on_job(job_dir, goal=goal)
+        print(json.dumps(reflection, indent=2, default=str))
+
+
+def cmd_memory(args: list[str]):
+    with Memory() as mem:
+        if "--query" in args:
+            query = args[args.index("--query") + 1]
+            episodes = mem.search_episodes(query)
+            reflections = mem.search_reflections(query)
+            print(json.dumps({"episodes": episodes, "reflections": reflections}, indent=2, default=str))
+        else:
+            summary = mem.state_summary()
+            print(json.dumps(summary, indent=2, default=str))
+
+
+def cmd_playbooks(args: list[str]):
+    with Memory() as mem:
+        playbooks = mem.all_playbooks()
+        print(json.dumps(playbooks, indent=2, default=str))
+
+
+def cmd_quality(args: list[str]):
+    with Memory() as mem:
+        if "--workflow" in args:
+            wf = args[args.index("--workflow") + 1]
+            trend = mem.quality_trend(wf)
+            avg = mem.avg_quality(wf)
+            print(json.dumps({"workflow": wf, "avg_quality": round(avg, 3), "trend": trend}, indent=2, default=str))
+        else:
+            avg = mem.avg_quality()
+            print(json.dumps({"overall_avg_quality": round(avg, 3)}, indent=2, default=str))
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__.strip(), file=sys.stderr)
+        sys.exit(2)
+
+    cmd = sys.argv[1]
+    args = sys.argv[2:]
+
+    commands = {
+        "cycle": cmd_cycle,
+        "perceive": cmd_perceive,
+        "think": cmd_think,
+        "reflect": cmd_reflect,
+        "memory": cmd_memory,
+        "playbooks": cmd_playbooks,
+        "quality": cmd_quality,
+    }
+
+    if cmd in commands:
+        commands[cmd](args)
+    else:
+        print(f"Unknown command: {cmd}", file=sys.stderr)
+        print(__doc__.strip(), file=sys.stderr)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

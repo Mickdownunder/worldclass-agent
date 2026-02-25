@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Operator Client Config",
+  "type": "object",
+  "required": ["id", "name", "topics", "min_score", "delivery"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9_-]+$" },
+    "name": { "type": "string" },
+    "niche": { "type": "string" },
+    "topics": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "exclude_topics": { "type": "array", "items": { "type": "string" } },
+    "min_score": { "type": "number", "minimum": 0, "maximum": 1 },
+    "max_items_per_pack": { "type": "integer", "minimum": 1, "maximum": 200, "default": 20 },
+    "pack_frequency": { "type": "string", "default": "daily" },
+    "delivery": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["telegram"] },
+        "telegram_chat_id": { "type": "string" }
+      }
+    }
+  }
+}
