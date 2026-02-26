@@ -21,7 +21,11 @@ from .playbooks import Playbooks
 from .quality import Quality
 from .research_findings import ResearchFindings
 from .entities import Entities
+from .principles import Principles
+from .utility import UtilityTracker
 from . import search as search_module
+from . import outcomes as outcomes_module
+from . import source_credibility as source_credibility_module
 
 DB_PATH = Path.home() / "operator" / "memory" / "operator.db"
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -46,6 +50,8 @@ class Memory:
         self._quality = Quality(self._conn)
         self._research = ResearchFindings(self._conn)
         self._entities = Entities(self._conn)
+        self._principles = Principles(self._conn)
+        self._utility = UtilityTracker(self._conn)
 
     # ------------------------------------------------------------------
     # Episodes
@@ -154,6 +160,120 @@ class Memory:
 
     def search_reflections(self, query: str, limit: int = 10) -> list[dict]:
         return search_module.search_reflections(self._conn, query, limit)
+
+    # ------------------------------------------------------------------
+    # Strategic principles (EvolveR-style)
+    # ------------------------------------------------------------------
+    def search_principles(self, query: str, limit: int = 10, domain: str | None = None, principle_type: str | None = None) -> list[dict]:
+        return self._principles.search(query, limit, domain, principle_type)
+
+    def list_principles(self, limit: int = 50, domain: str | None = None) -> list[dict]:
+        return self._principles.list_recent(limit, domain)
+
+    def get_principle(self, principle_id: str) -> dict | None:
+        return self._principles.get(principle_id)
+
+    def insert_principle(
+        self,
+        principle_type: str,
+        description: str,
+        source_project_id: str,
+        domain: str | None = None,
+        evidence_json: str = "[]",
+        metric_score: float = 0.5,
+        embedding_json: str | None = None,
+    ) -> str:
+        return self._principles.insert(
+            principle_type, description, source_project_id, domain, evidence_json, metric_score, embedding_json
+        )
+
+    def update_principle_usage_success(self, principle_id: str, success: bool) -> None:
+        self._principles.update_usage_success(principle_id, success)
+
+    def append_principle_evidence(self, principle_id: str, source_project_id: str, evidence_snippet: str) -> None:
+        self._principles.append_evidence(principle_id, source_project_id, evidence_snippet)
+
+    # ------------------------------------------------------------------
+    # Utility-ranked retrieval (MemRL-inspired)
+    # ------------------------------------------------------------------
+    def record_retrieval(self, memory_type: str, memory_id: str) -> None:
+        self._utility.record_retrieval(memory_type, memory_id)
+
+    def retrieve_with_utility(self, query: str, memory_type: str, k: int = 10) -> list[dict]:
+        """Phase 1: semantic/keyword candidates. Phase 2: utility re-rank."""
+        if memory_type == "principle":
+            candidates = self._principles.search(query, limit=k * 5)
+        elif memory_type == "reflection":
+            candidates = search_module.search_reflections(self._conn, query, limit=k * 5)
+        elif memory_type == "finding":
+            candidates = self._research.get_accepted(project_id=None, limit=k * 5)
+        else:
+            return []
+
+        for c in candidates:
+            mid = c.get("id")
+            if not mid:
+                continue
+            util_row = self._utility.get(memory_type, mid)
+            util_score = util_row["utility_score"] if util_row else 0.5
+            c["utility_score"] = util_score
+            relevance = c.get("relevance", 0.5) if isinstance(c.get("relevance"), (int, float)) else 0.5
+            c["combined_score"] = 0.4 * relevance + 0.6 * util_score
+
+        candidates.sort(key=lambda x: x.get("combined_score", 0), reverse=True)
+        return candidates[:k]
+
+    def update_utilities_from_outcome(self, memory_type: str, memory_ids: list[str], outcome_score: float) -> None:
+        self._utility.update_from_outcome(memory_type, memory_ids, outcome_score)
+
+    # ------------------------------------------------------------------
+    # Project outcomes
+    # ------------------------------------------------------------------
+    def record_project_outcome(
+        self,
+        project_id: str,
+        domain: str | None = None,
+        critic_score: float | None = None,
+        user_verdict: str | None = None,
+        gate_metrics_json: str | None = None,
+        strategy_used: str | None = None,
+        principles_used_json: str | None = None,
+        findings_count: int | None = None,
+        source_count: int | None = None,
+    ) -> None:
+        outcomes_module.record_outcome(
+            self._conn,
+            project_id,
+            domain,
+            critic_score,
+            user_verdict,
+            gate_metrics_json,
+            strategy_used,
+            principles_used_json,
+            findings_count,
+            source_count,
+        )
+
+    def get_successful_outcomes(self, min_critic: float = 0.75, limit: int = 100) -> list[dict]:
+        return outcomes_module.get_successful_outcomes(self._conn, min_critic, limit)
+
+    def count_project_outcomes(self) -> int:
+        return outcomes_module.count_outcomes(self._conn)
+
+    # ------------------------------------------------------------------
+    # Source credibility (per-domain, from verification outcomes)
+    # ------------------------------------------------------------------
+    def get_source_credibility(self, domain: str) -> dict | None:
+        return source_credibility_module.get(self._conn, domain)
+
+    def update_source_credibility(
+        self,
+        domain: str,
+        times_used: int,
+        verified_count: int,
+        failed_verification_count: int,
+    ) -> None:
+        source_credibility_module.update(self._conn, domain, times_used, verified_count, failed_verification_count)
 
     # ------------------------------------------------------------------
     # State summary

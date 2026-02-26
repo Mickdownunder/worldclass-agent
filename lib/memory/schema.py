@@ -134,6 +134,51 @@ SCHEMA_SQL = """
     CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
     CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
     CREATE INDEX IF NOT EXISTS idx_entity_mentions_project ON entity_mentions(project_id);
+
+    CREATE TABLE IF NOT EXISTS strategic_principles (
+        id TEXT PRIMARY KEY,
+        principle_type TEXT NOT NULL,
+        description TEXT NOT NULL,
+        domain TEXT,
+        source_project_id TEXT NOT NULL,
+        evidence_json TEXT DEFAULT '[]',
+        metric_score REAL DEFAULT 0.5,
+        usage_count INTEGER DEFAULT 0,
+        success_count INTEGER DEFAULT 0,
+        embedding_json TEXT,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS memory_utility (
+        memory_type TEXT NOT NULL,
+        memory_id TEXT NOT NULL,
+        utility_score REAL DEFAULT 0.5,
+        retrieval_count INTEGER DEFAULT 0,
+        helpful_count INTEGER DEFAULT 0,
+        last_updated TEXT,
+        PRIMARY KEY (memory_type, memory_id)
+    );
+    CREATE TABLE IF NOT EXISTS project_outcomes (
+        project_id TEXT PRIMARY KEY,
+        domain TEXT,
+        critic_score REAL,
+        user_verdict TEXT,
+        gate_metrics_json TEXT,
+        strategy_used TEXT,
+        principles_used_json TEXT,
+        findings_count INTEGER,
+        source_count INTEGER,
+        completed_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS source_credibility (
+        domain TEXT PRIMARY KEY,
+        times_used INTEGER DEFAULT 0,
+        verified_count INTEGER DEFAULT 0,
+        failed_verification_count INTEGER DEFAULT 0,
+        learned_credibility REAL DEFAULT 0.5,
+        last_updated TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_strategic_principles_domain ON strategic_principles(domain);
+    CREATE INDEX IF NOT EXISTS idx_strategic_principles_type ON strategic_principles(principle_type);
 """
 
 
