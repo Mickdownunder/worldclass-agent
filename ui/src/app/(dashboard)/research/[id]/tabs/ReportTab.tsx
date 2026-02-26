@@ -1,0 +1,154 @@
+"use client";
+
+import { useState } from "react";
+import { MarkdownView } from "@/components/MarkdownView";
+import { LoadingSpinner } from "@/components/LoadingSpinner";
+import type { ProjectForReport } from "../types";
+
+interface ReportTabProps {
+  projectId: string;
+  initialMarkdown: string | null;
+  hasPdf: boolean;
+  project?: ProjectForReport | null;
+  onVerifiedClick: (claimId: string | undefined) => void;
+  loading: boolean;
+}
+
+export function ReportTab({
+  projectId,
+  initialMarkdown,
+  hasPdf,
+  project,
+  onVerifiedClick,
+  loading,
+}: ReportTabProps) {
+  const [pdfMessage, setPdfMessage] = useState<string | null>(null);
+  if (loading) return <LoadingSpinner />;
+  if (!initialMarkdown) {
+    return (
+      <div className="py-10 text-center">
+        <p className="text-sm" style={{ color: "var(--tron-text-muted)" }}>No report generated yet.</p>
+        <p className="mt-1 text-xs" style={{ color: "var(--tron-text-dim)" }}>
+          Complete the Synthesize phase to generate a report.
+        </p>
+      </div>
+    );
+  }
+
+  const wordCount = initialMarkdown.trim().split(/\s+/).filter(Boolean).length;
+  const h2Matches = initialMarkdown.match(/^##\s+(.+)$/gm) ?? [];
+  const tocEntries = h2Matches.map((line) => line.replace(/^##\s+/, "").trim());
+  const slug = (t: string) =>
+    t.replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").toLowerCase().slice(0, 50);
+
+  return (
+    <>
+      <div
+        className="mb-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2 text-[11px] font-mono"
+        style={{ color: "var(--tron-text-muted)" }}
+      >
+        <div>Report as of: <span style={{ color: "var(--tron-text)" }}>{project?.last_phase_at ? new Date(project.last_phase_at).toISOString().slice(0, 10) : "—"}</span></div>
+        <div>Quality score: <span style={{ color: "var(--tron-text)" }}>{project?.quality_gate?.critic_score != null ? String(project.quality_gate.critic_score) : "—"}</span></div>
+        <div>Word count: <span style={{ color: "var(--tron-text)" }}>{wordCount.toLocaleString()}</span></div>
+        <div>Sources: <span style={{ color: "var(--tron-text)" }}>{project?.quality_gate?.evidence_gate?.metrics?.unique_source_count ?? "—"}</span></div>
+        <div>Spend: <span style={{ color: "var(--tron-text)" }}>{project?.current_spend != null ? `$${project.current_spend.toFixed(2)}` : "—"}</span></div>
+        <div>Verified: <span style={{ color: "var(--tron-text)" }}>{project?.quality_gate?.evidence_gate?.metrics?.verified_claim_count != null ? String(project.quality_gate.evidence_gate?.metrics?.verified_claim_count) : "—"}</span></div>
+      </div>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-[11px] font-mono" style={{ color: "var(--tron-text-dim)" }}>
+          Click <span className="verified-badge-inline" style={{ cursor: "default" }}>VERIFIED</span> badges to view supporting evidence
+        </p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            onClick={() => {
+              fetch(`/api/research/projects/${projectId}/report`)
+                .then((r) => r.json())
+                .then((d) => {
+                  const blob = new Blob([d.markdown ?? ""], { type: "text/markdown" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `report-${projectId}.md`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                });
+            }}
+            className="shrink-0 flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] font-semibold transition-colors"
+            style={{ border: "1px solid var(--tron-border)", color: "var(--tron-text-muted)", background: "transparent" }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--tron-accent)"; e.currentTarget.style.color = "var(--tron-accent)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--tron-border)"; e.currentTarget.style.color = "var(--tron-text-muted)"; }}
+          >
+            <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M6 1v8M2 7l4 4 4-4M1 13h10" /></svg>
+            Download .md
+          </button>
+          {hasPdf && (
+            <button
+              type="button"
+              onClick={async () => {
+                const res = await fetch(`/api/research/projects/${projectId}/report/pdf`);
+                if (!res.ok) {
+                  if (res.status === 404) { setPdfMessage("PDF not available yet."); setTimeout(() => setPdfMessage(null), 3000); }
+                  return;
+                }
+                const blob = await res.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `report-${projectId}.pdf`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              className="shrink-0 flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] font-semibold transition-colors"
+              style={{ border: "1px solid var(--tron-border)", color: "var(--tron-text-muted)", background: "transparent" }}
+              onMouseEnter={(e) => { e.currentTarget.style.borderColor = "var(--tron-accent)"; e.currentTarget.style.color = "var(--tron-accent)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--tron-border)"; e.currentTarget.style.color = "var(--tron-text-muted)"; }}
+            >
+              <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" viewBox="0 0 24 24">
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
+              </svg>
+              Download PDF
+            </button>
+          )}
+          {pdfMessage && <span className="text-[11px]" style={{ color: "var(--tron-text-dim)" }}>{pdfMessage}</span>}
+        </div>
+      </div>
+      <div className="flex gap-4">
+        <div
+          className="flex-1 min-w-0 overflow-auto rounded-md p-6"
+          style={{ background: "var(--tron-bg)", border: "1px solid var(--tron-border)", maxHeight: "72vh" }}
+        >
+          <MarkdownView
+            content={initialMarkdown}
+            className="report-prose"
+            onVerifiedClick={onVerifiedClick}
+            headingIds={true}
+          />
+        </div>
+        {tocEntries.length >= 2 && (
+          <div
+            className="hidden lg:block shrink-0 w-48 sticky top-4 self-start rounded border py-3 px-3 text-[11px]"
+            style={{ background: "var(--tron-bg-panel)", borderColor: "var(--tron-border)", maxHeight: "70vh", overflowY: "auto" }}
+          >
+            <div className="font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--tron-text-muted)" }}>Contents</div>
+            <ul className="space-y-1">
+              {tocEntries.map((title) => (
+                <li key={title}>
+                  <button
+                    type="button"
+                    className="text-left w-full hover:underline truncate block"
+                    style={{ color: "var(--tron-accent)" }}
+                    onClick={() => document.getElementById(slug(title))?.scrollIntoView({ behavior: "smooth" })}
+                  >
+                    {title}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
