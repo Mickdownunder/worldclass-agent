@@ -160,16 +160,34 @@ def test_preflight_malformed_output_deterministic_fail():
         assert "raw" in msg.lower() or "preflight_stderr" in msg or "stderr" in msg.lower()
 
 
-def test_preflight_passes_when_bs4_installed():
-    """When bs4 is installed, preflight passes (required for reader). Skip when bs4 missing."""
+def test_preflight_passes_when_required_installed():
+    """When bs4 and openai are installed, preflight passes. Skip when either missing."""
     try:
         import bs4  # noqa: F401
+        import openai  # noqa: F401
     except ImportError:
-        return  # skip: bs4 not installed
+        return  # skip: required deps not installed
     from tools.research_preflight import run_preflight
     result = run_preflight()
-    assert result.get("ok") is True, "Preflight must pass when bs4 is available"
+    assert result.get("ok") is True, "Preflight must pass when bs4 and openai are available"
     assert result.get("fail_code") is None
+
+
+def test_connect_fails_with_failed_dependency_missing_openai():
+    """Connect phase sets status failed_dependency_missing_openai when openai missing (regression)."""
+    from tools.research_preflight import apply_connect_openai_fail_to_project
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        proj = root / "proj"
+        proj.mkdir()
+        (proj / "project.json").write_text(json.dumps({"id": "proj", "question": "?", "phase": "connect"}))
+        apply_connect_openai_fail_to_project(proj)
+        d = json.loads((proj / "project.json").read_text())
+        assert d["status"] == "failed_dependency_missing_openai"
+        eg = d.get("quality_gate", {}).get("evidence_gate", {})
+        assert eg.get("fail_code") == "failed_dependency_missing_openai"
+        reasons = eg.get("reasons", [])
+        assert any("openai" in str(r).lower() or "OpenAI" in str(r) for r in reasons)
 
 
 def test_gate_failed_reader_pipeline_when_zero_extractable():
@@ -255,7 +273,8 @@ if __name__ == "__main__":
     test_evidence_gate_thresholds_exist()
     test_preflight_structure()
     test_preflight_malformed_output_deterministic_fail()
-    test_preflight_passes_when_bs4_installed()
+    test_preflight_passes_when_required_installed()
+    test_connect_fails_with_failed_dependency_missing_openai()
     test_no_findings_should_not_done()
     test_single_source_claim_not_verified()
     test_conflicting_sources_must_dispute()
