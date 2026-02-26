@@ -10,8 +10,16 @@ Usage:
   op retry      <job_dir|job_id> [--max-retries N]
   op healthcheck
 """
+import os
+import sys
 
-import sys, json, time, uuid, subprocess, os, fcntl, signal
+# Use venv if present so op can call Brain (Brain needs tenacity for LLM)
+_operator_root = os.environ.get("OPERATOR_ROOT") or os.path.expanduser("~/operator")
+_venv_python = os.path.join(_operator_root, ".venv", "bin", "python3")
+if os.path.isfile(_venv_python):
+    os.execv(_venv_python, [_venv_python] + sys.argv)
+
+import json, time, uuid, subprocess, fcntl, signal
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -290,14 +298,20 @@ def run_job(d: Path, timeout_override: int | None = None) -> dict:
         except Exception:
             pass
 
-        # Auto-reflect on failed jobs (non-blocking)
-        if job["status"] == "FAILED":
-            try:
-                from lib.brain import Brain
-                with Brain() as brain:
-                    brain.reflect_on_job(str(d), goal=job.get("request", ""))
-            except Exception:
-                pass
+        # Brain reflection after every job (DONE and FAILED), async so op returns immediately
+        try:
+            brain_bin = BASE / "bin" / "brain"
+            if brain_bin.exists():
+                request = job.get("request", "") or "job completed"
+                subprocess.Popen(
+                    [str(brain_bin), "reflect", str(d), "--goal", request[:500]],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=dict(os.environ),
+                    start_new_session=True,
+                )
+        except Exception:
+            pass
 
         print(job["status"])
         return job

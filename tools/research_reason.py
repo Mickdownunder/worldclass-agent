@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import project_dir, load_project, llm_call
+from tools.research_common import project_dir, load_project, llm_call, get_principles_for_research
 
 
 def _model():
@@ -51,8 +51,11 @@ def gap_analysis(proj_path: Path, project: dict, project_id: str = "") -> dict:
     findings = _load_findings(proj_path)
     question = project.get("question", "")
     items = json.dumps([{"title": f.get("title"), "excerpt": (f.get("excerpt") or "")[:500]} for f in findings], indent=2)[:8000]
+    principles_block = get_principles_for_research(question, domain=project.get("domain"), limit=5)
     system = """You are a research analyst. Given the research question and current findings, list GAPS: what is still unknown or under-sourced.
 Return JSON: {"gaps": [{"description": "...", "priority": "high|medium|low", "suggested_search": "query"}]}"""
+    if principles_block:
+        system += "\n\n" + principles_block
     user = f"QUESTION: {question}\n\nFINDINGS:\n{items}\n\nList 3-7 gaps. Be specific."
     out = _llm_json(system, user, project_id=project_id)
     return out if isinstance(out, dict) else {"gaps": out}

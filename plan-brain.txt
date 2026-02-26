@@ -1,0 +1,85 @@
+# Plan: Brain verbessern und sauber einbinden
+
+## Ziel
+- Brain robuster, state-of-the-art und zuverlässig nutzbar machen.
+- Einbindung im System vereinheitlichen, sodass das System den Brain sauber verwendet (ein Pfad, klare Verantwortlichkeiten).
+
+---
+
+## A. Brain selbst verbessern
+
+### A1. Abhängigkeiten und Laufumgebung (kritisch)
+- Problem: Brain nutzt tools.research_common.llm_retry → benötigt tenacity. Wenn brain/bin/op ohne venv laufen (z. B. UI spawn), fehlt tenacity → Think/Reflect fallen auf Fallback.
+- Maßnahmen:
+  - requirements-research.txt (mit tenacity) als Mindestabhängigkeit für Brain dokumentieren ODER ein gemeinsames requirements.txt führen, das openai + tenacity enthält, und überall nutzen.
+  - Sicherstellen, dass Aufrufer des Brain (UI, daily-run, op, workflows) bei vorhandenem .venv dieses nutzen (z. B. explizit .venv/bin/python für op/brain oder PATH setzen).
+- Erfolg: Brain think und reflect laufen mit LLM, keine "No module named 'tenacity'" mehr.
+
+### A2. Robustheit Brain-Core
+- Think: Bei LLM-Fehler aktuell Fallback-Plan mit confidence 0.1. Beibehalten, aber Fehler loggen (inkl. trace_id) und in episode/decision klar als "llm_failed" markieren.
+- Reflect: Fallback bei LLM-Ausfall ist bereits implementiert (metrics-based). Sicherstellen, dass Reflection immer eine decision + quality schreibt (für Trace).
+- Timeout: LLM-Calls in Brain haben kein explizites Timeout; research_common nutzt tenacity mit Wartezeiten. Optional: hartes Timeout pro _llm_reason/_llm_json (z. B. 60s) um Hänger zu vermeiden.
+
+### A3. Qualität der Prompts (Think / Reflect)
+- Think: System-Prompt bereits mit research_projects, playbooks, strategic_principles. Prüfen, ob state_compact 12k Zeichen ausreicht; bei Bedarf Priorisierung (Principles + research_projects zuerst).
+- Reflect: Prompt verlangt outcome_summary, went_well, went_wrong, learnings, quality_score, playbook_update. Optional: bei research-cycle Jobs mehr Kontext (phase, gate_metrics) in user_prompt geben, damit Learnings präziser werden.
+
+### A4. Memory-Nutzung im Brain
+- perceive() holt bereits state_summary + research_context (brain_context.compile). research_context enthält accepted_findings, high_quality_reflections, strategic_principles (bei query: utility-ranked).
+- Sicherstellen, dass brain_context.compile immer mit sinnvollem query aufgerufen wird (aktuell: first non-done research question). Kein weiterer Change nötig, wenn das so bleibt.
+
+---
+
+## B. Einbindung: Wer nutzt den Brain wann?
+
+### B1. Klare Aufrufer (einheitlich)
+- brain cycle: UI (Quick Action), daily-run, autopilot-infra.sh. → Einziger Einstieg für "eine autonome Runde".
+- brain think: planner.sh (dynamischer Planner). → Brain entscheidet Workflow-Reihenfolge.
+- brain reflect <job_dir>: op (nach FAILED Job, in run_job). → Einheitlicher Pfad für Job-Reflection.
+- research-cycle.sh: schreibt am Ende (success/fail) selbst in Memory (record_episode, record_quality, record_project_outcome, experience_distiller, utility_update). Ruft keinen Brain auf. → Das ist gewollt: Research ist ein Workflow; Reflection über den Job könnte zusätzlich über op → brain reflect laufen, wenn der Job als "FAILED" endet (z. B. bei failed_quality_gate). Aktuell endet research-cycle oft mit status "done" oder "failed_*" im project.json, aber op job status ist "DONE" (exit 0). Daher: op ruft reflect_on_job nur bei job["status"] == "FAILED". Für research-cycle wäre eine optionale "Brain-Reflection" nach jedem Lauf (unabhängig von exit) denkbar – siehe B3.
+
+### B2. Wer schreibt ins Memory?
+- Brain: episodes, decisions, reflections, quality_scores, playbooks (bei playbook_update).
+- op: episode "job_complete" (in run_job).
+- research-cycle (inline Python): episodes "research_complete", record_quality, record_project_outcome.
+- Tools: research_embed (findings, admission_events), research_entity_extract (entities), research_calibrator (liest nur), research_utility_update (utility), research_experience_distiller (principles), research_source_credibility (source_credibility), research_cross_domain (cross_links).
+- Keine doppelten Reflection-Pfade: Reflection nach Job nur über Brain.reflect / reflect_on_job (op bei FAILED). Research-cycle schreibt Outcomes, aber keine "reflections"-Tabelle – das ist konsistent.
+
+### B3. Optionale Verbesserung: Research nach jedem Lauf an Brain melden
+- Heute: research-cycle schreibt Outcome + ggf. experience_distiller. Brain "sieht" das nur beim nächsten perceive (state_summary, project_outcomes).
+- Optional: Am Ende von research-cycle (success und fail) einmal brain reflect_on_job(job_dir) aufrufen (mit kurzem Timeout), damit eine echte Reflection in reflections landet und Playbooks/Learnings vom Brain gezogen werden. Dann nutzt das System den Brain sauber auch für Research-Jobs.
+
+---
+
+## C. Saubere Nutzung durch das System
+
+### C1. Research-Pipeline nutzt Brain-Output
+- Heute: Think bekommt research_context (Principles, Findings, Reflections). Die Research-Pipeline selbst liest keine Principles explizit in explore/focus/verify (nur Calibrator nutzt outcomes).
+- Sauber: In research-cycle (z. B. in explore oder verify) optional "strategic_principles" für die aktuelle Frage aus Memory holen (list_principles oder retrieve_with_utility) und in LLM-Prompts (z. B. reason, verify) als Hinweise einblenden. Dann nutzt Research das Brain-Gedächtnis aktiv.
+
+### C2. Source Credibility und Cross-Links
+- source_credibility: research_source_credibility.py wird in research-cycle (verify) aufgerufen. Prüfen, ob es tatsächlich Einträge schreibt (Domain aus project.json/sources?) und ob list_source_credibility in UI/Brain genutzt wird.
+- cross_links: research_cross_domain.py muss laufen (findings mit embeddings). Wird es von einem Workflow oder manuell aufgerufen? Wenn nie, in research-cycle nach "done" oder in einem wöchentlichen Job aufrufen, damit cross_links befüllt werden. Dann Brain/UI können cross-links anzeigen.
+
+### C3. Ein Pfad für "Reflection nach Job"
+- Nur op (bei FAILED) ruft Brain.reflect_on_job. Alle anderen Job-Enden (z. B. research-cycle mit exit 0 aber project status failed_quality_gate) schreiben nur Outcome. Entweder:
+  - so lassen (Outcome reicht für Calibrator/Experience Distiller), oder
+  - op erweitern: nach jedem Job (DONE und FAILED) kurz brain reflect_on_job aufrufen (async/timeout 30s), damit reflections immer vom Brain kommen. Dann ist "Reflection" ausschließlich Brain-Verantwortung.
+
+---
+
+## D. Reihenfolge der Umsetzung
+
+1. A1 (Abhängigkeiten/venv): tenacity und Aufruf mit venv sicherstellen → Brain läuft mit LLM. [DONE: bin/brain, bin/op re-exec mit .venv]
+2. A2 (Robustheit): Fehler-/Timeout-Logik im Brain verschärfen (optional, nach A1). [DONE: think_llm_failed episode, record_decision inputs.llm_failed, timeout=90 in _llm_reason]
+3. B3 oder C3: Einmal entscheiden – Reflection nach Research-Job immer über Brain (reflect_on_job) oder nur bei FAILED. Dann umsetzen. [DONE: op ruft nach jedem Job (DONE+FAILED) brain reflect async via Popen]
+4. C1: Principles in Research-Prompts einblenden (optional, erhöht Nutzen des Gedächtnisses). [DONE: get_principles_for_research in research_common; gap_analysis, source_reliability, claim_verification nutzen es]
+5. C2: Source Credibility und Cross-Links prüfen und ggf. in Pipeline/Workflow integrieren. [DONE: research_cross_domain nach research_embed in research-cycle.sh (synthesize success path)]
+
+---
+
+## Kurzfassung
+
+- Brain besser: A1 (venv/tenacity) sofort, dann A2/A3 nach Bedarf.
+- Einbindung: Brain ist einziger Ort für Think/Decide/Act/Reflect; op und Workflows rufen Brain nur über bin/brain oder lib.brain auf; Research schreibt Outcomes/Findings, kann Principles lesen (C1).
+- Saubere Nutzung: Ein Reflection-Pfad (Brain); Research nutzt Memory (Principles, ggf. Source Credibility); Cross-Links und Source Credibility aktiv befüllt und genutzt.

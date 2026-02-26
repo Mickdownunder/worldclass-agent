@@ -34,7 +34,7 @@ export RESEARCH_VERIFY_MODEL="${RESEARCH_VERIFY_MODEL:-gpt-5.2}"
 PHASE=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('phase','explore'), end='')")
 QUESTION=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('question',''), end='')")
 
-log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$PWD/log.txt"; echo "$*" >&2; }
+log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$PROJ_DIR/log.txt" 2>/dev/null; echo "$*" >&2; }
 
 # Pause-on-Rate-Limit: if project was paused, check if enough time passed (30 min cooldown)
 if [ "$PHASE" != "done" ]; then
@@ -1178,6 +1178,8 @@ MANIFEST_UPDATE
     python3 "$OPERATOR_ROOT/tools/research_pdf_report.py" "$PROJECT_ID" 2>>"$PWD/log.txt" || log "PDF generation failed (non-fatal)"
     # Store verified findings in Memory DB for cross-domain learning (non-fatal)
     python3 "$OPERATOR_ROOT/tools/research_embed.py" "$PROJECT_ID" 2>>"$PWD/log.txt" || true
+    # Update cross-project links (Brain/UI can show cross-links)
+    python3 "$TOOLS/research_cross_domain.py" --threshold 0.75 --max-pairs 20 2>>"$PWD/log.txt" || true
     advance_phase "done"
     # Telegram: Forschung abgeschlossen (only when passed)
     if [ -x "$TOOLS/send-telegram.sh" ]; then

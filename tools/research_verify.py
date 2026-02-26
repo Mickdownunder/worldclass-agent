@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import project_dir, load_project, ensure_project_layout, llm_call
+from tools.research_common import project_dir, load_project, ensure_project_layout, llm_call, get_principles_for_research
 
 
 def _model():
@@ -71,9 +71,13 @@ def source_reliability(proj_path: Path, project: dict, project_id: str = "") -> 
         title = s.get("title", "")
         items.append({"url": url, "title": title or "(no title)"})
     payload = json.dumps(items, indent=2, ensure_ascii=False)[:12000]
+    question = project.get("question", "")
+    principles_block = get_principles_for_research(question, domain=project.get("domain"), limit=5)
     system = """You are a research analyst evaluating source reliability.
 For each source, return JSON: {"sources": [{"url": "...", "reliability_score": 0.0-1.0, "flags": ["list", "of", "issues or strengths e.g. authoritative_domain"]}]}
 Score: 0.3 = low/unreliable, 0.5 = unknown, 0.7+ = decent, 0.9+ = high trust. Consider domain reputation, recency if visible, author if known."""
+    if principles_block:
+        system += "\n\n" + principles_block
     user = f"SOURCES:\n{payload}\n\nRate each source. Return only valid JSON."
     out = _llm_json(system, user, project_id=project_id)
     if isinstance(out, dict) and "sources" in out:
@@ -116,6 +120,9 @@ def claim_verification(proj_path: Path, project: dict, project_id: str = "") -> 
 For each claim, list ALL sources that support it — both from full findings AND from search metadata snippets. A search snippet counts as a supporting source if it clearly states or implies the same fact.
 Return JSON: {"claims": [{"claim": "...", "supporting_sources": ["url1", "url2"], "confidence": 0.0-1.0, "verified": true/false}]}
 verified = true only if at least 2 distinct source URLs support the claim. Be strict but thorough in matching."""
+    principles_block = get_principles_for_research(question, domain=project.get("domain"), limit=5)
+    if principles_block:
+        system += "\n\n" + principles_block
     user = f"QUESTION: {question}\n\nFINDINGS (full content):\n{items}\n\nSOURCE METADATA (search snippets — use as supporting evidence for cross-referencing):\n{meta_text}\n\nExtract claims and verification status. Return only valid JSON."
     out = _llm_json(system, user, project_id=project_id, model=_verify_model())
     if isinstance(out, dict) and "claims" in out:

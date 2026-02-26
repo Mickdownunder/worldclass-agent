@@ -94,6 +94,7 @@ class Brain:
                 model=model,
                 instructions=system_prompt,
                 input=user_prompt,
+                timeout=90.0,
             )
 
         resp = _call()
@@ -309,10 +310,15 @@ Incorporate applicable principles into your plan reasoning."""
                 "risks": ["cannot reason without LLM"],
                 "confidence": 0.1,
             }
+            self.memory.record_episode(
+                "think_llm_failed",
+                f"Think phase LLM failed: {e}",
+                metadata={"trace_id": trace_id, "goal": goal[:200]},
+            )
 
         self.memory.record_decision(
             phase="think",
-            inputs={"goal": goal, "state_keys": list(state.keys())},
+            inputs={"goal": goal, "state_keys": list(state.keys()), "llm_failed": "LLM reasoning failed" in plan.get("analysis", "")},
             reasoning=plan.get("analysis", ""),
             decision=json.dumps(plan.get("plan", [])[:3]),
             confidence=float(plan.get("confidence", 0.5)),

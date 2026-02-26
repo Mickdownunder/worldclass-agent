@@ -49,7 +49,7 @@ export function ReportTab({
       >
         <div>Report as of: <span style={{ color: "var(--tron-text)" }}>{project?.last_phase_at ? new Date(project.last_phase_at).toISOString().slice(0, 10) : "—"}</span></div>
         <div>Quality score: <span style={{ color: "var(--tron-text)" }}>{project?.quality_gate?.critic_score != null ? String(project.quality_gate.critic_score) : "—"}</span></div>
-        <div>Word count: <span style={{ color: "var(--tron-text)" }}>{wordCount.toLocaleString()}</span></div>
+        <div>Word count: <span style={{ color: "var(--tron-text)" }}>{wordCount.toLocaleString("en-US")}</span></div>
         <div>Sources: <span style={{ color: "var(--tron-text)" }}>{project?.quality_gate?.evidence_gate?.metrics?.unique_source_count ?? "—"}</span></div>
         <div>Spend: <span style={{ color: "var(--tron-text)" }}>{project?.current_spend != null ? `$${project.current_spend.toFixed(2)}` : "—"}</span></div>
         <div>Verified: <span style={{ color: "var(--tron-text)" }}>{project?.quality_gate?.evidence_gate?.metrics?.verified_claim_count != null ? String(project.quality_gate.evidence_gate?.metrics?.verified_claim_count) : "—"}</span></div>

@@ -17,8 +17,16 @@ Usage:
   brain outcomes [--limit N]
   brain decisions [--limit N]
 """
+import os
+import sys
 
-import sys, json, os
+# Use venv if present so Brain has tenacity/openai (required for LLM think/reflect)
+_operator_root = os.environ.get("OPERATOR_ROOT") or os.path.expanduser("~/operator")
+_venv_python = os.path.join(_operator_root, ".venv", "bin", "python3")
+if os.path.isfile(_venv_python):
+    os.execv(_venv_python, [_venv_python] + sys.argv)
+
+import json
 sys.path.insert(0, str(__import__("pathlib").Path.home() / "operator"))
 
 from lib.brain import Brain

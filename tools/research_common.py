@@ -171,3 +171,27 @@ def audit_log(proj_path: Path, event: str, detail: dict | None = None) -> None:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except OSError:
         pass
+
+
+def get_principles_for_research(question: str, domain: str | None = None, limit: int = 5) -> str:
+    """Load strategic principles from Memory (Brain context) for use in research LLM prompts."""
+    try:
+        from lib.memory import Memory
+        with Memory() as mem:
+            if question and hasattr(mem, "retrieve_with_utility"):
+                principles = mem.retrieve_with_utility(question, "principle", k=limit)
+            else:
+                principles = mem.list_principles(limit=limit, domain=domain or "")
+        if not principles:
+            return ""
+        lines = []
+        for p in principles:
+            ptype = (p.get("principle_type") or "guiding").upper()
+            desc = (p.get("description") or "")[:300]
+            if desc:
+                lines.append(f"- [{ptype}] {desc}")
+        if not lines:
+            return ""
+        return "\n\nSTRATEGIC PRINCIPLES (follow guiding, avoid cautionary):\n" + "\n".join(lines)
+    except Exception:
+        return ""
