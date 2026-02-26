@@ -12,6 +12,10 @@ Usage:
   brain quality [--workflow "..."]
   brain cross-links [--limit N]
   brain entities [--type person|org|tech|concept|event] [--project <id>]
+  brain principles [--limit N] [--domain D]
+  brain credibility [--limit N]
+  brain outcomes [--limit N]
+  brain decisions [--limit N]
 """
 
 import sys, json, os
@@ -118,6 +122,46 @@ def cmd_entities(args: list[str]):
         print(json.dumps({"entities": entities, "relations": relations}, indent=2, default=str))
 
 
+def cmd_principles(args: list[str]):
+    limit = 50
+    domain = None
+    if "--limit" in args:
+        limit = int(args[args.index("--limit") + 1])
+    if "--domain" in args:
+        domain = args[args.index("--domain") + 1]
+    with Memory() as mem:
+        principles = mem.list_principles(limit=limit, domain=domain)
+        print(json.dumps({"principles": principles}, indent=2, default=str))
+
+
+def cmd_credibility(args: list[str]):
+    limit = 50
+    if "--limit" in args:
+        limit = int(args[args.index("--limit") + 1])
+    with Memory() as mem:
+        items = mem.list_source_credibility(limit=limit)
+        print(json.dumps({"credibility": items}, indent=2, default=str))
+
+
+def cmd_outcomes(args: list[str]):
+    limit = 100
+    if "--limit" in args:
+        limit = int(args[args.index("--limit") + 1])
+    with Memory() as mem:
+        items = mem.list_project_outcomes(limit=limit)
+        total = mem.count_project_outcomes()
+        print(json.dumps({"outcomes": items, "total": total}, indent=2, default=str))
+
+
+def cmd_decisions(args: list[str]):
+    limit = 30
+    if "--limit" in args:
+        limit = int(args[args.index("--limit") + 1])
+    with Memory() as mem:
+        decisions = mem.recent_decisions(limit=limit)
+        print(json.dumps({"decisions": decisions}, indent=2, default=str))
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__.strip(), file=sys.stderr)
@@ -136,6 +180,10 @@ def main():
         "quality": cmd_quality,
         "cross-links": cmd_cross_links,
         "entities": cmd_entities,
+        "principles": cmd_principles,
+        "credibility": cmd_credibility,
+        "outcomes": cmd_outcomes,
+        "decisions": cmd_decisions,
     }
 
     if cmd in commands:

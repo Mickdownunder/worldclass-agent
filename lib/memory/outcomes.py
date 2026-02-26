@@ -51,3 +51,12 @@ def get_successful_outcomes(conn: sqlite3.Connection, min_critic: float = 0.75, 
 def count_outcomes(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT COUNT(*) as c FROM project_outcomes").fetchone()
     return row["c"] if row else 0
+
+
+def list_outcomes(conn: sqlite3.Connection, limit: int = 100) -> list[dict]:
+    """Recent project outcomes (all) for UI display."""
+    rows = conn.execute(
+        "SELECT * FROM project_outcomes ORDER BY completed_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]

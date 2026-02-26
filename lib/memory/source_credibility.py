@@ -11,6 +11,14 @@ def get(conn: sqlite3.Connection, domain: str) -> dict | None:
     return dict(row) if row else None
 
 
+def list_all(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
+    rows = conn.execute(
+        "SELECT * FROM source_credibility ORDER BY learned_credibility DESC, last_updated DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def update(
     conn: sqlite3.Connection,
     domain: str,

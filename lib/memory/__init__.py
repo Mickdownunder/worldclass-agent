@@ -257,6 +257,9 @@ class Memory:
     def get_successful_outcomes(self, min_critic: float = 0.75, limit: int = 100) -> list[dict]:
         return outcomes_module.get_successful_outcomes(self._conn, min_critic, limit)
 
+    def list_project_outcomes(self, limit: int = 100) -> list[dict]:
+        return outcomes_module.list_outcomes(self._conn, limit)
+
     def count_project_outcomes(self) -> int:
         return outcomes_module.count_outcomes(self._conn)
 
@@ -265,6 +268,9 @@ class Memory:
     # ------------------------------------------------------------------
     def get_source_credibility(self, domain: str) -> dict | None:
         return source_credibility_module.get(self._conn, domain)
+
+    def list_source_credibility(self, limit: int = 50) -> list[dict]:
+        return source_credibility_module.list_all(self._conn, limit)
 
     def update_source_credibility(
         self,
