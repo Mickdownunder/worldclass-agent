@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-25T15:25:45.914842Z",
+  "generated_at": "2026-02-26T08:00:52.313104Z",
   "clients": {
     "demo": {
       "client": {
@@ -23,6 +23,21 @@
         }
       },
       "matches": [
+        {
+          "id": "opp_99f4146f0f65",
+          "title": "Following 35% growth, solar has passed hydro on US grid",
+          "score": 0.9,
+          "topics": [
+            "growth",
+            "competitors",
+            "market_signal"
+          ],
+          "summary": "Solar energy's rapid growth surpassing hydro signals a major market shift, representing opportunities for growth investments and competitor strategy adjustments in clean energy markets.",
+          "evidence": [
+            "https://arstechnica.com/science/2026/02/final-2025-data-is-in-us-energy-use-is-up-as-solar-passes-hydro/"
+          ],
+          "source": "auto_discover"
+        },
         {
           "id": "opp_6aeb3b526932",
           "title": "Danish government agency to ditch Microsoft software (2025)",
@@ -63,6 +78,50 @@
           "summary": "Mercury 2 introduces a fast reasoning large language model powered by diffusion technology, presenting growth opportunities through new AI capabilities in marketing and pricing optimization.",
           "evidence": [
             "https://www.inceptionlabs.ai/blog/introducing-mercury-2"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_7ad0f265d2c5",
+          "title": "How Will OpenAI Compete?",
+          "score": 0.7,
+          "topics": [
+            "competitors",
+            "growth",
+            "marketing"
+          ],
+          "summary": "Analyzing OpenAI's competitive strategy offers insights into competitor moves and market dynamics affecting growth and marketing tactics.",
+          "evidence": [
+            "https://www.ben-evans.com/benedictevans/2026/2/19/how-will-openai-compete-nkg2x"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_fd3263d316e3",
+          "title": "Never buy a .online domain",
+          "score": 0.7,
+          "topics": [
+            "marketing",
+            "growth",
+            "churn"
+          ],
+          "summary": "There appears to be significant challenges or negative perceptions associated with .online domains, potentially impacting marketing effectiveness and customer trust.",
+          "evidence": [
+            "https://www.0xsid.com/blog/online-tld-is-pain"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_344fdd1261e6",
+          "title": "RAM now represents 35 percent of bill of materials for HP PCs",
+          "score": 0.7,
+          "topics": [
+            "pricing",
+            "growth"
+          ],
+          "summary": "RAM costs are substantially impacting HP PC production expenses, indicating pricing pressures and supply chain challenges that could affect product pricing strategies and growth.",
+          "evidence": [
+            "https://arstechnica.com/gadgets/2026/02/ram-now-represents-35-percent-of-bill-of-materials-for-hp-pcs/"
           ],
           "source": "auto_discover"
         },
@@ -115,6 +174,21 @@
       },
       "matches": [
         {
+          "id": "opp_99f4146f0f65",
+          "title": "Following 35% growth, solar has passed hydro on US grid",
+          "score": 0.9,
+          "topics": [
+            "growth",
+            "competitors",
+            "market_signal"
+          ],
+          "summary": "Solar energy's rapid growth surpassing hydro signals a major market shift, representing opportunities for growth investments and competitor strategy adjustments in clean energy markets.",
+          "evidence": [
+            "https://arstechnica.com/science/2026/02/final-2025-data-is-in-us-energy-use-is-up-as-solar-passes-hydro/"
+          ],
+          "source": "auto_discover"
+        },
+        {
           "id": "opp_001",
           "title": "Competitor changed pricing page",
           "score": 0.72,
@@ -144,6 +218,50 @@
           "source": "auto_discover"
         },
         {
+          "id": "opp_7ad0f265d2c5",
+          "title": "How Will OpenAI Compete?",
+          "score": 0.7,
+          "topics": [
+            "competitors",
+            "growth",
+            "marketing"
+          ],
+          "summary": "Analyzing OpenAI's competitive strategy offers insights into competitor moves and market dynamics affecting growth and marketing tactics.",
+          "evidence": [
+            "https://www.ben-evans.com/benedictevans/2026/2/19/how-will-openai-compete-nkg2x"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_fd3263d316e3",
+          "title": "Never buy a .online domain",
+          "score": 0.7,
+          "topics": [
+            "marketing",
+            "growth",
+            "churn"
+          ],
+          "summary": "There appears to be significant challenges or negative perceptions associated with .online domains, potentially impacting marketing effectiveness and customer trust.",
+          "evidence": [
+            "https://www.0xsid.com/blog/online-tld-is-pain"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_344fdd1261e6",
+          "title": "RAM now represents 35 percent of bill of materials for HP PCs",
+          "score": 0.7,
+          "topics": [
+            "pricing",
+            "growth"
+          ],
+          "summary": "RAM costs are substantially impacting HP PC production expenses, indicating pricing pressures and supply chain challenges that could affect product pricing strategies and growth.",
+          "evidence": [
+            "https://arstechnica.com/gadgets/2026/02/ram-now-represents-35-percent-of-bill-of-materials-for-hp-pcs/"
+          ],
+          "source": "auto_discover"
+        },
+        {
           "id": "opp_002",
           "title": "SaaS complaining about churn in forum thread",
           "score": 0.68,
@@ -168,6 +286,35 @@
           "summary": "Apple is accelerating US-based manufacturing by producing the Mac mini in Houston, potentially impacting supply chain dynamics and competitive growth in hardware markets.",
           "evidence": [
             "https://www.apple.com/newsroom/2026/02/apple-accelerates-us-manufacturing-with-mac-mini-production/"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_2f1fc01157aa",
+          "title": "Making MCP cheaper via CLI",
+          "score": 0.6,
+          "topics": [
+            "pricing",
+            "churn",
+            "growth"
+          ],
+          "summary": "Reducing costs in MCP (Managed Cloud Platform) through CLI improvements represents a pricing optimization opportunity with potential impact on customer retention and acquisition.",
+          "evidence": [
+            "https://kanyilmaz.me/2026/02/23/cli-vs-mcp.html"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_a91e90b2bf82",
+          "title": "Large-Scale Online Deanonymization with LLMs",
+          "score": 0.6,
+          "topics": [
+            "churn",
+            "marketing"
+          ],
+          "summary": "Explores how large language models can be used for deanonymization at scale, raising privacy concerns that can affect marketing trust and customer churn.",
+          "evidence": [
+            "https://simonlermen.substack.com/p/large-scale-online-deanonymization"
           ],
           "source": "auto_discover"
         }
