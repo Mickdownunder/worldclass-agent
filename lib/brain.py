@@ -273,13 +273,31 @@ Be specific. Reference actual workflows, clients, and data from the state.
 If memory shows past failures, account for them.
 If playbooks exist for relevant domains, follow their strategies.
 
-Research: If state contains "research_projects" with projects where status != "done" and phase is not "done", consider suggesting "research-cycle" as an action with the project id as reason/context (e.g. action "research-cycle", reason "advance project <project_id>"). Prefer one research-cycle per plan step. Use the workflow id "research-cycle" and the request must be the project id. Research playbooks in state (research_playbooks) describe strategies for different research domains; use them when planning research-related actions."""
+Research: If state contains "research_projects" with projects where status != "done" and phase is not "done", consider suggesting "research-cycle" as an action with the project id as reason/context (e.g. action "research-cycle", reason "advance project <project_id>"). Prefer one research-cycle per plan step. Use the workflow id "research-cycle" and the request must be the project id. Research playbooks in state (research_playbooks) describe strategies for different research domains; use them when planning research-related actions.
+
+STRATEGIC PRINCIPLES: If state.research_context contains strategic_principles, treat them as hard-won lessons from past projects:
+- GUIDING principles are proven strategies — follow them when applicable.
+- CAUTIONARY principles are past failures — actively avoid repeating them.
+- Higher metric_score = more validated through repeated success.
+Incorporate applicable principles into your plan reasoning."""
+
+        # Extract principles before truncation so they are never cut off
+        principles_block = ""
+        sp = state.get("research_context", {}).get("strategic_principles", [])
+        if sp:
+            lines = []
+            for p in sp[:10]:
+                tag = (p.get("principle_type") or "guiding").upper()
+                score = p.get("metric_score", 0.5)
+                desc = (p.get("description") or "")[:200]
+                lines.append(f"- [{tag}] (score: {score:.2f}) {desc}")
+            principles_block = "\n\nSTRATEGIC PRINCIPLES:\n" + "\n".join(lines)
 
         state_compact = json.dumps(state, indent=2, default=str)
         if len(state_compact) > 12000:
             state_compact = state_compact[:12000] + "\n... (truncated)"
 
-        user_prompt = f"GOAL: {goal}\n\nCURRENT STATE:\n{state_compact}"
+        user_prompt = f"GOAL: {goal}\n\nCURRENT STATE:\n{state_compact}{principles_block}"
 
         try:
             plan = self._llm_json(system_prompt, user_prompt)

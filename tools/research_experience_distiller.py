@@ -134,6 +134,80 @@ def main() -> None:
         "final_status": status,
         "critic_score": critic_score,
     }
+
+    # Search queries (successful vs failed) from artifacts
+    successful_queries, failed_queries = [], []
+    artifacts_dir = proj_dir / "artifacts"
+    if artifacts_dir.is_dir():
+        for af in artifacts_dir.glob("*.json"):
+            try:
+                ad = json.loads(af.read_text())
+                q = ad.get("query") or ad.get("search_query") or ""
+                if q:
+                    results_count = len(ad.get("results", []))
+                    (successful_queries if results_count > 0 else failed_queries).append(q[:200])
+            except Exception:
+                pass
+    trajectory["successful_queries"] = successful_queries[:10]
+    trajectory["failed_queries"] = failed_queries[:10]
+
+    # Source domain verification rates (sources + claim_ledger)
+    from urllib.parse import urlparse
+    source_domains: dict = {}
+    sources_dir = proj_dir / "sources"
+    if sources_dir.is_dir():
+        for sf in sources_dir.glob("*.json"):
+            if "_content" in sf.name:
+                continue
+            try:
+                sd = json.loads(sf.read_text())
+                url = sd.get("url") or ""
+                if url:
+                    dom = urlparse(url).netloc
+                    if dom:
+                        source_domains.setdefault(dom, {"total": 0, "verified": 0})
+                        source_domains[dom]["total"] += 1
+            except Exception:
+                pass
+    ledger_path = proj_dir / "verify" / "claim_ledger.json"
+    if ledger_path.exists():
+        try:
+            ledger = json.loads(ledger_path.read_text())
+            claims = ledger if isinstance(ledger, list) else ledger.get("claims", [])
+            for claim in claims:
+                for src_url in (claim.get("source_urls") or []):
+                    dom = urlparse(src_url).netloc
+                    if dom in source_domains and (claim.get("status") == "VERIFIED" or claim.get("is_verified")):
+                        source_domains[dom]["verified"] += 1
+        except Exception:
+            pass
+    trajectory["top_source_domains"] = sorted(
+        [{"domain": d, **v} for d, v in source_domains.items()],
+        key=lambda x: x["verified"],
+        reverse=True,
+    )[:10]
+
+    # Loop-backs from phase_history
+    phase_history = d.get("phase_history") or []
+    loop_back_count = 0
+    seen_phases = set()
+    for ph in phase_history:
+        phase_name = ph if isinstance(ph, str) else (ph.get("phase") or "")
+        if phase_name in seen_phases:
+            loop_back_count += 1
+        seen_phases.add(phase_name)
+    trajectory["loop_back_count"] = loop_back_count
+
+    # User feedback from feedback.jsonl
+    feedback_path = proj_dir / "feedback.jsonl"
+    if feedback_path.exists():
+        try:
+            fb_lines = feedback_path.read_text().strip().splitlines()
+            trajectory["user_feedback_count"] = len(fb_lines)
+            trajectory["user_feedback_summary"] = fb_lines[-1][:300] if fb_lines else ""
+        except Exception:
+            pass
+
     trajectory_str = json.dumps(trajectory, indent=2)
 
     success = (critic_score >= 0.7 and status == "done") or (status == "done" and critic_score >= 0.5)
