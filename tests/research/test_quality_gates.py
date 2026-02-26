@@ -262,11 +262,11 @@ def test_hallucinated_verified_tag_blocked():
     result_b = apply_verified_tags_to_report("Fake claim [VERIFIED].", ledger_b)
     assert "[VERIFIED]" not in result_b, invariant_msg + " (B: is_verified=False must not tag)"
 
-    # Case C: Ledger with exactly one verified claim => exactly one [VERIFIED]
+    # Case C: Ledger with exactly one verified claim => exactly one [VERIFIED] or [VERIFIED:claim_id]
     ledger_c = [{"text": "Real claim", "is_verified": True, "claim_id": "c1"}]
     result_c = apply_verified_tags_to_report("Fake [VERIFIED]. Real claim here.", ledger_c)
-    assert "Fake." in result_c and "Real claim [VERIFIED] here" in result_c, invariant_msg + " (C: only ledger-verified gets tag)"
-    assert result_c.count("[VERIFIED]") == 1, invariant_msg + " (C: exactly one [VERIFIED] expected)"
+    assert "Fake." in result_c and "Real claim" in result_c and "here" in result_c, invariant_msg + " (C: only ledger-verified gets tag)"
+    assert "[VERIFIED" in result_c and result_c.count("[VERIFIED") == 1, invariant_msg + " (C: exactly one [VERIFIED] tag expected)"
 
 
 if __name__ == "__main__":

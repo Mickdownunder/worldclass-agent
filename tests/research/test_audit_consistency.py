@@ -1,10 +1,12 @@
 """
 Integration check: Audit API/UI data must match claim_ledger / claim_evidence_map.
-Run from repo root: python3 tests/research/test_audit_consistency.py
+Requires E2E fixture project research/proj-e2e-check (skipped if missing).
 """
 import json
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
@@ -43,6 +45,10 @@ def get_audit_from_files(project_id: str) -> dict | None:
         return None
 
 
+@pytest.mark.skipif(
+    not (ROOT / "research" / "proj-e2e-check").is_dir(),
+    reason="E2E fixture research/proj-e2e-check not present",
+)
 def test_audit_consistency():
     """Audit data from files must have correct verified/unverified structure."""
     # Use E2E fixture: 2 verified, 1 unverified
@@ -63,5 +69,4 @@ def test_audit_consistency():
 
 
 if __name__ == "__main__":
-    test_audit_consistency()
-    print("Check 3 (Audit) passed.")
+    pytest.main([__file__, "-v"])
