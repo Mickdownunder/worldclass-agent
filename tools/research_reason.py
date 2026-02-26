@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import load_secrets, project_dir, load_project
+from tools.research_common import load_secrets, project_dir, load_project, llm_retry
 
 
 def _model():
@@ -32,48 +32,66 @@ def _load_findings(proj_path: Path, max_items: int = 40) -> list[dict]:
     return findings[:max_items]
 
 
-def _llm_json(system: str, user: str) -> dict | list:
+def _llm_json(system: str, user: str, project_id: str = "") -> dict | list:
+    """Call LLM with retry and optional budget tracking."""
     from openai import OpenAI
     secrets = load_secrets()
     client = OpenAI(api_key=secrets.get("OPENAI_API_KEY"))
-    resp = client.responses.create(model=_model(), instructions=system, input=user)
+    model = _model()
+
+    @llm_retry()
+    def _call():
+        return client.responses.create(model=model, instructions=system, input=user)
+
+    resp = _call()
+
+    if project_id:
+        try:
+            from tools.research_budget import track_usage
+            track_usage(project_id, model, resp.usage.input_tokens, resp.usage.output_tokens)
+        except Exception:
+            pass
+
     text = (resp.output_text or "").strip()
     if text.startswith("```"):
         import re
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {}
 
 
-def gap_analysis(proj_path: Path, project: dict) -> dict:
+def gap_analysis(proj_path: Path, project: dict, project_id: str = "") -> dict:
     findings = _load_findings(proj_path)
     question = project.get("question", "")
     items = json.dumps([{"title": f.get("title"), "excerpt": (f.get("excerpt") or "")[:500]} for f in findings], indent=2)[:8000]
     system = """You are a research analyst. Given the research question and current findings, list GAPS: what is still unknown or under-sourced.
 Return JSON: {"gaps": [{"description": "...", "priority": "high|medium|low", "suggested_search": "query"}]}"""
     user = f"QUESTION: {question}\n\nFINDINGS:\n{items}\n\nList 3-7 gaps. Be specific."
-    out = _llm_json(system, user)
+    out = _llm_json(system, user, project_id=project_id)
     return out if isinstance(out, dict) else {"gaps": out}
 
 
-def hypothesis_formation(proj_path: Path, project: dict) -> dict:
+def hypothesis_formation(proj_path: Path, project: dict, project_id: str = "") -> dict:
     findings = _load_findings(proj_path)
     question = project.get("question", "")
     items = json.dumps([{"title": f.get("title"), "excerpt": (f.get("excerpt") or "")[:500]} for f in findings], indent=2)[:8000]
     system = """You are a research analyst. Form 1-3 testable hypotheses that answer the research question based on current findings.
 Return JSON: {"hypotheses": [{"statement": "...", "confidence": 0.0-1.0, "evidence_summary": "..."}]}"""
     user = f"QUESTION: {question}\n\nFINDINGS:\n{items}"
-    out = _llm_json(system, user)
+    out = _llm_json(system, user, project_id=project_id)
     return out if isinstance(out, dict) else {"hypotheses": out}
 
 
-def contradiction_detection(proj_path: Path, project: dict) -> dict:
+def contradiction_detection(proj_path: Path, project: dict, project_id: str = "") -> dict:
     findings = _load_findings(proj_path)
     items = json.dumps([{"url": f.get("url"), "title": f.get("title"), "excerpt": (f.get("excerpt") or "")[:400]} for f in findings], indent=2)[:10000]
     system = """You are a research analyst. Identify CONTRADICTIONS: pairs of findings that disagree on the same fact or claim.
 Return JSON: {"contradictions": [{"claim": "what they disagree on", "source_a": "url or title", "source_b": "url or title", "summary": "brief"}]}"""
     user = "FINDINGS:\n" + items + '\n\nList 0-5 contradictions. If none, return {"contradictions": []}.'
-    out = _llm_json(system, user)
+    out = _llm_json(system, user, project_id=project_id)
     return out if isinstance(out, dict) else {"contradictions": out}
 
 
@@ -89,11 +107,11 @@ def main():
         sys.exit(1)
     project = load_project(proj_path)
     if mode == "gap_analysis":
-        result = gap_analysis(proj_path, project)
+        result = gap_analysis(proj_path, project, project_id=project_id)
     elif mode == "hypothesis_formation":
-        result = hypothesis_formation(proj_path, project)
+        result = hypothesis_formation(proj_path, project, project_id=project_id)
     elif mode == "contradiction_detection":
-        result = contradiction_detection(proj_path, project)
+        result = contradiction_detection(proj_path, project, project_id=project_id)
     else:
         print(f"Unknown mode: {mode}", file=sys.stderr)
         sys.exit(2)

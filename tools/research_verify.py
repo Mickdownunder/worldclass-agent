@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import load_secrets, project_dir, load_project, ensure_project_layout
+from tools.research_common import load_secrets, project_dir, load_project, ensure_project_layout, llm_retry
 
 
 def _model():
@@ -44,20 +44,34 @@ def _load_findings(proj_path: Path, max_items: int = 50) -> list[dict]:
     return findings[:max_items]
 
 
-def _llm_json(system: str, user: str) -> dict | list:
+def _llm_json(system: str, user: str, project_id: str = "") -> dict | list:
+    """Call LLM with retry and optional budget tracking."""
     from openai import OpenAI
     secrets = load_secrets()
     client = OpenAI(api_key=secrets.get("OPENAI_API_KEY"))
-    resp = client.responses.create(model=_model(), instructions=system, input=user)
+    model = _model()
+
+    @llm_retry()
+    def _call():
+        return client.responses.create(model=model, instructions=system, input=user)
+
+    resp = _call()
+
+    if project_id:
+        try:
+            from tools.research_budget import track_usage
+            track_usage(project_id, model, resp.usage.input_tokens, resp.usage.output_tokens)
+        except Exception:
+            pass
+
     text = (resp.output_text or "").strip()
     if text.startswith("```"):
-        import re
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
     return json.loads(text)
 
 
-def source_reliability(proj_path: Path, project: dict) -> dict:
+def source_reliability(proj_path: Path, project: dict, project_id: str = "") -> dict:
     """LLM-based rating of each source: domain trust, recency, author credibility."""
     ensure_project_layout(proj_path)
     sources = _load_sources(proj_path)
@@ -73,29 +87,49 @@ def source_reliability(proj_path: Path, project: dict) -> dict:
 For each source, return JSON: {"sources": [{"url": "...", "reliability_score": 0.0-1.0, "flags": ["list", "of", "issues or strengths e.g. authoritative_domain"]}]}
 Score: 0.3 = low/unreliable, 0.5 = unknown, 0.7+ = decent, 0.9+ = high trust. Consider domain reputation, recency if visible, author if known."""
     user = f"SOURCES:\n{payload}\n\nRate each source. Return only valid JSON."
-    out = _llm_json(system, user)
+    out = _llm_json(system, user, project_id=project_id)
     if isinstance(out, dict) and "sources" in out:
         return out
     return {"sources": out if isinstance(out, list) else []}
 
 
-def claim_verification(proj_path: Path, project: dict) -> dict:
+def _load_source_metadata(proj_path: Path, max_items: int = 50) -> list[dict]:
+    """Load search result metadata (title + description) as lightweight evidence."""
+    summaries = []
+    for f in (proj_path / "sources").glob("*.json"):
+        if f.name.endswith("_content.json"):
+            continue
+        try:
+            d = json.loads(f.read_text())
+            url = (d.get("url") or "").strip()
+            title = (d.get("title") or "").strip()
+            desc = (d.get("description") or "").strip()
+            if url and (title or desc):
+                summaries.append({"url": url, "title": title, "snippet": desc[:300]})
+        except Exception:
+            pass
+    return summaries[:max_items]
+
+
+def claim_verification(proj_path: Path, project: dict, project_id: str = "") -> dict:
     """Extract key claims from findings and check if >= 2 independent sources support them."""
     ensure_project_layout(proj_path)
     findings = _load_findings(proj_path)
-    if not findings:
+    source_meta = _load_source_metadata(proj_path)
+    if not findings and not source_meta:
         return {"claims": []}
     items = json.dumps(
         [{"url": f.get("url"), "title": f.get("title"), "excerpt": (f.get("excerpt") or "")[:600]} for f in findings],
         indent=2, ensure_ascii=False
-    )[:14000]
+    )[:12000]
+    meta_text = json.dumps(source_meta[:30], indent=2, ensure_ascii=False)[:4000] if source_meta else "[]"
     question = project.get("question", "")
-    system = """You are a research analyst. From the findings, extract KEY CLAIMS (main factual statements that answer the research question).
-For each claim, assess how many independent sources support it.
+    system = """You are a research analyst. From the findings AND source metadata, extract KEY CLAIMS (main factual statements that answer the research question).
+For each claim, list ALL sources that support it — both from full findings AND from search metadata snippets. A search snippet counts as a supporting source if it clearly states or implies the same fact.
 Return JSON: {"claims": [{"claim": "...", "supporting_sources": ["url1", "url2"], "confidence": 0.0-1.0, "verified": true/false}]}
-verified = true only if at least 2 distinct sources support the claim. Be strict."""
-    user = f"QUESTION: {question}\n\nFINDINGS:\n{items}\n\nExtract claims and verification status. Return only valid JSON."
-    out = _llm_json(system, user)
+verified = true only if at least 2 distinct source URLs support the claim. Be strict but thorough in matching."""
+    user = f"QUESTION: {question}\n\nFINDINGS (full content):\n{items}\n\nSOURCE METADATA (search snippets — use as supporting evidence for cross-referencing):\n{meta_text}\n\nExtract claims and verification status. Return only valid JSON."
+    out = _llm_json(system, user, project_id=project_id)
     if isinstance(out, dict) and "claims" in out:
         return out
     return {"claims": out if isinstance(out, list) else []}
@@ -133,20 +167,21 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
         if isinstance(supporting, str):
             supporting = [supporting] if supporting else []
         supporting_source_ids = [s for s in supporting if s][:20]
-        # Deterministic is_verified: >=2 distinct sources, none low reliability, no dispute
-        low_rel = any((rel_by_url.get(u, 0.5) < 0.6) for u in supporting_source_ids)
+        reliable_sources = [u for u in supporting_source_ids if rel_by_url.get(u, 0.5) >= 0.6]
+        distinct_reliable = len(set(reliable_sources))
         dispute = (c.get("disputed") or c.get("verification_status", "") == "disputed" or
                    str(c.get("verification_status", "")).lower() == "disputed")
-        distinct_count = len(set(supporting_source_ids))
-        is_verified = bool(distinct_count >= 2 and not low_rel and not dispute)
+        is_verified = bool(distinct_reliable >= 2 and not dispute)
         if is_verified:
-            verification_reason = f"{distinct_count} independent sources, reliability OK"
+            verification_reason = f"{distinct_reliable} reliable independent sources"
         elif dispute:
             verification_reason = "disputed"
-        elif low_rel:
-            verification_reason = "supporting source(s) low reliability"
-        elif distinct_count < 2:
-            verification_reason = f"only {distinct_count} source(s)"
+        elif distinct_reliable < 2:
+            total_distinct = len(set(supporting_source_ids))
+            if total_distinct >= 2 and distinct_reliable < 2:
+                verification_reason = f"{total_distinct} sources but only {distinct_reliable} reliable"
+            else:
+                verification_reason = f"only {total_distinct} source(s)"
         else:
             verification_reason = "not verified"
         claims_out.append({
@@ -156,12 +191,17 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
             "is_verified": is_verified,
             "verification_reason": verification_reason,
         })
+    from tools.research_common import audit_log
+    audit_log(proj_path, "claim_ledger_built", {
+        "total_claims": len(claims_out),
+        "verified_count": sum(1 for c in claims_out if c.get("is_verified")),
+    })
     return {"claims": claims_out}
 
 
-# Regex to strip all [VERIFIED] tags (with optional surrounding whitespace).
+# Regex to strip all [VERIFIED] and [VERIFIED:claim_id] tags (with optional surrounding whitespace).
 # Used so only ledger-based is_verified claims get the tag; LLM-hallucinated tags are removed.
-_VERIFIED_TAG_PATTERN = re.compile(r"\s*\[VERIFIED\]", re.IGNORECASE)
+_VERIFIED_TAG_PATTERN = re.compile(r"\s*\[VERIFIED(?::[^\]]+)?\]", re.IGNORECASE)
 
 
 def apply_verified_tags_to_report(report: str, claims: list[dict]) -> str:
@@ -174,19 +214,20 @@ def apply_verified_tags_to_report(report: str, claims: list[dict]) -> str:
         return report
     # 1) Remove all existing [VERIFIED] tags (robust to optional spaces)
     report = _VERIFIED_TAG_PATTERN.sub("", report)
-    # 2) Add [VERIFIED] only for ledger-verified claims; each claim at most once
+    # 2) Add [VERIFIED:claim_id] only for ledger-verified claims; each claim at most once
     for c in claims:
         if not c.get("is_verified"):
             continue
         text = (c.get("text") or "").strip()
-        if not text or " [VERIFIED]" in text:
+        if not text or "[VERIFIED" in text:
             continue
+        claim_id = c.get("claim_id", "")
         if text in report:
-            report = report.replace(text, text + " [VERIFIED]", 1)
+            report = report.replace(text, text + f" [VERIFIED:{claim_id}]", 1)
     return report
 
 
-def fact_check(proj_path: Path, project: dict) -> dict:
+def fact_check(proj_path: Path, project: dict, project_id: str = "") -> dict:
     """Identify verifiable facts (numbers, dates, names) and mark verification status."""
     ensure_project_layout(proj_path)
     findings = _load_findings(proj_path)
@@ -201,7 +242,7 @@ For each fact, state verification status based on how many sources mention it co
 Return JSON: {"facts": [{"statement": "...", "verification_status": "confirmed|disputed|unverifiable", "source": "url or summary"}]}
 confirmed = multiple sources agree; disputed = sources disagree; unverifiable = only one source or unclear."""
     user = f"FINDINGS:\n{items}\n\nList 3-10 key facts with status. Return only valid JSON."
-    out = _llm_json(system, user)
+    out = _llm_json(system, user, project_id=project_id)
     if isinstance(out, dict) and "facts" in out:
         return out
     return {"facts": out if isinstance(out, list) else []}
@@ -219,11 +260,11 @@ def main():
         sys.exit(1)
     project = load_project(proj_path)
     if mode == "source_reliability":
-        result = source_reliability(proj_path, project)
+        result = source_reliability(proj_path, project, project_id=project_id)
     elif mode == "claim_verification":
-        result = claim_verification(proj_path, project)
+        result = claim_verification(proj_path, project, project_id=project_id)
     elif mode == "fact_check":
-        result = fact_check(proj_path, project)
+        result = fact_check(proj_path, project, project_id=project_id)
     elif mode == "claim_ledger":
         result = build_claim_ledger(proj_path, project)
     else:

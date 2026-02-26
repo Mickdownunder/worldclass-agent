@@ -84,11 +84,19 @@ class Brain:
         return self._llm_client
 
     def _llm_reason(self, system_prompt: str, user_prompt: str, model: str = "gpt-4.1-mini") -> str:
-        resp = self.llm.responses.create(
-            model=model,
-            instructions=system_prompt,
-            input=user_prompt,
-        )
+        import sys as _sys
+        _sys.path.insert(0, str(Path.home() / "operator"))
+        from tools.research_common import llm_retry
+
+        @llm_retry()
+        def _call():
+            return self.llm.responses.create(
+                model=model,
+                instructions=system_prompt,
+                input=user_prompt,
+            )
+
+        resp = _call()
         return resp.output_text.strip()
 
     def _llm_json(self, system_prompt: str, user_prompt: str, model: str = "gpt-4.1-mini") -> dict | list:

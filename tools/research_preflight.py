@@ -12,10 +12,10 @@ import json
 import sys
 from pathlib import Path
 
-# Required for web reader (research_web_reader.py)
-REQUIRED_MODULES = ["bs4"]
+# Required: bs4 (reader), openai (reasoning/verify/synthesize)
+REQUIRED_MODULES = ["bs4", "openai"]
 # Optional; if missing, reader falls back to bs4-only
-OPTIONAL_MODULES = ["readability", "pypdf"]
+OPTIONAL_MODULES = ["readability", "pypdf", "tenacity"]
 
 
 def check_import(module: str) -> tuple[bool, str | None]:
@@ -27,6 +27,10 @@ def check_import(module: str) -> tuple[bool, str | None]:
             __import__("readability")
         elif module == "pypdf":
             __import__("pypdf")
+        elif module == "openai":
+            __import__("openai")
+        elif module == "tenacity":
+            __import__("tenacity")
         else:
             __import__(module)
         return True, None
@@ -47,8 +51,18 @@ def run_preflight() -> dict:
             missing_optional.append(mod)
 
     if missing_required:
-        fail_code = "failed_dependency_missing_bs4" if "bs4" in missing_required else "failed_dependency_missing_modules"
-        message = f"Required module(s) missing: {', '.join(missing_required)}. Install e.g. pip install beautifulsoup4"
+        if "openai" in missing_required and "bs4" not in missing_required:
+            fail_code = "failed_dependency_missing_openai"
+        elif "bs4" in missing_required and "openai" not in missing_required:
+            fail_code = "failed_dependency_missing_bs4"
+        else:
+            fail_code = "failed_dependency_missing_modules"
+        install_hints = []
+        if "bs4" in missing_required:
+            install_hints.append("pip install beautifulsoup4")
+        if "openai" in missing_required:
+            install_hints.append("pip install openai")
+        message = f"Required module(s) missing: {', '.join(missing_required)}. Install: {'; '.join(install_hints)}"
         return {
             "ok": False,
             "fail_code": fail_code,
@@ -102,6 +116,26 @@ def apply_preflight_fail_to_project(proj_dir: Path, art_dir: Path) -> None:
         "status": "failed",
         "fail_code": preflight.get("fail_code"),
         "reasons": reasons,
+        "metrics": {},
+    }
+    d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    (proj_dir / "project.json").write_text(json.dumps(d, indent=2))
+
+
+def apply_connect_openai_fail_to_project(proj_dir: Path) -> None:
+    """
+    Set project status to failed_dependency_missing_openai and quality_gate (connect phase).
+    Used when openai is missing at start of connect; same effect as research-cycle.sh CONNECT_OPENAI_FAIL block.
+    """
+    from datetime import datetime, timezone
+
+    proj_dir = Path(proj_dir)
+    d = json.loads((proj_dir / "project.json").read_text())
+    d["status"] = "failed_dependency_missing_openai"
+    d.setdefault("quality_gate", {})["evidence_gate"] = {
+        "status": "failed",
+        "fail_code": "failed_dependency_missing_openai",
+        "reasons": ["OpenAI module required for reasoning (connect phase). Install: pip install openai"],
         "metrics": {},
     }
     d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

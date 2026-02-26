@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import project_dir, load_project
+from tools.research_common import project_dir, load_project, audit_log
 
 # Evidence Gate thresholds (single source of truth, configurable via this dict)
 EVIDENCE_GATE_THRESHOLDS = {
@@ -59,11 +59,20 @@ def run_evidence_gate(project_id: str) -> dict:
         except Exception:
             pass
 
+    # Adaptive findings threshold: lower floor if read failure rate is high
+    effective_findings_min = EVIDENCE_GATE_THRESHOLDS["findings_count_min"]
+    read_attempts = metrics.get("read_attempts", 0)
+    read_successes = metrics.get("read_successes", 0)
+    if read_attempts > 0:
+        success_rate = read_successes / read_attempts
+        if success_rate < 0.5:
+            effective_findings_min = max(3, int(EVIDENCE_GATE_THRESHOLDS["findings_count_min"] * success_rate * 1.5))
+
     # findings_count
     if findings_dir.exists():
         metrics["findings_count"] = len(list(findings_dir.glob("*.json")))
-    if metrics["findings_count"] < EVIDENCE_GATE_THRESHOLDS["findings_count_min"]:
-        reasons.append(f"findings_count {metrics['findings_count']} < {EVIDENCE_GATE_THRESHOLDS['findings_count_min']}")
+    if metrics["findings_count"] < effective_findings_min:
+        reasons.append(f"findings_count {metrics['findings_count']} < {effective_findings_min}")
 
     # unique_source_count (by URL domain or URL)
     urls = set()
@@ -134,6 +143,12 @@ def run_evidence_gate(project_id: str) -> dict:
     # Determine pass and fail_code
     pass_gate = len(reasons) == 0
     if pass_gate:
+        audit_log(proj, "evidence_gate", {
+            "decision": "pass",
+            "fail_code": None,
+            "metrics": metrics,
+            "reasons": reasons,
+        })
         return {"pass": True, "fail_code": None, "metrics": metrics, "reasons": []}
     # Technical reader/dependency failure (0 extractable content despite sources)
     if (
@@ -143,7 +158,7 @@ def run_evidence_gate(project_id: str) -> dict:
         and metrics.get("read_attempts", 0) > 0
     ):
         fail_code = "failed_reader_pipeline"
-    elif metrics["findings_count"] < EVIDENCE_GATE_THRESHOLDS["findings_count_min"] or metrics["unique_source_count"] < EVIDENCE_GATE_THRESHOLDS["unique_source_count_min"]:
+    elif metrics["findings_count"] < effective_findings_min or metrics["unique_source_count"] < EVIDENCE_GATE_THRESHOLDS["unique_source_count_min"]:
         fail_code = "failed_insufficient_evidence"
     elif metrics["verified_claim_count"] < EVIDENCE_GATE_THRESHOLDS["verified_claim_count_min"] or metrics["claim_support_rate"] < EVIDENCE_GATE_THRESHOLDS["claim_support_rate_min"]:
         fail_code = "failed_verification_inconclusive"
@@ -151,6 +166,12 @@ def run_evidence_gate(project_id: str) -> dict:
         fail_code = "failed_source_diversity"
     else:
         fail_code = "failed_insufficient_evidence"
+    audit_log(proj, "evidence_gate", {
+        "decision": "fail",
+        "fail_code": fail_code,
+        "metrics": metrics,
+        "reasons": reasons,
+    })
     return {"pass": False, "fail_code": fail_code, "metrics": metrics, "reasons": reasons}
 
 

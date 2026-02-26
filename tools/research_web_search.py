@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 # Allow importing research_common
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import load_secrets
+from tools.research_common import load_secrets, api_retry
 
 
 def search_brave(query: str, max_results: int = 20) -> list[dict]:
@@ -25,8 +25,11 @@ def search_brave(query: str, max_results: int = 20) -> list[dict]:
     url = f"https://api.search.brave.com/res/v1/web/search?q={quote(query)}&count={min(max_results, 20)}"
     req = Request(url, headers={"Accept": "application/json", "X-Subscription-Token": api_key})
     try:
-        with urlopen(req, timeout=15) as r:
-            data = json.loads(r.read().decode())
+        @api_retry()
+        def _do_request():
+            with urlopen(req, timeout=15) as r:
+                return json.loads(r.read().decode())
+        data = _do_request()
     except Exception as e:
         print(f"WARN: Brave search failed: {e}", file=sys.stderr)
         return []
@@ -53,8 +56,11 @@ def search_serper(query: str, max_results: int = 20) -> list[dict]:
         method="POST",
     )
     try:
-        with urlopen(req, timeout=15) as r:
-            data = json.loads(r.read().decode())
+        @api_retry()
+        def _do_request():
+            with urlopen(req, timeout=15) as r:
+                return json.loads(r.read().decode())
+        data = _do_request()
     except Exception as e:
         print(f"WARN: Serper search failed: {e}", file=sys.stderr)
         return []

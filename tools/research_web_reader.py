@@ -11,8 +11,131 @@ import json
 import re
 import sys
 from pathlib import Path
-from urllib.request import Request, urlopen
+from urllib.request import Request, urlopen, ProxyHandler, build_opener
 from urllib.error import URLError, HTTPError
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+_PAYWALL_PATTERNS = re.compile(
+    r"paywall|subscribe to continue|cookie-consent|access denied|please enable javascript|sign.?in to read|create.?an? account|free trial",
+    re.IGNORECASE,
+)
+
+_BROWSER_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+)
+
+_JINA_FIRST_DOMAINS = frozenset({
+    "theverge.com", "nytimes.com", "wsj.com", "ft.com",
+    "bloomberg.com", "arstechnica.com", "fortune.com",
+    "washingtonpost.com", "economist.com", "businessinsider.com",
+})
+
+
+def _extract_domain(url: str) -> str:
+    try:
+        parts = url.split("/")
+        return parts[2].replace("www.", "") if len(parts) > 2 else ""
+    except Exception:
+        return ""
+
+
+def _detect_paywall(html: str) -> bool:
+    """Return True if HTML looks paywalled or bot-blocked (thin body or known patterns)."""
+    from html.parser import HTMLParser
+
+    class _BodyExtractor(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self._in_body = False
+            self.text_parts: list[str] = []
+        def handle_starttag(self, tag, attrs):
+            if tag == "body":
+                self._in_body = True
+        def handle_endtag(self, tag):
+            if tag == "body":
+                self._in_body = False
+        def handle_data(self, data):
+            if self._in_body:
+                self.text_parts.append(data)
+
+    ext = _BodyExtractor()
+    try:
+        ext.feed(html)
+    except Exception:
+        pass
+    body_text = "".join(ext.text_parts).strip()
+    if len(body_text) < 200:
+        return True
+    if _PAYWALL_PATTERNS.search(html):
+        return True
+    return False
+
+
+def fetch_via_google_cache(url: str, timeout: int = 15) -> tuple[str, str]:
+    """Try Google's cache of the URL. Returns (title, text)."""
+    cache_url = f"https://webcache.googleusercontent.com/search?q=cache:{url}"
+    req = Request(cache_url, headers={"User-Agent": _BROWSER_UA, "Accept-Language": "en-US,en;q=0.9"})
+    try:
+        with urlopen(req, timeout=timeout) as r:
+            html = r.read().decode("utf-8", errors="replace")
+        BeautifulSoup_cls = _get_bs4()
+        if BeautifulSoup_cls:
+            return extract_with_bs4(html, BeautifulSoup_cls)
+    except Exception:
+        pass
+    return ("", "")
+
+
+def fetch_via_jina(url: str, timeout: int = 45) -> tuple[str, str]:
+    """Fetch readable content via Jina Reader API. Returns (title, markdown_text).
+    Uses ProxyHandler({}) so Jina is called direct (bypasses system proxy)."""
+    try:
+        from tools.research_common import load_secrets
+        secrets = load_secrets()
+    except Exception:
+        secrets = {}
+    jina_url = f"https://r.jina.ai/{url}"
+    headers = {
+        "Accept": "text/markdown",
+        "X-No-Cache": "true",
+        "X-Timeout": "30",
+    }
+    jina_key = secrets.get("JINA_API_KEY", "")
+    if jina_key:
+        headers["Authorization"] = f"Bearer {jina_key}"
+    req = Request(jina_url, headers=headers)
+    try:
+        opener = build_opener(ProxyHandler({}))
+        with opener.open(req, timeout=timeout) as r:
+            md = r.read().decode("utf-8", errors="replace")
+    except Exception as exc:
+        print(f"[jina] FAIL {url}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return ("", "")
+    title = ""
+    for line in md.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            title = stripped[2:].strip()
+            break
+    return (title, md[:150000])
+
+
+def fetch_via_archive(url: str, timeout: int = 20) -> tuple[str, str]:
+    """Try Wayback Machine's latest snapshot. Returns (title, text) via Jina on snapshot URL."""
+    api_url = f"https://archive.org/wayback/available?url={url}"
+    req = Request(api_url, headers={"User-Agent": "OperatorResearch/1.0"})
+    try:
+        with urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode())
+        snapshot_url = data.get("archived_snapshots", {}).get("closest", {}).get("url", "")
+        if not snapshot_url:
+            return ("", "")
+        return fetch_via_jina(snapshot_url, timeout)
+    except Exception:
+        return ("", "")
+
 
 # Lazy imports to allow preflight to fail first; graceful fallback if called without deps
 def _get_bs4():
@@ -31,7 +154,12 @@ def _get_readability():
 
 
 def fetch_url(url: str, timeout: int = 15) -> bytes:
-    req = Request(url, headers={"User-Agent": "OperatorResearch/1.0 (research bot)"})
+    req = Request(url, headers={
+        "User-Agent": _BROWSER_UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cache-Control": "no-cache",
+    })
     with urlopen(req, timeout=timeout) as r:
         return r.read()
 
@@ -113,19 +241,75 @@ def main():
             out["message"] = str(e)[:500]
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return
-    try:
-        raw = fetch_url(url)
-        html = raw.decode("utf-8", errors="replace")
-        if HAS_READABILITY:
-            title, text = extract_with_readability(html, url, Document_cls, BeautifulSoup_cls)
+    domain = _extract_domain(url)
+    jina_first = domain in _JINA_FIRST_DOMAINS
+    fallback_chain: list[dict] = []
+
+    if jina_first:
+        fb_title, fb_text = fetch_via_jina(url)
+        if fb_text.strip():
+            out["title"] = fb_title
+            out["text"] = fb_text
+            out["fallback"] = "jina_first"
+            fallback_chain.append({"method": "jina_first", "result": "ok"})
         else:
-            title, text = extract_with_bs4(html, BeautifulSoup_cls)
-        out["title"] = title
-        out["text"] = text
-    except (URLError, HTTPError, OSError) as e:
-        out["error"] = str(e)
-        out["error_code"] = "fetch_error"
-        out["message"] = str(e)[:500]
+            fallback_chain.append({"method": "jina_first", "result": "empty"})
+
+    if not out["text"]:
+        try:
+            raw = fetch_url(url)
+            html = raw.decode("utf-8", errors="replace")
+            if HAS_READABILITY:
+                title, text = extract_with_readability(html, url, Document_cls, BeautifulSoup_cls)
+            else:
+                title, text = extract_with_bs4(html, BeautifulSoup_cls)
+            if _detect_paywall(html) or len(text.strip()) < 100:
+                fallback_chain.append({"method": "direct", "result": "paywall_or_thin"})
+            else:
+                out["title"] = title
+                out["text"] = text
+                fallback_chain.append({"method": "direct", "result": "ok"})
+        except HTTPError as e:
+            code = getattr(e, "code", 0)
+            fallback_chain.append({"method": "direct", "result": f"http_{code}"})
+            if code not in (403, 451):
+                out["error"] = str(e)
+                out["error_code"] = "fetch_error"
+                out["message"] = str(e)[:500]
+        except (URLError, OSError) as e:
+            fallback_chain.append({"method": "direct", "result": str(e)[:100]})
+            out["error"] = str(e)
+            out["error_code"] = "fetch_error"
+            out["message"] = str(e)[:500]
+
+    if not out["text"]:
+        remaining = [
+            ("google_cache", fetch_via_google_cache),
+            ("jina", fetch_via_jina),
+            ("archive", fetch_via_archive),
+        ]
+        if jina_first:
+            remaining = [r for r in remaining if r[0] != "jina"]
+        for fb_name, fb_fn in remaining:
+            fb_title, fb_text = fb_fn(url)
+            if fb_text.strip():
+                out["title"] = fb_title or out.get("title", "")
+                out["text"] = fb_text
+                out["fallback"] = fb_name
+                out["error"] = ""
+                out["error_code"] = ""
+                out["message"] = ""
+                fallback_chain.append({"method": fb_name, "result": "ok"})
+                break
+            else:
+                fallback_chain.append({"method": fb_name, "result": "empty"})
+        else:
+            if not out["text"]:
+                out["error"] = out.get("error") or "All fallbacks failed"
+                out["error_code"] = "paywall_blocked"
+                out["message"] = out["error"][:500]
+
+    out["fallback_chain"] = fallback_chain
     print(json.dumps(out, indent=2, ensure_ascii=False))
 
 
