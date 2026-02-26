@@ -56,7 +56,8 @@ export function ReportTab({
       </div>
       <div className="mb-3 flex items-center justify-between gap-3">
         <p className="text-[11px] font-mono" style={{ color: "var(--tron-text-dim)" }}>
-          Click <span className="verified-badge-inline" style={{ cursor: "default" }}>VERIFIED</span> badges to view supporting evidence
+          <span className="verified-badge-inline" style={{ cursor: "default" }}>VERIFIED</span> = cross-checked (2+ sources);{" "}
+          <span style={{ color: "var(--tron-accent)" }}>AUTHORITATIVE</span> = single primary source (e.g. arxiv, official docs). Click badges to view evidence.
         </p>
         <div className="flex items-center gap-2 flex-wrap">
           <button

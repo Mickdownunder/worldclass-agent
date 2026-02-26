@@ -88,10 +88,12 @@ export async function runFactoryCycle(): Promise<{ ok: boolean; jobId?: string; 
  * so all phases run automatically without clicking "Nächste Phase".
  */
 export async function runResearchInitAndCycleUntilDone(
-  question: string
+  question: string,
+  researchMode: "standard" | "frontier" = "standard"
 ): Promise<{ ok: boolean; jobId?: string; projectId?: string; error?: string }> {
   try {
-    const { stdout: jobDirRaw } = await exec(OP_BIN, ["job", "new", "--workflow", "research-init", "--request", question || "ui-trigger"], {
+    const requestPayload = JSON.stringify({ question: question || "ui-trigger", research_mode: researchMode });
+    const { stdout: jobDirRaw } = await exec(OP_BIN, ["job", "new", "--workflow", "research-init", "--request", requestPayload], {
       timeout: 5000,
       env: { ...process.env },
     });

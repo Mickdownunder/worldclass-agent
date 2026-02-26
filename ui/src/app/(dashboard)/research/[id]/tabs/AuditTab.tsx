@@ -20,19 +20,31 @@ export function AuditTab({ auditClaims, loading }: AuditTabProps) {
       </div>
     );
   }
+  const verifiedCount = auditClaims.filter((c) => c.verification_tier === "VERIFIED" || c.is_verified).length;
+  const authoritativeCount = auditClaims.filter((c) => c.verification_tier === "AUTHORITATIVE").length;
+  const unverifiedCount = auditClaims.length - verifiedCount - authoritativeCount;
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="stat-card">
           <div className="metric-label">Verified</div>
           <div className="mt-1 text-2xl font-bold font-mono" style={{ color: "var(--tron-success)" }}>
-            {auditClaims.filter((c) => c.is_verified).length}
+            {verifiedCount}
           </div>
+          <p className="mt-0.5 text-[10px]" style={{ color: "var(--tron-text-dim)" }}>cross-checked</p>
+        </div>
+        <div className="stat-card">
+          <div className="metric-label">Authoritative</div>
+          <div className="mt-1 text-2xl font-bold font-mono" style={{ color: "var(--tron-accent)" }}>
+            {authoritativeCount}
+          </div>
+          <p className="mt-0.5 text-[10px]" style={{ color: "var(--tron-text-dim)" }}>primary source</p>
         </div>
         <div className="stat-card">
           <div className="metric-label">Unverified</div>
           <div className="mt-1 text-2xl font-bold font-mono" style={{ color: "var(--tron-warning)" }}>
-            {auditClaims.filter((c) => !c.is_verified).length}
+            {unverifiedCount}
           </div>
         </div>
         <div className="stat-card">
@@ -45,29 +57,34 @@ export function AuditTab({ auditClaims, loading }: AuditTabProps) {
       <table className="data-table">
         <thead>
           <tr>
-            <th style={{ width: 80 }}>Status</th>
+            <th style={{ width: 100 }}>Status</th>
             <th>Claim</th>
             <th style={{ width: 100 }}>Sources</th>
           </tr>
         </thead>
         <tbody>
-          {auditClaims.map((c) => (
+          {auditClaims.map((c) => {
+            const tier = c.verification_tier ?? (c.is_verified ? "VERIFIED" : "UNVERIFIED");
+            const badgeLabel = tier === "VERIFIED" ? "Verified" : tier === "AUTHORITATIVE" ? "Authoritative" : "Unverified";
+            const badgeStyle =
+              tier === "VERIFIED"
+                ? { background: "rgba(34,197,94,0.10)", color: "#22c55e", border: "1px solid rgba(34,197,94,0.25)" }
+                : tier === "AUTHORITATIVE"
+                ? { background: "rgba(59,130,246,0.10)", color: "#3b82f6", border: "1px solid rgba(59,130,246,0.25)" }
+                : { background: "rgba(245,158,11,0.10)", color: "#f59e0b", border: "1px solid rgba(245,158,11,0.25)" };
+            return (
             <tr key={c.claim_id}>
               <td>
                 <span
                   className="inline-block rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider"
-                  style={{
-                    background: c.is_verified ? "rgba(34,197,94,0.10)" : "rgba(245,158,11,0.10)",
-                    color: c.is_verified ? "#22c55e" : "#f59e0b",
-                    border: c.is_verified ? "1px solid rgba(34,197,94,0.25)" : "1px solid rgba(245,158,11,0.25)",
-                  }}
+                  style={badgeStyle}
                 >
-                  {c.is_verified ? "Verified" : "Unverified"}
+                  {badgeLabel}
                 </span>
               </td>
               <td>
                 <p className="text-[12px] leading-relaxed" style={{ color: "var(--tron-text)" }}>{c.text}</p>
-                {c.verification_reason && !c.is_verified && (
+                {c.verification_reason && c.verification_tier !== "VERIFIED" && (
                   <p className="mt-0.5 text-[11px] italic" style={{ color: "var(--tron-text-dim)" }}>{c.verification_reason}</p>
                 )}
               </td>
@@ -75,7 +92,8 @@ export function AuditTab({ auditClaims, loading }: AuditTabProps) {
                 <span className="font-mono text-[11px]" style={{ color: "var(--tron-text-muted)" }}>{c.supporting_source_ids.length}</span>
               </td>
             </tr>
-          ))}
+          );
+          })}
         </tbody>
       </table>
     </div>

@@ -25,10 +25,13 @@ export interface ReportEntry {
   content: string;
 }
 
+export type VerificationTier = "VERIFIED" | "AUTHORITATIVE" | "UNVERIFIED";
+
 export interface AuditClaim {
   claim_id: string;
   text: string;
   is_verified: boolean;
+  verification_tier?: VerificationTier;
   verification_reason?: string;
   supporting_source_ids: string[];
 }

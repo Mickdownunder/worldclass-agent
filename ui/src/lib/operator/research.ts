@@ -475,6 +475,7 @@ export interface AuditClaim {
   claim_id: string;
   text: string;
   is_verified: boolean;
+  verification_tier?: "VERIFIED" | "AUTHORITATIVE" | "UNVERIFIED";
   verification_reason?: string;
   supporting_source_ids: string[];
 }
@@ -502,10 +503,14 @@ export async function getAudit(projectId: string): Promise<AuditData | null> {
     const data = JSON.parse(raw) as { claims?: unknown[] };
     const claims = (data.claims ?? []).map((raw) => {
       const c = raw as Record<string, unknown>;
+      const tier = c.verification_tier as string | undefined;
+      const verification_tier =
+        tier === "VERIFIED" || tier === "AUTHORITATIVE" || tier === "UNVERIFIED" ? tier : undefined;
       return {
         claim_id: String(c.claim_id ?? ""),
         text: String(c.text ?? "").slice(0, 500),
         is_verified: Boolean(c.is_verified),
+        verification_tier,
         verification_reason: c.verification_reason != null ? String(c.verification_reason) : undefined,
         supporting_source_ids: Array.isArray(c.supporting_source_ids)
           ? (c.supporting_source_ids as string[])

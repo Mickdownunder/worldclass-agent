@@ -123,11 +123,28 @@ verified = true only if at least 2 distinct source URLs support the claim. Be st
     return {"claims": out if isinstance(out, list) else []}
 
 
+def _is_authoritative_source(url: str) -> bool:
+    """True if URL is from an authoritative primary source (arxiv, official docs, conference)."""
+    u = (url or "").lower()
+    if not u:
+        return False
+    if "arxiv.org" in u:
+        return True
+    if "doi.org" in u or "scholar.google" in u:
+        return True
+    # Official docs / primary
+    for d in ("docs.", "documentation", "github.com", "gitlab.com", "arxiv.org", "openreview.net", "acm.org", "ieee.org", "springer.com", "nature.com", "science.org"):
+        if d in u:
+            return True
+    return False
+
+
 def build_claim_ledger(proj_path: Path, project: dict) -> dict:
     """
     Deterministic claim ledger from claim_verification + source_reliability.
-    [VERIFIED] only when: >=2 independent sources, no dispute, sources not low reliability.
-    Output: { "claims": [ { "claim_id", "text", "supporting_source_ids", "is_verified", "verification_reason" } ] }
+    verification_tier: VERIFIED (>=2 independent reliable), AUTHORITATIVE (1 authoritative source), UNVERIFIED.
+    is_verified: True only for VERIFIED (backward compat for standard gate).
+    Output: { "claims": [ { "claim_id", "text", "supporting_source_ids", "is_verified", "verification_tier", "verification_reason" } ] }
     """
     ensure_project_layout(proj_path)
     verify_dir = proj_path / "verify"
@@ -159,24 +176,37 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
         distinct_reliable = len(set(reliable_sources))
         dispute = (c.get("disputed") or c.get("verification_status", "") == "disputed" or
                    str(c.get("verification_status", "")).lower() == "disputed")
-        is_verified = bool(distinct_reliable >= 2 and not dispute)
-        if is_verified:
+        authoritative_sources = [u for u in reliable_sources if _is_authoritative_source(u)]
+        if distinct_reliable >= 2 and not dispute:
+            verification_tier = "VERIFIED"
+            is_verified = True
             verification_reason = f"{distinct_reliable} reliable independent sources"
         elif dispute:
+            verification_tier = "UNVERIFIED"
+            is_verified = False
             verification_reason = "disputed"
+        elif distinct_reliable == 1 and authoritative_sources and not dispute:
+            verification_tier = "AUTHORITATIVE"
+            is_verified = False  # gate in standard mode does not count as verified
+            verification_reason = "single authoritative source (primary)"
         elif distinct_reliable < 2:
             total_distinct = len(set(supporting_source_ids))
+            verification_tier = "UNVERIFIED"
+            is_verified = False
             if total_distinct >= 2 and distinct_reliable < 2:
                 verification_reason = f"{total_distinct} sources but only {distinct_reliable} reliable"
             else:
                 verification_reason = f"only {total_distinct} source(s)"
         else:
+            verification_tier = "UNVERIFIED"
+            is_verified = False
             verification_reason = "not verified"
         claims_out.append({
             "claim_id": claim_id,
             "text": text,
             "supporting_source_ids": supporting_source_ids,
             "is_verified": is_verified,
+            "verification_tier": verification_tier,
             "verification_reason": verification_reason,
         })
     from tools.research_common import audit_log
@@ -187,31 +217,31 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
     return {"claims": claims_out}
 
 
-# Regex to strip all [VERIFIED] and [VERIFIED:claim_id] tags (with optional surrounding whitespace).
-# Used so only ledger-based is_verified claims get the tag; LLM-hallucinated tags are removed.
+# Regex to strip all [VERIFIED] and [AUTHORITATIVE] tags (with optional claim_id).
 _VERIFIED_TAG_PATTERN = re.compile(r"\s*\[VERIFIED(?::[^\]]+)?\]", re.IGNORECASE)
+_AUTHORITATIVE_TAG_PATTERN = re.compile(r"\s*\[AUTHORITATIVE(?::[^\]]+)?\]", re.IGNORECASE)
 
 
 def apply_verified_tags_to_report(report: str, claims: list[dict]) -> str:
     """
-    Deterministic [VERIFIED] tagging: strip all existing [VERIFIED], then add only for
-    claims with is_verified=True. Each claim text is tagged at most once.
-    Same logic as research-cycle.sh synthesis post-step; use this for tests and production.
+    Deterministic tagging: strip existing tags, then add [VERIFIED:claim_id] for VERIFIED
+    and [AUTHORITATIVE:claim_id] for AUTHORITATIVE. Each claim text is tagged at most once.
     """
     if not report:
         return report
-    # 1) Remove all existing [VERIFIED] tags (robust to optional spaces)
     report = _VERIFIED_TAG_PATTERN.sub("", report)
-    # 2) Add [VERIFIED:claim_id] only for ledger-verified claims; each claim at most once
+    report = _AUTHORITATIVE_TAG_PATTERN.sub("", report)
     for c in claims:
-        if not c.get("is_verified"):
+        tier = c.get("verification_tier") or ("VERIFIED" if c.get("is_verified") else "UNVERIFIED")
+        if tier not in ("VERIFIED", "AUTHORITATIVE"):
             continue
         text = (c.get("text") or "").strip()
-        if not text or "[VERIFIED" in text:
+        if not text or "[VERIFIED" in text or "[AUTHORITATIVE" in text:
             continue
         claim_id = c.get("claim_id", "")
+        tag = f" [VERIFIED:{claim_id}]" if tier == "VERIFIED" else f" [AUTHORITATIVE:{claim_id}]"
         if text in report:
-            report = report.replace(text, text + f" [VERIFIED:{claim_id}]", 1)
+            report = report.replace(text, text + tag, 1)
     return report
 
 

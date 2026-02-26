@@ -31,10 +31,12 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    const researchMode = body.research_mode === "frontier" ? "frontier" : "standard";
+    const requestPayload = JSON.stringify({ question, research_mode: researchMode });
     const runUntilDone = body.run_until_done !== false;
     const result = runUntilDone
-      ? await runResearchInitAndCycleUntilDone(question)
-      : await runWorkflow("research-init", question);
+      ? await runResearchInitAndCycleUntilDone(question, researchMode)
+      : await runWorkflow("research-init", requestPayload);
     if (!result.ok) {
       return NextResponse.json(
         { ok: false, error: result.error ?? "Workflow fehlgeschlagen" },

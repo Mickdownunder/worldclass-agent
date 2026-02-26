@@ -161,6 +161,22 @@ def _collect_reasons(metrics: dict, effective_findings_min: int, has_reliability
     return reasons
 
 
+def suggest_frontier_mode(question: str, domain: str = "") -> bool:
+    """Heuristic: True if question/domain suggests frontier (academic, bleeding-edge) research."""
+    q = (question or "").lower()
+    d = (domain or "").lower()
+    frontier_keywords = (
+        "bleeding edge", "state of the art", "stand der technik", "frontier",
+        "neueste forschung", "academic", "papers", "architekturen", "arxiv",
+        "conference", "study", "mechanism", "methodology", "hypothesis",
+    )
+    if any(k in q for k in frontier_keywords):
+        return True
+    if d in ("academic", "science", "ai_research", "research"):
+        return True
+    return False
+
+
 def _decide_gate(metrics: dict) -> tuple[str, str | None]:
     """Return (decision, fail_code). decision in pass | pending_review | fail."""
     vc = metrics["verified_claim_count"]
@@ -181,12 +197,25 @@ def _decide_gate(metrics: dict) -> tuple[str, str | None]:
     return "fail", "failed_insufficient_evidence"
 
 
+def _decide_gate_frontier(metrics: dict) -> tuple[str, str | None]:
+    """Frontier research: source authority > cross-verification. Verified-claim thresholds not blocking."""
+    findings = metrics.get("findings_count", 0)
+    sources = metrics.get("unique_source_count", 0)
+    reliability = metrics.get("high_reliability_source_ratio", 0)
+
+    if findings >= 8 and sources >= 5 and reliability >= 0.3:
+        return "pass", None
+    if findings >= 5 and sources >= 3:
+        return "pending_review", None
+    return "fail", "failed_insufficient_evidence"
+
+
 def run_evidence_gate(project_id: str) -> dict:
     """Compute metrics and pass/fail. Does not modify project."""
     proj = project_dir(project_id)
     if not proj.exists():
         return {"pass": False, "fail_code": "failed_insufficient_evidence", "metrics": {}, "reasons": ["project not found"]}
-    load_project(proj)  # ensure project exists
+    project = load_project(proj)
     verify_dir = proj / "verify"
     sources_dir = proj / "sources"
     findings_dir = proj / "findings"
@@ -227,7 +256,17 @@ def run_evidence_gate(project_id: str) -> dict:
         audit_log(proj, "evidence_gate", {"decision": "fail", "fail_code": "failed_insufficient_evidence", "metrics": metrics, "reasons": reasons})
         return {"pass": False, "fail_code": "failed_insufficient_evidence", "decision": "fail", "metrics": metrics, "reasons": reasons}
 
-    decision, fail_code = _decide_gate(metrics)
+    research_mode = "standard"
+    config = project.get("config") or {}
+    if isinstance(config, dict):
+        research_mode = (config.get("research_mode") or "standard").strip().lower()
+    if research_mode != "frontier":
+        research_mode = "standard"
+
+    if research_mode == "frontier":
+        decision, fail_code = _decide_gate_frontier(metrics)
+    else:
+        decision, fail_code = _decide_gate(metrics)
     if decision == "pass":
         audit_log(proj, "evidence_gate", {"decision": "pass", "fail_code": None, "metrics": metrics, "reasons": []})
         return {"pass": True, "fail_code": None, "decision": "pass", "metrics": metrics, "reasons": []}

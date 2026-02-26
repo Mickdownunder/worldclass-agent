@@ -11,10 +11,16 @@ const PLAYBOOKS = [
   { id: "due_diligence", label: "Due Diligence" },
 ];
 
+const RESEARCH_MODES = [
+  { id: "standard", label: "Standard Research", desc: "Market analysis, competitive intel — cross-source verification required" },
+  { id: "frontier", label: "Frontier Research", desc: "Academic, bleeding-edge — single authoritative source can suffice" },
+];
+
 export function CreateProjectForm() {
   const router = useRouter();
   const [question, setQuestion] = useState("");
   const [playbookId, setPlaybookId] = useState("general");
+  const [researchMode, setResearchMode] = useState<"standard" | "frontier">("standard");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -30,7 +36,7 @@ export function CreateProjectForm() {
       const res = await fetch("/api/research/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: question.trim(), playbook_id: playbookId }),
+        body: JSON.stringify({ question: question.trim(), playbook_id: playbookId, research_mode: researchMode }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -97,6 +103,28 @@ export function CreateProjectForm() {
               </option>
             ))}
           </select>
+        </div>
+        <div>
+          <label htmlFor="research_mode" className="mb-1.5 block text-sm font-medium text-tron-muted">
+            Research mode
+          </label>
+          <select
+            id="research_mode"
+            value={researchMode}
+            onChange={(e) => setResearchMode(e.target.value as "standard" | "frontier")}
+            className="w-full rounded-sm border-2 border-tron-border bg-tron-bg px-4 py-3 text-sm text-tron-text focus:border-tron-accent focus:outline-none focus:shadow-[0_0_15px_var(--tron-glow)] transition-all appearance-none"
+            disabled={loading}
+            suppressHydrationWarning
+          >
+            {RESEARCH_MODES.map((m) => (
+              <option key={m.id} value={m.id} className="bg-tron-bg text-tron-text">
+                {m.label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
+            {RESEARCH_MODES.find((m) => m.id === researchMode)?.desc}
+          </p>
         </div>
       </div>
       {error && <p className="text-sm font-medium text-tron-error">{error}</p>}

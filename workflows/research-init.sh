@@ -26,8 +26,20 @@ python3 - "$PROJ_DIR" "$REQUEST" <<'PY'
 import json, sys
 from datetime import datetime, timezone
 from pathlib import Path
-proj_dir, question = sys.argv[1], sys.argv[2]
+proj_dir, request_raw = sys.argv[1], sys.argv[2]
 p = Path(proj_dir)
+# Request can be JSON {"question": "...", "research_mode": "standard"|"frontier"} or plain question string
+question = request_raw.strip()
+research_mode = "standard"
+if question.startswith("{"):
+    try:
+        payload = json.loads(question)
+        question = (payload.get("question") or "").strip() or question
+        research_mode = (payload.get("research_mode") or "standard").strip().lower()
+        if research_mode not in ("standard", "frontier"):
+            research_mode = "standard"
+    except Exception:
+        pass
 project = {
   "id": p.name,
   "question": question,
@@ -36,7 +48,7 @@ project = {
   "playbook_id": "general",
   "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
   "domain": "general",
-  "config": {"max_sources": 50, "max_findings": 200}
+  "config": {"max_sources": 50, "max_findings": 200, "research_mode": research_mode}
 }
 (p / "project.json").write_text(json.dumps(project, indent=2))
 (p / "questions.json").write_text(json.dumps({"open": [question], "answered": []}, indent=2))
