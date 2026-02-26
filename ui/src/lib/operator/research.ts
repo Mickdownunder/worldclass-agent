@@ -25,11 +25,48 @@ export interface ResearchProjectSummary {
   created_at: string;
   findings_count: number;
   reports_count: number;
+  current_spend: number;
+  domain: string;
+}
+
+export interface QualityGateMetrics {
+  findings_count: number;
+  unique_source_count: number;
+  verified_claim_count: number;
+  claim_support_rate: number;
+  high_reliability_source_ratio: number;
+  read_attempts: number;
+  read_successes: number;
+  read_failures: number;
+}
+
+export interface EvidenceGate {
+  status: string;
+  fail_code?: string;
+  metrics: QualityGateMetrics;
+  reasons: string[];
+}
+
+export interface PhaseTiming {
+  started_at: string;
+  completed_at: string;
+  duration_s: number;
 }
 
 export interface ResearchProjectDetail extends ResearchProjectSummary {
   last_report_path?: string;
   feedback_count: number;
+  quality_gate?: {
+    evidence_gate?: EvidenceGate;
+    critic_score?: number;
+    quality_gate_status?: string;
+  };
+  phase_timings?: Record<string, PhaseTiming>;
+  config?: {
+    budget_limit?: number;
+    max_sources?: number;
+  };
+  phase_history?: string[];
 }
 
 export async function listResearchProjects(): Promise<ResearchProjectSummary[]> {
@@ -42,7 +79,7 @@ export async function listResearchProjects(): Promise<ResearchProjectSummary[]> 
       try {
         const projectJson = path.join(projPath, "project.json");
         const raw = await readFile(projectJson, "utf8");
-        const data = JSON.parse(raw);
+        const data = JSON.parse(raw) as Record<string, unknown>;
         const findingsDir = path.join(projPath, "findings");
         let findingsCount = 0;
         try {
@@ -60,13 +97,15 @@ export async function listResearchProjects(): Promise<ResearchProjectSummary[]> 
           // ignore
         }
         projects.push({
-          id: data.id || e.name,
-          question: data.question || "",
-          status: data.status || "unknown",
-          phase: data.phase || "explore",
-          created_at: data.created_at || "",
+          id: typeof data.id === "string" ? data.id : e.name,
+          question: typeof data.question === "string" ? data.question : "",
+          status: typeof data.status === "string" ? data.status : "unknown",
+          phase: typeof data.phase === "string" ? data.phase : "explore",
+          created_at: typeof data.created_at === "string" ? data.created_at : "",
           findings_count: findingsCount,
           reports_count: reportsCount,
+          current_spend: typeof data.current_spend === "number" ? data.current_spend : 0,
+          domain: typeof data.domain === "string" ? data.domain : "unknown",
         });
       } catch {
         // skip broken projects
@@ -84,7 +123,7 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
   const projPath = safeProjectPath(projectId);
   try {
     const raw = await readFile(path.join(projPath, "project.json"), "utf8");
-    const data = JSON.parse(raw);
+    const data = JSON.parse(raw) as Record<string, unknown>;
     let findingsCount = 0;
     try {
       const files = await readdir(path.join(projPath, "findings"));
@@ -112,15 +151,32 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
       // ignore
     }
     return {
-      id: data.id || projectId,
-      question: data.question || "",
-      status: data.status || "unknown",
-      phase: data.phase || "explore",
-      created_at: data.created_at || "",
+      id: typeof data.id === "string" ? data.id : projectId,
+      question: typeof data.question === "string" ? data.question : "",
+      status: typeof data.status === "string" ? data.status : "unknown",
+      phase: typeof data.phase === "string" ? data.phase : "explore",
+      created_at: typeof data.created_at === "string" ? data.created_at : "",
       findings_count: findingsCount,
       reports_count: reportsCount,
+      current_spend: typeof data.current_spend === "number" ? data.current_spend : 0,
+      domain: typeof data.domain === "string" ? data.domain : "unknown",
       last_report_path: lastReportPath,
       feedback_count: feedbackCount,
+      quality_gate:
+        typeof data.quality_gate === "object" && data.quality_gate !== null
+          ? (data.quality_gate as ResearchProjectDetail["quality_gate"])
+          : undefined,
+      phase_timings:
+        typeof data.phase_timings === "object" && data.phase_timings !== null
+          ? (data.phase_timings as Record<string, PhaseTiming>)
+          : undefined,
+      config:
+        typeof data.config === "object" && data.config !== null
+          ? (data.config as ResearchProjectDetail["config"])
+          : undefined,
+      phase_history: Array.isArray(data.phase_history)
+        ? data.phase_history.filter((p): p is string => typeof p === "string")
+        : undefined,
     };
   } catch {
     return null;
@@ -290,17 +346,53 @@ export async function getAudit(projectId: string): Promise<AuditData | null> {
       source = "claim_ledger";
     }
     const data = JSON.parse(raw) as { claims?: unknown[] };
-    const claims = (data.claims ?? []).map((c: Record<string, unknown>) => ({
-      claim_id: String(c.claim_id ?? ""),
-      text: String(c.text ?? "").slice(0, 500),
-      is_verified: Boolean(c.is_verified),
-      verification_reason: c.verification_reason != null ? String(c.verification_reason) : undefined,
-      supporting_source_ids: Array.isArray(c.supporting_source_ids)
-        ? (c.supporting_source_ids as string[])
-        : [],
-    }));
+    const claims = (data.claims ?? []).map((raw) => {
+      const c = raw as Record<string, unknown>;
+      return {
+        claim_id: String(c.claim_id ?? ""),
+        text: String(c.text ?? "").slice(0, 500),
+        is_verified: Boolean(c.is_verified),
+        verification_reason: c.verification_reason != null ? String(c.verification_reason) : undefined,
+        supporting_source_ids: Array.isArray(c.supporting_source_ids)
+          ? (c.supporting_source_ids as string[])
+          : [],
+      };
+    });
     return { claims, source };
   } catch {
     return null;
+  }
+}
+
+export async function getAuditLog(
+  projectId: string
+): Promise<Array<{ ts: string; event: string; detail?: Record<string, unknown> }>> {
+  const projPath = safeProjectPath(projectId);
+  try {
+    const content = await readFile(path.join(projPath, "audit_log.jsonl"), "utf8");
+    return content
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line) as {
+            ts: string;
+            event: string;
+            detail?: Record<string, unknown>;
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter((entry): entry is { ts: string; event: string; detail?: Record<string, unknown> } => {
+        return (
+          entry !== null &&
+          typeof entry.ts === "string" &&
+          typeof entry.event === "string"
+        );
+      });
+  } catch {
+    return [];
   }
 }

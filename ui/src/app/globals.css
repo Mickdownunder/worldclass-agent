@@ -1,37 +1,45 @@
 @import "tailwindcss";
 
-/* 80s Synthwave / Tron — Dark (default) */
+/* Forensic AI Research OS — Enterprise Dark (default) */
 :root {
-  --tron-bg: #05020a;
-  --tron-bg-panel: rgba(13, 6, 28, 0.85);
-  --tron-border: #00d4ff;
-  --tron-accent: #ff00aa;
-  --tron-accent-dim: rgba(255, 0, 170, 0.2);
-  --tron-text: #e0f2fe;
-  --tron-text-muted: #88aacc;
-  --tron-text-dim: #4a6b8c;
-  --tron-success: #00aa77;
-  --tron-error: #cc0044;
-  --tron-glow: rgba(0, 212, 255, 0.5);
-  --tron-glow-accent: rgba(255, 0, 170, 0.6);
-  --tron-grid: rgba(255, 0, 170, 0.2);
+  --tron-bg: #0a0c11;
+  --tron-bg-panel: #0f1218;
+  --tron-border: #1c2336;
+  --tron-accent: #4475f3;
+  --tron-accent-dim: rgba(68, 117, 243, 0.12);
+  --tron-text: #dce2ef;
+  --tron-text-muted: #7b8aaa;
+  --tron-text-dim: #3d4a65;
+  --tron-success: #22c55e;
+  --tron-error: #f43f5e;
+  --tron-warning: #f59e0b;
+  --tron-info: #38bdf8;
+  --tron-glow: rgba(68, 117, 243, 0.08);
+  --tron-glow-accent: rgba(68, 117, 243, 0.12);
+  --tron-grid: transparent;
+  --tron-panel-hover: #141a24;
+  --tron-border-strong: #283552;
 }
 
-/* Light mode — same 80s vibe, bright background */
+/* Light mode — clean professional */
 html[data-theme="light"] {
-  --tron-bg: #f0f4ff;
-  --tron-bg-panel: rgba(255, 252, 245, 0.95);
-  --tron-border: #0099cc;
-  --tron-accent: #cc0088;
-  --tron-accent-dim: rgba(204, 0, 136, 0.25);
-  --tron-text: #1a1a2e;
-  --tron-text-muted: #4a5568;
-  --tron-text-dim: #718096;
-  --tron-success: #00885a;
-  --tron-error: #bb2244;
-  --tron-glow: rgba(0, 153, 204, 0.35);
-  --tron-glow-accent: rgba(204, 0, 136, 0.4);
-  --tron-grid: rgba(204, 0, 136, 0.12);
+  --tron-bg: #f2f4f8;
+  --tron-bg-panel: #ffffff;
+  --tron-border: #dde3ee;
+  --tron-accent: #2563eb;
+  --tron-accent-dim: rgba(37, 99, 235, 0.08);
+  --tron-text: #0f1629;
+  --tron-text-muted: #4b5873;
+  --tron-text-dim: #94a3b8;
+  --tron-success: #16a34a;
+  --tron-error: #dc2626;
+  --tron-warning: #d97706;
+  --tron-info: #0284c7;
+  --tron-glow: rgba(37, 99, 235, 0.05);
+  --tron-glow-accent: rgba(37, 99, 235, 0.08);
+  --tron-grid: transparent;
+  --tron-panel-hover: #f7f9fc;
+  --tron-border-strong: #b8c4dd;
 }
 
 @theme inline {
@@ -39,7 +47,9 @@ html[data-theme="light"] {
   --color-foreground: var(--tron-text);
   --color-tron-bg: var(--tron-bg);
   --color-tron-panel: var(--tron-bg-panel);
+  --color-tron-panel-hover: var(--tron-panel-hover);
   --color-tron-border: var(--tron-border);
+  --color-tron-border-strong: var(--tron-border-strong);
   --color-tron-accent: var(--tron-accent);
   --color-tron-accent-dim: var(--tron-accent-dim);
   --color-tron-text: var(--tron-text);
@@ -53,9 +63,9 @@ html[data-theme="light"] {
 
 body {
   background: var(--tron-bg);
-  background-attachment: fixed;
   color: var(--tron-text);
-  font-family: var(--font-mono); /* Monospace gives a better 80s hacker vibe */
+  font-family: var(--font-sans);
+  font-size: 14px;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -63,149 +73,115 @@ body {
   overflow-x: hidden;
 }
 
-/* 80s Synthwave Grid Background (dark only; light uses subtler grid) */
-body::before {
-  content: "";
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  width: 100vw;
-  height: 50vh;
-  background-image:
-    linear-gradient(transparent 60%, var(--tron-grid) 100%),
-    linear-gradient(90deg, transparent 96%, var(--tron-grid) 100%),
-    linear-gradient(0deg, transparent 96%, var(--tron-grid) 100%);
-  background-size: 100% 100%, 40px 40px, 40px 40px;
-  transform: perspective(600px) rotateX(60deg) translateY(100px) translateZ(-200px);
-  transform-origin: bottom center;
-  z-index: -2;
-  pointer-events: none;
-}
-
-html[data-theme="light"] body::before {
-  opacity: 0.5;
-}
-
-/* Subtle Scanlines (lighter in light mode) */
+/* No scanlines, no 3D grid */
+body::before,
 body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 212, 255, 0.03) 2px,
-    rgba(0, 212, 255, 0.03) 4px
-  );
-  z-index: 9999;
+  display: none;
 }
 
-html[data-theme="light"] body::after {
-  background: repeating-linear-gradient(
-    0deg,
-    transparent,
-    transparent 2px,
-    rgba(0, 153, 204, 0.04) 2px,
-    rgba(0, 153, 204, 0.04) 4px
-  );
-}
-
-/* 80s Panel styling - Blocky, glowing */
+/* Enterprise panel — clean bordered surface */
 .tron-panel {
   background: var(--tron-bg-panel);
-  border: 2px solid var(--tron-border);
-  border-radius: 4px; /* Less rounded, more 80s */
-  box-shadow: 0 0 15px var(--tron-glow), inset 0 0 10px var(--tron-glow);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
-  transition: all 0.2s ease;
-  position: relative;
+  border: 1px solid var(--tron-border);
+  border-radius: 6px;
+  transition: border-color 0.15s ease;
 }
 
-/* Add corner brackets effect for true 80s sci-fi feel */
+/* No corner brackets, no neon glow */
 .tron-panel::before,
 .tron-panel::after {
-  content: "";
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--tron-accent);
-  pointer-events: none;
-  opacity: 0.8;
+  display: none;
 }
 
-.tron-panel::before {
-  top: -2px;
-  left: -2px;
-  border-right: none;
-  border-bottom: none;
-  box-shadow: -2px -2px 5px var(--tron-glow-accent);
-}
-
-.tron-panel::after {
-  bottom: -2px;
-  right: -2px;
-  border-left: none;
-  border-top: none;
-  box-shadow: 2px 2px 5px var(--tron-glow-accent);
-}
-
-a.tron-panel:hover {
+a.tron-panel:hover,
+button.tron-panel:hover {
   border-color: var(--tron-accent);
-  box-shadow: 0 0 20px var(--tron-glow-accent), inset 0 0 15px var(--tron-glow-accent);
-  transform: translateY(-2px);
+  box-shadow: none;
+  transform: none;
 }
 
-/* Glowing text classes */
-.text-glow-cyan {
-  text-shadow: 0 0 8px var(--tron-glow);
-}
-
+/* Removed glow effects — keep classes but neutralize */
+.text-glow-cyan,
 .text-glow-pink {
-  text-shadow: 0 0 8px var(--tron-glow-accent);
+  text-shadow: none;
 }
 
-/* Custom 80s scrollbar */
+/* Thin scrollbar */
 ::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+  width: 5px;
+  height: 5px;
 }
 ::-webkit-scrollbar-track {
-  background: var(--tron-bg);
-  border-left: 1px solid var(--tron-border);
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
   background: var(--tron-border);
-  border: 1px solid var(--tron-bg);
-  box-shadow: 0 0 10px var(--tron-glow);
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--tron-accent);
-  box-shadow: 0 0 10px var(--tron-glow-accent);
+  background: var(--tron-text-dim);
 }
 
-/* Page transition */
+/* Page fade-in */
 @keyframes fade-in {
-  from { opacity: 0; filter: blur(4px) brightness(1.5); }
-  to { opacity: 1; filter: blur(0) brightness(1); }
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .animate-fade-in {
-  animation: fade-in 0.4s ease-out forwards;
+  animation: fade-in 0.2s ease-out forwards;
 }
 
-/* Global Typography tweaks for 80s feel */
+/* Slide-over from right */
+@keyframes slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+.animate-slide-in-right {
+  animation: slide-in-right 0.22s ease-out forwards;
+}
+
+/* Headings — no forced uppercase */
 h1, h2, h3, h4, h5, h6 {
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
+  text-transform: none;
+  letter-spacing: -0.015em;
 }
 
-/* Leseschrift für Reports (Markdown) */
+/* ── Enterprise Table ─────────────────────────────────── */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.data-table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tron-text-muted);
+  border-bottom: 1px solid var(--tron-border);
+  white-space: nowrap;
+}
+.data-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--tron-border);
+  color: var(--tron-text);
+  vertical-align: middle;
+}
+.data-table tbody tr:hover td {
+  background: var(--tron-panel-hover);
+}
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Report Prose ─────────────────────────────────────── */
 .report-prose {
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.125rem; /* Etwas größer für bessere Lesbarkeit */
-  line-height: 1.7;
+  font-family: "Inter", var(--font-sans), sans-serif;
+  font-size: 0.9375rem;
+  line-height: 1.75;
+  color: var(--tron-text);
 }
 
 .report-prose h1,
@@ -214,26 +190,105 @@ h1, h2, h3, h4, h5, h6 {
 .report-prose h4,
 .report-prose h5,
 .report-prose h6 {
-  text-transform: none; /* Im Report nicht zwingend uppercase */
-  letter-spacing: normal;
-  font-family: "Inter", sans-serif; /* Überschriften ruhig in sans-serif */
-  margin-top: 1.5em;
+  text-transform: none;
+  letter-spacing: -0.01em;
+  font-weight: 600;
+  margin-top: 1.75em;
   margin-bottom: 0.5em;
-  color: var(--tron-accent);
+  color: var(--tron-text);
+  border-bottom: 1px solid var(--tron-border);
+  padding-bottom: 0.3em;
 }
 
 .report-prose p {
   margin-bottom: 1em;
-  color: var(--tron-text);
 }
 
 .report-prose li {
-  margin-bottom: 0.5em;
-  color: var(--tron-text);
+  margin-bottom: 0.4em;
+}
+
+.report-prose a {
+  color: var(--tron-accent);
+  text-decoration: none;
+}
+
+.report-prose a:hover {
+  text-decoration: underline;
 }
 
 .report-prose code,
 .report-prose pre {
   font-family: var(--font-mono);
+  font-size: 0.875em;
 }
 
+.report-prose blockquote {
+  border-left: 3px solid var(--tron-accent);
+  padding-left: 1em;
+  color: var(--tron-text-muted);
+  font-style: italic;
+  margin: 1em 0;
+}
+
+/* ── VERIFIED Badge (inline in reports) ──────────────── */
+.verified-badge-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  background: rgba(34, 197, 94, 0.10);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.30);
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  vertical-align: middle;
+  margin: 0 2px;
+  line-height: 1.6;
+  text-transform: uppercase;
+}
+
+.verified-badge-inline:hover {
+  background: rgba(34, 197, 94, 0.20);
+  border-color: rgba(34, 197, 94, 0.55);
+}
+
+/* ── Interactive Row (hover row highlight, no JS needed) ─ */
+.interactive-row {
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.interactive-row:hover {
+  background: var(--tron-panel-hover);
+}
+
+/* ── Hover accent button (border + text color on hover) ── */
+.hover-accent {
+  transition: border-color 0.15s, color 0.15s;
+}
+.hover-accent:hover {
+  border-color: var(--tron-accent) !important;
+  color: var(--tron-accent) !important;
+}
+
+/* ── Stat Card ────────────────────────────────────────── */
+.stat-card {
+  background: var(--tron-bg-panel);
+  border: 1px solid var(--tron-border);
+  border-radius: 6px;
+  padding: 16px 20px;
+}
+
+/* ── Metric Label ─────────────────────────────────────── */
+.metric-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tron-text-muted);
+}

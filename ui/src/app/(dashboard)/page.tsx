@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getHealth } from "@/lib/operator/health";
+import { listJobs } from "@/lib/operator/jobs";
 import { listResearchProjects } from "@/lib/operator/research";
 import { DashboardQuickActions } from "@/components/DashboardQuickActions";
 import { EventFeed } from "@/components/EventFeed";
@@ -15,163 +16,388 @@ function phaseProgress(phase: string): number {
 }
 
 export default async function CommandCenterPage() {
-  const [health, projects] = await Promise.all([
+  const [health, projects, runningJobsResult] = await Promise.all([
     getHealth(),
     listResearchProjects(),
+    listJobs(500, 0, "RUNNING"),
   ]);
   const healthy = health.healthy ?? false;
   const failures = health.recent_failures ?? [];
+  const runningJobsCount = runningJobsResult.jobs.length;
   const activeProjects = projects.filter(
     (p) => p.status !== "done" && p.status !== "failed"
   );
+  const doneProjects = projects.filter((p) => p.status === "done");
+  const failedProjects = projects.filter((p) => p.status === "failed");
+  const totalSpend = projects.reduce((sum, p) => sum + (p.current_spend ?? 0), 0);
+
+  const verifyRates = projects
+    .filter((p) => p.status === "done")
+    .map((p) => {
+      const metrics =
+        (
+          p as unknown as {
+            quality_gate?: { evidence_gate?: { metrics?: { claim_support_rate?: number } } };
+          }
+        ).quality_gate?.evidence_gate?.metrics;
+      return typeof metrics?.claim_support_rate === "number"
+        ? metrics.claim_support_rate
+        : null;
+    })
+    .filter((rate): rate is number => rate !== null);
+  const avgVerifyRate =
+    verifyRates.length > 0
+      ? `${Math.round((verifyRates.reduce((sum, rate) => sum + rate, 0) / verifyRates.length) * 100)}%`
+      : "—";
+
+  const blockedReadsValues = projects
+    .map((p) => {
+      const metrics =
+        (
+          p as unknown as {
+            quality_gate?: { evidence_gate?: { metrics?: { read_failures?: number } } };
+          }
+        ).quality_gate?.evidence_gate?.metrics;
+      return typeof metrics?.read_failures === "number" ? metrics.read_failures : null;
+    })
+    .filter((value): value is number => value !== null);
+  const blockedReads =
+    blockedReadsValues.length > 0
+      ? String(blockedReadsValues.reduce((sum, value) => sum + value, 0))
+      : "—";
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 animate-fade-in">
+      {/* ── Page header ──────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-tron-text">
+          <h1 className="text-xl font-semibold tracking-tight" style={{ color: "var(--tron-text)" }}>
             Command Center
           </h1>
-          <p className="mt-1 text-sm text-tron-muted">
-            Deine Steuerzentrale – hier siehst du auf einen Blick, ob alles läuft und was zu tun ist.
+          <p className="mt-0.5 text-sm" style={{ color: "var(--tron-text-muted)" }}>
+            System overview — running jobs, API status, active research
           </p>
         </div>
         <Link
           href="/research"
-          className="flex h-10 items-center justify-center rounded-sm bg-transparent border-2 border-tron-accent px-5 text-sm font-bold text-tron-accent shadow-[0_0_15px_var(--tron-glow)] transition-all hover:bg-tron-accent hover:text-black hover:shadow-[0_0_25px_var(--tron-glow)] active:scale-[0.98] uppercase tracking-wider"
+          className="flex h-9 items-center rounded px-4 text-sm font-medium text-white transition-opacity hover:opacity-90"
+          style={{ background: "var(--tron-accent)" }}
         >
-          Neues Research-Projekt
+          + New Project
         </Link>
       </div>
 
-      {/* System-Health: für Menschen lesbar */}
-      <section className="tron-panel px-4 py-4">
-        <div className="flex flex-wrap items-center gap-4 text-sm">
+      {/* ── System Status Bar ─────────────────────────────────── */}
+      <div
+        className="flex flex-wrap items-center gap-4 rounded-lg px-4 py-3 text-[12px]"
+        style={{
+          background: "var(--tron-bg-panel)",
+          border: `1px solid ${healthy ? "var(--tron-border)" : "rgba(244,63,94,0.35)"}`,
+        }}
+      >
+        <div className="flex items-center gap-2">
           <span
-            className={`font-medium ${healthy ? "text-tron-success" : "text-tron-error"}`}
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ background: healthy ? "var(--tron-success)" : "var(--tron-error)" }}
+          />
+          <span
+            className="font-semibold"
+            style={{ color: healthy ? "var(--tron-success)" : "var(--tron-error)" }}
           >
-            {healthy ? "Alles in Ordnung" : "Achtung: etwas ist schiefgelaufen"}
+            {healthy ? "System Healthy" : "System Alert"}
           </span>
-          {health.disk_used_pct != null && (
-            <span className="text-tron-dim">
-              Speicher: <span className="text-tron-text">{health.disk_used_pct}%</span> belegt
-            </span>
-          )}
-          {health.load_1m != null && (
-            <span className="text-tron-dim">
-              Auslastung: <span className="text-tron-text">{health.load_1m}</span>
-            </span>
-          )}
-          {health.jobs_failed != null && health.jobs_failed > 0 && (
-            <span className="text-tron-error">
-              {health.jobs_failed} {health.jobs_failed === 1 ? "Lauf" : "Läufe"} fehlgeschlagen
-            </span>
-          )}
         </div>
-        {failures.length > 0 && (
-          <div className="mt-3 rounded border border-tron-error/30 bg-tron-error/5 px-3 py-2">
-            <p className="text-sm font-medium text-tron-text">
-              Was tun? Fehlgeschlagene Läufe ansehen und ggf. erneut versuchen (Retry):
-            </p>
-            <ul className="mt-1.5 list-inside list-disc text-xs text-tron-muted">
-              {failures.slice(0, 3).map((f, i) => (
-                <li key={i}>{f}</li>
-              ))}
-            </ul>
-            <Link
-              href="/jobs?status=FAILED"
-              className="mt-2 inline-block text-sm font-medium text-tron-accent hover:underline"
+
+        <div className="h-4 w-px" style={{ background: "var(--tron-border)" }} />
+
+        {health.disk_used_pct != null && (
+          <div className="flex items-center gap-1.5">
+            <span className="metric-label">Disk</span>
+            <span
+              className="font-mono font-semibold"
+              style={{ color: health.disk_used_pct > 85 ? "var(--tron-error)" : "var(--tron-text)" }}
             >
-              → Fehlgeschlagene Jobs ansehen
-            </Link>
+              {health.disk_used_pct}%
+            </span>
           </div>
         )}
-      </section>
 
-      {/* Mitte: Research-Projekte | Letzte Aktionen */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <section className="tron-panel p-4">
-          <h2 className="mb-3 text-lg font-medium text-tron-muted">
-            Aktive Research-Projekte
-          </h2>
-          {activeProjects.length === 0 ? (
-            <p className="text-sm text-tron-dim">
-              Keine aktiven Projekte.{" "}
-              <Link href="/research" className="text-tron-accent hover:underline">
-                Neues Projekt starten
-              </Link>
-            </p>
-          ) : (
-            <ul className="space-y-3">
-              {activeProjects.slice(0, 5).map((p) => (
-                <li key={p.id}>
-                  <Link
-                    href={`/research/${p.id}`}
-                    className="tron-panel block border-tron-border p-3 transition hover:border-tron-accent/40"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate font-medium text-tron-text">
-                        {p.question || p.id}
-                      </span>
-                      <StatusBadge status={p.status} />
-                    </div>
-                    <div className="mt-1.5 flex items-center gap-2 text-xs text-tron-dim">
-                      <span>{p.phase}</span>
-                      <span>·</span>
-                      <span>{p.findings_count} Findings</span>
-                    </div>
-                    <div className="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-tron-bg">
-                      <div
-                        className="h-full rounded-full bg-tron-accent transition-all"
-                        style={{ width: `${phaseProgress(p.phase)}%` }}
-                      />
-                    </div>
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        {health.load_1m != null && (
+          <div className="flex items-center gap-1.5">
+            <span className="metric-label">Load</span>
+            <span className="font-mono font-semibold" style={{ color: "var(--tron-text)" }}>
+              {health.load_1m}
+            </span>
+          </div>
+        )}
 
-        <section className="tron-panel p-4">
-          <h2 className="mb-3 text-lg font-medium text-tron-muted">
-            Was zuletzt passiert ist
-          </h2>
-          <EventFeed />
-        </section>
+        {health.jobs_failed != null && health.jobs_failed > 0 && (
+          <>
+            <div className="h-4 w-px" style={{ background: "var(--tron-border)" }} />
+            <Link
+              href="/jobs?status=FAILED"
+              className="flex items-center gap-1.5 font-semibold transition-opacity hover:opacity-80"
+              style={{ color: "var(--tron-error)" }}
+            >
+              {health.jobs_failed} failed job{health.jobs_failed !== 1 ? "s" : ""}
+            </Link>
+          </>
+        )}
+
+        <div className="ml-auto font-mono text-[10px]" style={{ color: "var(--tron-text-dim)" }}>
+          {new Date().toUTCString().slice(0, 25)}
+        </div>
       </div>
 
-      {/* Quick-Actions: wofür sie da sind */}
-      <section className="tron-panel p-4">
-        <h2 className="mb-3 text-lg font-medium text-tron-muted">
-          Schnellstart
-        </h2>
-        <p className="mb-4 text-sm text-tron-dim">
-          <strong className="text-tron-text">Factory:</strong> Einmal Discover → Pack → Deliver durchlaufen lassen. –
-          <strong className="text-tron-text ml-1"> Brain:</strong> Das System wählt den nächsten Schritt selbst (z. B. Research vorantreiben, Infra prüfen) und führt ihn aus.
-        </p>
-        <DashboardQuickActions />
-      </section>
+      {/* Failure details */}
+      {failures.length > 0 && (
+        <div
+          className="rounded-lg px-4 py-3"
+          style={{
+            background: "rgba(244,63,94,0.05)",
+            border: "1px solid rgba(244,63,94,0.25)",
+          }}
+        >
+          <p className="text-[12px] font-semibold" style={{ color: "var(--tron-error)" }}>
+            Recent Failures
+          </p>
+          <ul className="mt-2 space-y-1">
+            {failures.slice(0, 3).map((f, i) => (
+              <li key={i} className="flex items-center gap-2 text-[11px]">
+                <span className="font-mono" style={{ color: "var(--tron-text-dim)" }}>—</span>
+                <span style={{ color: "var(--tron-text-muted)" }}>{f}</span>
+              </li>
+            ))}
+          </ul>
+          <Link
+            href="/jobs?status=FAILED"
+            className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium transition-opacity hover:opacity-80"
+            style={{ color: "var(--tron-error)" }}
+          >
+            View failed jobs →
+          </Link>
+        </div>
+      )}
 
-      <div className="flex flex-wrap gap-4">
-        <Link
-          href="/jobs"
-          className="flex h-10 items-center justify-center rounded-sm border-2 border-tron-border bg-transparent px-5 text-sm font-bold text-tron-text shadow-[0_0_10px_var(--tron-glow)] transition-all hover:border-tron-accent hover:text-tron-accent hover:shadow-[0_0_20px_var(--tron-glow)] active:scale-[0.98] uppercase tracking-wider"
+      {/* ── Stats row ─────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {[
+          { label: "Running Jobs",     value: runningJobsCount,      color: "var(--tron-accent)", href: "/jobs?status=RUNNING" },
+          { label: "Completed",        value: doneProjects.length,   color: "var(--tron-success)", href: "/research" },
+          { label: "Failed",           value: failedProjects.length, color: failedProjects.length > 0 ? "var(--tron-error)" : "var(--tron-text-dim)", href: "/research" },
+          { label: "Total Spend",      value: `$${totalSpend.toFixed(2)}`, color: "var(--tron-text)", href: "/research" },
+          { label: "Avg Verify Rate",  value: avgVerifyRate,         color: "var(--tron-text)",   href: "/research" },
+          { label: "Blocked Reads",    value: blockedReads,          color: blockedReads === "—" ? "var(--tron-text-dim)" : "var(--tron-error)", href: "/research" },
+        ].map((s) => (
+          <Link
+            key={s.label}
+            href={s.href}
+            className="stat-card block transition-colors hover:border-tron-accent"
+          >
+            <div className="metric-label">{s.label}</div>
+            <div className="mt-1 font-mono text-2xl font-bold" style={{ color: s.color }}>
+              {s.value}
+            </div>
+          </Link>
+        ))}
+      </div>
+
+      {/* Attention Queue */}
+      {(() => {
+        const needsAttention = projects.filter((p) => {
+          if (p.status.startsWith("failed")) return true;
+          if (p.status === "paused_rate_limited") return true;
+          if (p.status === "FAILED_BUDGET_EXCEEDED") return true;
+          return false;
+        });
+        if (needsAttention.length === 0) return null;
+        return (
+          <div
+            className="rounded-lg overflow-hidden"
+            style={{
+              border: "1px solid color-mix(in srgb, var(--tron-error) 25%, transparent)",
+              background: "color-mix(in srgb, var(--tron-error) 4%, var(--tron-bg-panel))",
+            }}
+          >
+            <div
+              className="flex items-center gap-2 px-4 py-2.5"
+              style={{
+                borderBottom: "1px solid color-mix(in srgb, var(--tron-error) 15%, transparent)",
+              }}
+            >
+              <span
+                className="h-2 w-2 rounded-full animate-pulse"
+                style={{ background: "var(--tron-error)" }}
+              />
+              <span
+                className="text-[11px] font-semibold uppercase tracking-wider"
+                style={{ color: "var(--tron-error)" }}
+              >
+                Needs Attention — {needsAttention.length} project
+                {needsAttention.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+            <div
+              className="divide-y"
+              style={{ borderColor: "color-mix(in srgb, var(--tron-error) 12%, transparent)" }}
+            >
+              {needsAttention.slice(0, 5).map((p) => (
+                <Link
+                  key={p.id}
+                  href={`/research/${p.id}`}
+                  className="interactive-row flex items-center gap-3 px-4 py-2.5"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p
+                      className="truncate text-[13px] font-medium"
+                      style={{ color: "var(--tron-text)" }}
+                    >
+                      {p.question || p.id}
+                    </p>
+                    <span
+                      className="font-mono text-[10px]"
+                      style={{ color: "var(--tron-text-dim)" }}
+                    >
+                      {p.id}
+                    </span>
+                  </div>
+                  <StatusBadge status={p.status} />
+                </Link>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Active Projects + Event Feed ──────────────────────── */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Active projects */}
+        <div
+          className="rounded-lg overflow-hidden"
+          style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg-panel)" }}
         >
-          Jobs anzeigen
-        </Link>
-        <Link
-          href="/packs"
-          className="flex h-10 items-center justify-center rounded-sm border-2 border-tron-border bg-transparent px-5 text-sm font-bold text-tron-text shadow-[0_0_10px_var(--tron-glow)] transition-all hover:border-tron-accent hover:text-tron-accent hover:shadow-[0_0_20px_var(--tron-glow)] active:scale-[0.98] uppercase tracking-wider"
+          <div
+            className="flex items-center justify-between px-4 py-3"
+            style={{ borderBottom: "1px solid var(--tron-border)" }}
+          >
+            <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--tron-text-muted)" }}>
+              Active Research
+            </span>
+            <Link
+              href="/research"
+              className="text-[11px] transition-colors hover:text-tron-accent"
+              style={{ color: "var(--tron-text-dim)" }}
+            >
+              View all →
+            </Link>
+          </div>
+
+          {activeProjects.length === 0 ? (
+            <div className="px-4 py-8 text-center">
+              <p className="text-sm" style={{ color: "var(--tron-text-muted)" }}>No active projects.</p>
+              <Link href="/research" className="mt-1 block text-[12px] hover:underline" style={{ color: "var(--tron-accent)" }}>
+                Start new project →
+              </Link>
+            </div>
+          ) : (
+            <div className="divide-y" style={{ borderColor: "var(--tron-border)" }}>
+              {activeProjects.slice(0, 6).map((p) => (
+                <Link
+                  key={p.id}
+                  href={`/research/${p.id}`}
+                  className="interactive-row flex items-center gap-3 px-4 py-3"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[13px] font-medium" style={{ color: "var(--tron-text)" }}>
+                      {p.question || p.id}
+                    </p>
+                    <div className="mt-0.5 flex items-center gap-2">
+                      <span className="font-mono text-[10px]" style={{ color: "var(--tron-text-dim)" }}>
+                        {p.id}
+                      </span>
+                      <span style={{ color: "var(--tron-text-dim)" }}>·</span>
+                      <span className="text-[10px]" style={{ color: "var(--tron-text-dim)" }}>
+                        {p.findings_count} findings
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    <StatusBadge status={p.status} />
+                    <div className="h-1 w-24 overflow-hidden rounded-full" style={{ background: "var(--tron-border)" }}>
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          width: `${phaseProgress(p.phase)}%`,
+                          background: "var(--tron-accent)",
+                        }}
+                      />
+                    </div>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Event feed */}
+        <div
+          className="rounded-lg overflow-hidden"
+          style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg-panel)" }}
         >
-          Packs anzeigen
-        </Link>
-        <Link
-          href="/memory"
-          className="flex h-10 items-center justify-center rounded-sm border-2 border-tron-border bg-transparent px-5 text-sm font-bold text-tron-text shadow-[0_0_10px_var(--tron-glow)] transition-all hover:border-tron-accent hover:text-tron-accent hover:shadow-[0_0_20px_var(--tron-glow)] active:scale-[0.98] uppercase tracking-wider"
-        >
-          Brain & Memory
-        </Link>
+          <div
+            className="flex items-center gap-2 px-4 py-3"
+            style={{ borderBottom: "1px solid var(--tron-border)" }}
+          >
+            <span className="h-1.5 w-1.5 rounded-full animate-pulse" style={{ background: "var(--tron-accent)" }} />
+            <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--tron-text-muted)" }}>
+              Live Event Feed
+            </span>
+          </div>
+          <div className="px-4 py-3">
+            <EventFeed />
+          </div>
+        </div>
+      </div>
+
+      {/* ── Quick Actions ─────────────────────────────────────── */}
+      <div
+        className="rounded-lg"
+        style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg-panel)" }}
+      >
+        <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--tron-border)" }}>
+          <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--tron-text-muted)" }}>
+            Quick Actions
+          </span>
+          <p className="mt-0.5 text-[12px]" style={{ color: "var(--tron-text-dim)" }}>
+            <strong style={{ color: "var(--tron-text-muted)" }}>Factory</strong> runs Discover → Pack → Deliver.{" "}
+            <strong style={{ color: "var(--tron-text-muted)" }}>Brain</strong> autonomously selects and executes the next step.
+          </p>
+        </div>
+        <div className="px-4 py-3">
+          <DashboardQuickActions />
+        </div>
+      </div>
+
+      {/* ── Secondary links ───────────────────────────────────── */}
+      <div className="flex flex-wrap gap-2">
+        {[
+          { href: "/jobs",   label: "Audit Logs" },
+          { href: "/packs",  label: "Playbooks" },
+          { href: "/memory", label: "Memory & Graph" },
+        ].map((l) => (
+          <Link
+            key={l.href}
+            href={l.href}
+            className="hover-accent flex h-8 items-center rounded px-3 text-[12px] font-medium"
+            style={{
+              border: "1px solid var(--tron-border)",
+              color: "var(--tron-text-muted)",
+              background: "transparent",
+            }}
+          >
+            {l.label}
+          </Link>
+        ))}
       </div>
     </div>
   );

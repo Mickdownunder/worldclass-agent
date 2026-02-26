@@ -3,14 +3,15 @@
 import { useState, useEffect } from "react";
 import { MarkdownView } from "@/components/MarkdownView";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
+import { VerifiedClaimSlideover } from "@/components/VerifiedClaimSlideover";
 
 type TabId = "report" | "findings" | "sources" | "verlauf" | "audit";
 
 const FEEDBACK_TYPES = [
-  { type: "excellent", label: "Excellent" },
-  { type: "ignore", label: "Irrelevant" },
-  { type: "wrong", label: "Falsch" },
-  { type: "dig_deeper", label: "Tiefer graben" },
+  { type: "excellent",  label: "Excellent" },
+  { type: "ignore",     label: "Irrelevant" },
+  { type: "wrong",      label: "Incorrect" },
+  { type: "dig_deeper", label: "Dig Deeper" },
 ] as const;
 
 interface Finding {
@@ -57,12 +58,12 @@ export function ResearchDetailTabs({
   const [reports, setReports] = useState<ReportEntry[] | null>(null);
   const [auditClaims, setAuditClaims] = useState<AuditClaim[] | null>(null);
   const [loading, setLoading] = useState<Record<TabId, boolean>>({
-    report: false,
-    findings: false,
-    sources: false,
-    verlauf: false,
-    audit: false,
+    report: false, findings: false, sources: false, verlauf: false, audit: false,
   });
+  const [slideoverTarget, setSlideoverTarget] = useState<{
+    open: boolean;
+    claimId?: string;
+  }>({ open: false });
 
   useEffect(() => {
     if (activeTab === "findings" && findings === null) {
@@ -101,15 +102,9 @@ export function ResearchDetailTabs({
       await fetch("/api/research/feedback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          project_id: projectId,
-          type,
-          finding_id: findingId,
-        }),
+        body: JSON.stringify({ project_id: projectId, type, finding_id: findingId }),
       });
-    } catch {
-      //
-    }
+    } catch { /* silent */ }
   }
 
   async function downloadReport(filename: string, content: string) {
@@ -123,284 +118,426 @@ export function ResearchDetailTabs({
   }
 
   const tabs: { id: TabId; label: string }[] = [
-    { id: "report", label: "Report" },
+    { id: "report",   label: "Report" },
     { id: "findings", label: "Findings" },
-    { id: "sources", label: "Quellen" },
-    { id: "verlauf", label: "Verlauf" },
-    { id: "audit", label: "Audit" },
+    { id: "sources",  label: "Sources" },
+    { id: "verlauf",  label: "History" },
+    { id: "audit",    label: "Audit" },
   ];
 
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2 rounded-sm bg-tron-panel border border-tron-border p-2">
+    <div className="space-y-0">
+      {/* Tab bar */}
+      <div
+        className="flex items-end gap-px px-0 overflow-x-auto"
+        style={{ borderBottom: "1px solid var(--tron-border)" }}
+      >
         {tabs.map((t) => (
           <button
             key={t.id}
             type="button"
             onClick={() => setActiveTab(t.id)}
-            className={`min-h-[36px] flex-1 min-w-[100px] rounded-sm px-4 py-1.5 text-sm font-bold uppercase tracking-wider transition-all ${
-              activeTab === t.id
-                ? "bg-tron-accent text-black shadow-[0_0_10px_var(--tron-glow)]"
-                : "text-tron-muted hover:bg-tron-accent/10 hover:text-tron-accent hover:shadow-[0_0_10px_var(--tron-glow)]"
-            }`}
+            className="relative shrink-0 px-4 py-2.5 text-[12px] font-semibold uppercase tracking-wider transition-colors"
+            style={{
+              color: activeTab === t.id ? "var(--tron-accent)" : "var(--tron-text-muted)",
+              background: "transparent",
+              borderBottom: activeTab === t.id ? "2px solid var(--tron-accent)" : "2px solid transparent",
+              marginBottom: "-1px",
+            }}
           >
             {t.label}
           </button>
         ))}
       </div>
 
-      {activeTab === "report" && (
-        <div className="tron-panel p-4">
-          {loading.report ? (
-            <LoadingSpinner />
-          ) : initialMarkdown ? (
-            <>
-              <div className="mb-3 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => {
-                    fetch(`/api/research/projects/${projectId}/report`)
-                      .then((r) => r.json())
-                      .then((d) => {
-                        const blob = new Blob([d.markdown ?? ""], {
-                          type: "text/markdown",
+      {/* Tab content */}
+      <div className="pt-4">
+        {/* ── REPORT ── */}
+        {activeTab === "report" && (
+          <div>
+            {loading.report ? (
+              <LoadingSpinner />
+            ) : initialMarkdown ? (
+              <>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <p className="text-[11px] font-mono" style={{ color: "var(--tron-text-dim)" }}>
+                    Click{" "}
+                    <span className="verified-badge-inline" style={{ cursor: "default" }}>
+                      VERIFIED
+                    </span>{" "}
+                    badges to view supporting evidence
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      fetch(`/api/research/projects/${projectId}/report`)
+                        .then((r) => r.json())
+                        .then((d) => {
+                          const blob = new Blob([d.markdown ?? ""], { type: "text/markdown" });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          a.download = `report-${projectId}.md`;
+                          a.click();
+                          URL.revokeObjectURL(url);
                         });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement("a");
-                        a.href = url;
-                        a.download = `report-${projectId}.md`;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                      });
-                  }}
-                  className="rounded-sm border-2 border-tron-accent bg-transparent px-3 py-1.5 text-xs font-bold text-tron-accent uppercase tracking-wider hover:bg-tron-accent hover:text-black hover:shadow-[0_0_10px_var(--tron-glow)] transition-all"
-                >
-                  Download .md
-                </button>
-              </div>
-              <div className="max-h-[70vh] overflow-auto rounded bg-tron-bg p-6 border border-tron-border/30 shadow-[inset_0_0_20px_rgba(0,0,0,0.5)]">
-                <MarkdownView content={initialMarkdown} className="report-prose" />
-              </div>
-            </>
-          ) : (
-            <p className="text-tron-dim">Noch kein Report.</p>
-          )}
-        </div>
-      )}
-
-      {activeTab === "findings" && (
-        <div className="tron-panel p-4">
-          {loading.findings ? (
-            <LoadingSpinner />
-          ) : findings && findings.length > 0 ? (
-            <ul className="space-y-4">
-              {findings.map((f) => (
-                <li
-                  key={f.id}
-                  className="rounded-sm border-2 border-tron-border bg-tron-bg p-4 shadow-[0_0_10px_var(--tron-glow)]"
-                >
-                  <div className="font-medium text-tron-text">
-                    {f.title || f.url || f.id}
-                  </div>
-                  {f.url && (
-                    <a
-                      href={f.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs text-tron-accent hover:underline"
-                    >
-                      {f.url}
-                    </a>
-                  )}
-                  {f.excerpt && (
-                    <p className="mt-1 line-clamp-3 text-sm text-tron-muted">
-                      {f.excerpt}
-                    </p>
-                  )}
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {FEEDBACK_TYPES.map(({ type, label }) => (
-                      <button
-                        key={type}
-                        type="button"
-                        onClick={() => sendFeedback(f.id, type)}
-                      className="rounded-sm border-2 border-tron-border bg-transparent px-3 py-1.5 text-xs font-bold text-tron-muted uppercase tracking-wider hover:border-tron-accent hover:text-tron-accent hover:shadow-[0_0_10px_var(--tron-glow)] transition-all"
-                      >
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-tron-dim">Keine Findings.</p>
-          )}
-        </div>
-      )}
-
-      {activeTab === "sources" && (
-        <div className="tron-panel p-4">
-          {loading.sources ? (
-            <LoadingSpinner />
-          ) : sources && sources.length > 0 ? (
-            <ul className="space-y-2 text-sm">
-              {sources.map((s) => (
-                <li key={s.id} className="flex flex-wrap items-center gap-2">
-                  {s.url ? (
-                    <a
-                      href={s.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-tron-accent hover:underline"
-                    >
-                      {s.url}
-                    </a>
-                  ) : (
-                    <span className="text-tron-dim">{s.id}</span>
-                  )}
-                  {s.type != null && (
-                    <span className="text-tron-muted">({s.type})</span>
-                  )}
-                  {s.score_source === "verified" && s.reliability_score != null ? (
-                    <span className="rounded border border-tron-accent/50 bg-tron-accent/10 px-2 py-0.5 text-xs font-medium text-tron-accent" title="Verified reliability (post-verify)">
-                      Reliability: {Math.round(s.reliability_score * 100)}%
-                    </span>
-                  ) : (
-                    <span className="rounded border border-tron-border bg-tron-bg px-2 py-0.5 text-xs text-tron-muted" title="Initial confidence before verify; not a final quality verdict">
-                      unrated (pre-verify)
-                    </span>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-tron-dim">Keine Quellen.</p>
-          )}
-        </div>
-      )}
-
-      {activeTab === "verlauf" && (
-        <div className="tron-panel p-4">
-          {loading.verlauf ? (
-            <LoadingSpinner />
-          ) : reports && reports.length > 0 ? (
-            <ul className="space-y-4">
-              {reports.map((r) => (
-                <li key={r.filename} className="border-b border-tron-border pb-4">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <span className="font-mono text-sm text-tron-accent">
-                      {r.filename}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => downloadReport(r.filename, r.content)}
-                  className="rounded-sm border-2 border-tron-accent bg-transparent px-3 py-1.5 text-xs font-bold text-tron-accent uppercase tracking-wider hover:bg-tron-accent hover:text-black hover:shadow-[0_0_10px_var(--tron-glow)] transition-all"
-                    >
-                      Download
-                    </button>
-                  </div>
-                  <div className="max-h-48 overflow-auto rounded bg-tron-bg p-3">
-                    <MarkdownView
-                      content={r.content}
-                      className="prose-headings:text-sm prose-p:text-xs"
-                    />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-tron-dim">Kein Verlauf.</p>
-          )}
-        </div>
-      )}
-
-      {activeTab === "audit" && (
-        <div className="tron-panel p-4">
-          {loading.audit ? (
-            <LoadingSpinner />
-          ) : auditClaims && auditClaims.length > 0 ? (
-            <div className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-3">
-                <div className="rounded-sm border-2 border-tron-border bg-tron-bg p-3">
-                  <div className="text-xs font-bold uppercase text-tron-muted">
-                    Verified
-                  </div>
-                  <div className="mt-1 text-lg font-bold text-green-500">
-                    {auditClaims.filter((c) => c.is_verified).length}
-                  </div>
-                </div>
-                <div className="rounded-sm border-2 border-tron-border bg-tron-bg p-3">
-                  <div className="text-xs font-bold uppercase text-tron-muted">
-                    Unverified / Disputed
-                  </div>
-                  <div className="mt-1 text-lg font-bold text-amber-500">
-                    {auditClaims.filter((c) => !c.is_verified).length}
-                  </div>
-                </div>
-                <div className="rounded-sm border-2 border-tron-border bg-tron-bg p-3">
-                  <div className="text-xs font-bold uppercase text-tron-muted">
-                    Total claims
-                  </div>
-                  <div className="mt-1 text-lg font-bold text-tron-accent">
-                    {auditClaims.length}
-                  </div>
-                </div>
-              </div>
-              <ul className="space-y-3">
-                {auditClaims.map((c) => (
-                  <li
-                    key={c.claim_id}
-                    className={`rounded-sm border-2 p-3 ${
-                      c.is_verified
-                        ? "border-green-500/50 bg-green-500/5"
-                        : "border-tron-border bg-tron-bg"
-                    }`}
+                    }}
+                    className="shrink-0 flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] font-semibold transition-colors"
+                    style={{
+                      border: "1px solid var(--tron-border)",
+                      color: "var(--tron-text-muted)",
+                      background: "transparent",
+                    }}
+                    onMouseEnter={e => {
+                      e.currentTarget.style.borderColor = "var(--tron-accent)";
+                      e.currentTarget.style.color = "var(--tron-accent)";
+                    }}
+                    onMouseLeave={e => {
+                      e.currentTarget.style.borderColor = "var(--tron-border)";
+                      e.currentTarget.style.color = "var(--tron-text-muted)";
+                    }}
                   >
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`rounded px-2 py-0.5 text-xs font-bold uppercase ${
-                          c.is_verified
-                            ? "bg-green-500/20 text-green-400"
-                            : "bg-amber-500/20 text-amber-400"
-                        }`}
-                      >
-                        {c.is_verified
-                          ? "Verified"
-                          : c.verification_reason?.toLowerCase().includes("dispute")
-                            ? "Disputed"
-                            : "Unverified"}
-                      </span>
-                      {c.verification_reason && !c.is_verified && (
-                        <span className="text-xs text-tron-muted">
-                          {c.verification_reason}
-                        </span>
+                    <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                      <path d="M6 1v8M2 7l4 4 4-4M1 13h10" />
+                    </svg>
+                    Download .md
+                  </button>
+                </div>
+                <div
+                  className="overflow-auto rounded-md p-6"
+                  style={{
+                    background: "var(--tron-bg)",
+                    border: "1px solid var(--tron-border)",
+                    maxHeight: "72vh",
+                  }}
+                >
+                  <MarkdownView
+                    content={initialMarkdown}
+                    className="report-prose"
+                    onVerifiedClick={(claimId) =>
+                      setSlideoverTarget({ open: true, claimId })
+                    }
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="py-10 text-center">
+                <p className="text-sm" style={{ color: "var(--tron-text-muted)" }}>No report generated yet.</p>
+                <p className="mt-1 text-xs" style={{ color: "var(--tron-text-dim)" }}>
+                  Complete the Synthesize phase to generate a report.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── FINDINGS ── */}
+        {activeTab === "findings" && (
+          <div>
+            {loading.findings ? (
+              <LoadingSpinner />
+            ) : findings && findings.length > 0 ? (
+              <div className="space-y-2">
+                {findings.map((f) => (
+                  <div
+                    key={f.id}
+                    className="rounded-md"
+                    style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg)" }}
+                  >
+                    <div className="px-4 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium leading-snug" style={{ color: "var(--tron-text)" }}>
+                            {f.title || f.url || f.id}
+                          </p>
+                          {f.url && (
+                            <a
+                              href={f.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="mt-0.5 block truncate text-[11px] hover:underline"
+                              style={{ color: "var(--tron-accent)" }}
+                            >
+                              {f.url}
+                            </a>
+                          )}
+                        </div>
+                        {f.confidence != null && (
+                          <span className="shrink-0 font-mono text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                            style={{
+                              background: "var(--tron-panel-hover)",
+                              border: "1px solid var(--tron-border)",
+                              color: "var(--tron-text-muted)",
+                            }}>
+                            {Math.round(f.confidence * 100)}%
+                          </span>
+                        )}
+                      </div>
+                      {f.excerpt && (
+                        <p className="mt-2 line-clamp-2 text-[12px] leading-relaxed" style={{ color: "var(--tron-text-muted)" }}>
+                          {f.excerpt}
+                        </p>
                       )}
                     </div>
-                    <p className="mt-1 text-sm text-tron-text">{c.text}</p>
-                    {c.supporting_source_ids.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {c.supporting_source_ids.map((sid) => (
-                          <span
-                            key={sid}
-                            className="rounded bg-tron-panel px-2 py-0.5 font-mono text-xs text-tron-accent"
-                          >
-                            {sid}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </li>
+                    <div
+                      className="flex flex-wrap gap-1.5 px-4 py-2"
+                      style={{ borderTop: "1px solid var(--tron-border)" }}
+                    >
+                      {FEEDBACK_TYPES.map(({ type, label }) => (
+                        <button
+                          key={type}
+                          type="button"
+                          onClick={() => sendFeedback(f.id, type)}
+                          className="rounded px-2 py-1 text-[10px] font-semibold uppercase tracking-wider transition-colors"
+                          style={{
+                            border: "1px solid var(--tron-border)",
+                            color: "var(--tron-text-dim)",
+                            background: "transparent",
+                          }}
+                          onMouseEnter={e => {
+                            e.currentTarget.style.borderColor = "var(--tron-accent)";
+                            e.currentTarget.style.color = "var(--tron-accent)";
+                          }}
+                          onMouseLeave={e => {
+                            e.currentTarget.style.borderColor = "var(--tron-border)";
+                            e.currentTarget.style.color = "var(--tron-text-dim)";
+                          }}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
-              </ul>
-            </div>
-          ) : (
-            <p className="text-tron-dim">
-              Keine Audit-Daten. Verify-Artefakte (claim_evidence_map oder
-              claim_ledger) fehlen für dieses Projekt.
-            </p>
-          )}
-        </div>
-      )}
+              </div>
+            ) : (
+              <p className="py-8 text-center text-sm" style={{ color: "var(--tron-text-muted)" }}>
+                No findings.
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* ── SOURCES ── */}
+        {activeTab === "sources" && (
+          <div>
+            {loading.sources ? (
+              <LoadingSpinner />
+            ) : sources && sources.length > 0 ? (
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>URL / Source</th>
+                    <th>Type</th>
+                    <th>Reliability</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sources.map((s) => (
+                    <tr key={s.id}>
+                      <td className="max-w-[340px]">
+                        {s.url ? (
+                          <a
+                            href={s.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block truncate text-[12px] hover:underline"
+                            style={{ color: "var(--tron-accent)" }}
+                          >
+                            {s.url}
+                          </a>
+                        ) : (
+                          <span className="font-mono text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
+                            {s.id}
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        {s.type && (
+                          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded"
+                            style={{ background: "var(--tron-bg)", border: "1px solid var(--tron-border)", color: "var(--tron-text-muted)" }}>
+                            {s.type}
+                          </span>
+                        )}
+                      </td>
+                      <td>
+                        {s.score_source === "verified" && s.reliability_score != null ? (
+                          <ReliabilityBar score={s.reliability_score} />
+                        ) : (
+                          <span className="text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
+                            pre-verify
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p className="py-8 text-center text-sm" style={{ color: "var(--tron-text-muted)" }}>No sources.</p>
+            )}
+          </div>
+        )}
+
+        {/* ── HISTORY ── */}
+        {activeTab === "verlauf" && (
+          <div>
+            {loading.verlauf ? (
+              <LoadingSpinner />
+            ) : reports && reports.length > 0 ? (
+              <div className="space-y-3">
+                {reports.map((r) => (
+                  <div
+                    key={r.filename}
+                    className="rounded-md overflow-hidden"
+                    style={{ border: "1px solid var(--tron-border)" }}
+                  >
+                    <div
+                      className="flex items-center justify-between gap-3 px-4 py-2.5"
+                      style={{ background: "var(--tron-bg)", borderBottom: "1px solid var(--tron-border)" }}
+                    >
+                      <span className="font-mono text-[11px]" style={{ color: "var(--tron-text-muted)" }}>
+                        {r.filename}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => downloadReport(r.filename, r.content)}
+                        className="text-[11px] font-medium px-2 py-1 rounded transition-colors"
+                        style={{ border: "1px solid var(--tron-border)", color: "var(--tron-text-muted)", background: "transparent" }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.color = "var(--tron-accent)";
+                          e.currentTarget.style.borderColor = "var(--tron-accent)";
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.color = "var(--tron-text-muted)";
+                          e.currentTarget.style.borderColor = "var(--tron-border)";
+                        }}
+                      >
+                        Download
+                      </button>
+                    </div>
+                    <div className="overflow-auto p-4" style={{ maxHeight: "200px", background: "var(--tron-bg-panel)" }}>
+                      <MarkdownView content={r.content} className="prose-headings:text-xs prose-p:text-xs" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="py-8 text-center text-sm" style={{ color: "var(--tron-text-muted)" }}>No history.</p>
+            )}
+          </div>
+        )}
+
+        {/* ── AUDIT ── */}
+        {activeTab === "audit" && (
+          <div>
+            {loading.audit ? (
+              <LoadingSpinner />
+            ) : auditClaims && auditClaims.length > 0 ? (
+              <div className="space-y-4">
+                {/* Stats row */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="stat-card">
+                    <div className="metric-label">Verified</div>
+                    <div className="mt-1 text-2xl font-bold font-mono" style={{ color: "var(--tron-success)" }}>
+                      {auditClaims.filter((c) => c.is_verified).length}
+                    </div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="metric-label">Unverified</div>
+                    <div className="mt-1 text-2xl font-bold font-mono" style={{ color: "var(--tron-warning)" }}>
+                      {auditClaims.filter((c) => !c.is_verified).length}
+                    </div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="metric-label">Total Claims</div>
+                    <div className="mt-1 text-2xl font-bold font-mono" style={{ color: "var(--tron-text)" }}>
+                      {auditClaims.length}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Claims table */}
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: 80 }}>Status</th>
+                      <th>Claim</th>
+                      <th style={{ width: 100 }}>Sources</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {auditClaims.map((c) => (
+                      <tr key={c.claim_id}>
+                        <td>
+                          <span
+                            className="inline-block rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider"
+                            style={{
+                              background: c.is_verified ? "rgba(34,197,94,0.10)" : "rgba(245,158,11,0.10)",
+                              color: c.is_verified ? "#22c55e" : "#f59e0b",
+                              border: c.is_verified ? "1px solid rgba(34,197,94,0.25)" : "1px solid rgba(245,158,11,0.25)",
+                            }}
+                          >
+                            {c.is_verified ? "Verified" : "Unverified"}
+                          </span>
+                        </td>
+                        <td>
+                          <p className="text-[12px] leading-relaxed" style={{ color: "var(--tron-text)" }}>
+                            {c.text}
+                          </p>
+                          {c.verification_reason && !c.is_verified && (
+                            <p className="mt-0.5 text-[11px] italic" style={{ color: "var(--tron-text-dim)" }}>
+                              {c.verification_reason}
+                            </p>
+                          )}
+                        </td>
+                        <td>
+                          <span className="font-mono text-[11px]" style={{ color: "var(--tron-text-muted)" }}>
+                            {c.supporting_source_ids.length}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="py-10 text-center">
+                <p className="text-sm" style={{ color: "var(--tron-text-muted)" }}>No audit data.</p>
+                <p className="mt-1 text-xs" style={{ color: "var(--tron-text-dim)" }}>
+                  Verify artifacts (claim_evidence_map or claim_ledger) not found for this project.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Slide-over */}
+      <VerifiedClaimSlideover
+        isOpen={slideoverTarget.open}
+        onClose={() => setSlideoverTarget({ open: false })}
+        projectId={projectId}
+        targetClaimId={slideoverTarget.claimId}
+      />
+    </div>
+  );
+}
+
+function ReliabilityBar({ score }: { score: number }) {
+  const pct = Math.round(score * 100);
+  const color = score >= 0.75 ? "#22c55e" : score >= 0.5 ? "#f59e0b" : "#f43f5e";
+  return (
+    <div className="flex items-center gap-2">
+      <div className="w-16 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--tron-border)" }}>
+        <div
+          className="h-full rounded-full transition-all"
+          style={{ width: `${pct}%`, background: color }}
+        />
+      </div>
+      <span className="font-mono text-[10px] font-semibold" style={{ color, minWidth: "2.5rem" }}>
+        {pct}%
+      </span>
     </div>
   );
 }

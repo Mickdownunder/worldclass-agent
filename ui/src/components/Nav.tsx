@@ -5,21 +5,103 @@ import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 
-const links = [
-  { href: "/", label: "Command Center" },
-  { href: "/research", label: "Research" },
-  { href: "/research/insights", label: "Insights" },
-  { href: "/agents", label: "Agents" },
-  { href: "/jobs", label: "Jobs" },
-  { href: "/packs", label: "Packs" },
-  { href: "/memory", label: "Brain & Memory" },
-  { href: "/clients", label: "Clients" },
+/* ── Icons (inline SVG, 16×16 stroke) ─────────────────────── */
+function IconGrid() {
+  return (
+    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="1.5" width="4.5" height="4.5" rx="1" />
+      <rect x="9" y="1.5" width="4.5" height="4.5" rx="1" />
+      <rect x="1.5" y="9" width="4.5" height="4.5" rx="1" />
+      <rect x="9" y="9" width="4.5" height="4.5" rx="1" />
+    </svg>
+  );
+}
+function IconSearch() {
+  return (
+    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <circle cx="6.5" cy="6.5" r="5" />
+      <line x1="10" y1="10" x2="13.5" y2="13.5" />
+    </svg>
+  );
+}
+function IconDatabase() {
+  return (
+    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <ellipse cx="7.5" cy="4" rx="5.5" ry="2" />
+      <path d="M2 4v3.5c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2V4" />
+      <path d="M2 7.5v3.5c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2V7.5" />
+    </svg>
+  );
+}
+function IconClipboard() {
+  return (
+    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <path d="M9.5 1.5H11a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1h1.5" />
+      <rect x="5.5" y="1" width="4" height="2.5" rx="1" />
+      <line x1="5" y1="7" x2="10" y2="7" />
+      <line x1="5" y1="9.5" x2="8.5" y2="9.5" />
+    </svg>
+  );
+}
+function IconSettings() {
+  return (
+    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <circle cx="7.5" cy="7.5" r="2.5" />
+      <path d="M7.5 1v1.5M7.5 12v1.5M1 7.5h1.5M12 7.5h1.5M2.64 2.64l1.06 1.06M11.3 11.3l1.06 1.06M11.3 3.7l-1.06 1.06M3.7 11.3l-1.06 1.06" />
+    </svg>
+  );
+}
+function IconBolt() {
+  return (
+    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 1L3 8.5h5.5L6 14l6-7H7L9 1z" />
+    </svg>
+  );
+}
+function IconUsers() {
+  return (
+    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <circle cx="5.5" cy="5" r="2.5" />
+      <path d="M1 13c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4" />
+      <circle cx="11" cy="5" r="2" />
+      <path d="M14 12c0-2-1.2-3.5-3-3.5" />
+    </svg>
+  );
+}
+function IconTerminal() {
+  return (
+    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+      <rect x="1.5" y="2.5" width="12" height="10" rx="1.5" />
+      <path d="M4 7l2 2-2 2M8.5 11h3" />
+    </svg>
+  );
+}
+
+/* ── Nav data ─────────────────────────────────────────────── */
+const primaryNav = [
+  { href: "/",         label: "Command Center",      icon: <IconGrid /> },
+  { href: "/research", label: "Research Projects",   icon: <IconSearch /> },
+  { href: "/memory",   label: "Memory & Graph",      icon: <IconDatabase /> },
+  { href: "/jobs",     label: "Audit Logs",          icon: <IconClipboard /> },
+  { href: "/packs",    label: "Settings & Playbooks",icon: <IconSettings /> },
 ];
 
+const secondaryNav = [
+  { href: "/agents",  label: "Agents",   icon: <IconBolt /> },
+  { href: "/clients", label: "Clients",  icon: <IconUsers /> },
+  { href: "/research/insights", label: "Insights", icon: <IconTerminal /> },
+];
+
+/* ── Component ────────────────────────────────────────────── */
 export function Nav() {
   const pathname = usePathname();
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  function isActive(href: string) {
+    if (href === "/") return pathname === "/";
+    return pathname === href || pathname.startsWith(href + "/");
+  }
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -27,93 +109,135 @@ export function Nav() {
     router.refresh();
   }
 
+  const NavItem = ({ href, label, icon }: { href: string; label: string; icon: React.ReactNode }) => {
+    const active = isActive(href);
+    return (
+      <Link
+        href={href}
+        onClick={() => setMobileOpen(false)}
+        className={[
+          "flex items-center gap-2.5 px-3 py-2 rounded-md text-[13px] font-medium transition-all duration-100 group relative",
+          active
+            ? "bg-[var(--tron-accent-dim)] text-[var(--tron-accent)]"
+            : "text-[var(--tron-text-muted)] hover:text-[var(--tron-text)] hover:bg-[var(--tron-panel-hover)]",
+        ].join(" ")}
+      >
+        {active && (
+          <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 rounded-r bg-[var(--tron-accent)]" />
+        )}
+        <span className={active ? "text-[var(--tron-accent)]" : "text-[var(--tron-text-dim)] group-hover:text-[var(--tron-text-muted)]"}>
+          {icon}
+        </span>
+        {label}
+      </Link>
+    );
+  };
+
   return (
-    <nav className="sticky top-0 z-50 border-b-2 border-tron-border bg-tron-panel/90 backdrop-blur-md shadow-[0_4px_20px_var(--tron-glow)]">
-      <div className="mx-auto max-w-6xl px-4 py-3 sm:px-6">
-        <div className="flex min-h-[44px] items-center justify-between gap-4">
-          <Link href="/" className="text-xl font-bold tracking-tight text-tron-text">
-            Operator
-          </Link>
+    <>
+      {/* ── Desktop Sidebar ─────────────────────────────────── */}
+      <aside className="hidden md:flex fixed inset-y-0 left-0 w-60 flex-col z-50"
+        style={{ background: "var(--tron-bg-panel)", borderRight: "1px solid var(--tron-border)" }}>
 
-          {/* Desktop: inline links */}
-          <div className="hidden flex-wrap items-center gap-3 md:flex md:gap-4">
-            {links.map(({ href, label }) => {
-              const isActive =
-                href === "/"
-                  ? pathname === "/"
-                  : pathname === href || pathname.startsWith(href + "/");
-              return (
-                <Link
-                  key={href}
-                  href={href}
-                  className={`flex h-10 items-center justify-center rounded-sm border-2 border-transparent px-4 text-sm font-bold uppercase tracking-widest transition-all ${
-                    isActive
-                      ? "border-tron-accent text-tron-accent shadow-[inset_0_0_15px_var(--tron-glow)] bg-tron-accent/10"
-                      : "text-tron-muted hover:border-tron-border hover:text-tron-text hover:shadow-[0_0_10px_var(--tron-glow)]"
-                  }`}
-                >
-                  {label}
-                </Link>
-              );
-            })}
+        {/* Brand */}
+        <div className="flex h-14 items-center gap-2 px-4 shrink-0"
+          style={{ borderBottom: "1px solid var(--tron-border)" }}>
+          <div>
+            <div className="font-mono text-[11px] font-bold tracking-[0.12em] uppercase"
+              style={{ color: "var(--tron-text-muted)" }}>
+              Forensic AI
+            </div>
+            <div className="font-mono text-sm font-bold tracking-tight leading-none"
+              style={{ color: "var(--tron-text)" }}>
+              Operator
+            </div>
           </div>
+          <span className="ml-auto font-mono text-[9px] font-semibold px-1.5 py-0.5 rounded"
+            style={{ background: "var(--tron-accent-dim)", color: "var(--tron-accent)", letterSpacing: "0.08em" }}>
+            OS
+          </span>
+        </div>
 
-          <div className="flex items-center gap-3">
+        {/* Primary nav */}
+        <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-0.5">
+          {primaryNav.map((item) => (
+            <NavItem key={item.href} {...item} />
+          ))}
+
+          {/* Divider + secondary */}
+          <div className="pt-4 pb-1 px-1">
+            <span className="text-[10px] font-semibold uppercase tracking-[0.1em]"
+              style={{ color: "var(--tron-text-dim)" }}>
+              System
+            </span>
+          </div>
+          {secondaryNav.map((item) => (
+            <NavItem key={item.href} {...item} />
+          ))}
+        </nav>
+
+        {/* Bottom strip */}
+        <div className="shrink-0 px-3 py-3 space-y-2"
+          style={{ borderTop: "1px solid var(--tron-border)" }}>
+          <div className="flex items-center justify-between">
             <ThemeToggle />
             <button
               type="button"
               onClick={logout}
-              className="flex h-10 items-center text-sm font-bold uppercase tracking-widest text-tron-dim hover:text-tron-accent md:ml-auto md:px-3 transition-all hover:text-shadow-[0_0_10px_var(--tron-glow)]"
+              className="text-[12px] font-medium transition-colors px-2 py-1 rounded"
+              style={{ color: "var(--tron-text-dim)" }}
+              onMouseEnter={e => (e.currentTarget.style.color = "var(--tron-error)")}
+              onMouseLeave={e => (e.currentTarget.style.color = "var(--tron-text-dim)")}
             >
-              Abmelden
-            </button>
-            {/* Mobile hamburger */}
-            <button
-              type="button"
-              onClick={() => setMobileOpen((o) => !o)}
-              className="flex h-10 items-center justify-center rounded-sm border-2 border-tron-border bg-transparent text-tron-muted hover:border-tron-accent hover:text-tron-accent hover:shadow-[0_0_10px_var(--tron-glow)] md:hidden px-3 uppercase font-bold tracking-widest"
-              aria-expanded={mobileOpen}
-              aria-label="Menü"
-            >
-              {mobileOpen ? (
-                <span className="text-lg">✕</span>
-              ) : (
-                <span className="text-lg">☰</span>
-              )}
+              Sign out
             </button>
           </div>
         </div>
+      </aside>
 
-        {/* Mobile: collapsible links */}
-        {mobileOpen && (
-          <div
-            className="mt-3 flex flex-col gap-1 border-t border-tron-border pt-3 md:hidden"
-            role="region"
-            aria-label="Navigation"
-          >
-            {links.map(({ href, label }) => {
-              const isActive =
-                href === "/"
-                  ? pathname === "/"
-                  : pathname === href || pathname.startsWith(href + "/");
-              return (
-                <Link
-                  key={href}
-                  href={href}
-                  onClick={() => setMobileOpen(false)}
-                  className={`min-h-[44px] flex items-center rounded-md border border-transparent px-3 text-sm transition ${
-                    isActive
-                      ? "bg-tron-text text-tron-bg font-medium shadow-sm"
-                      : "text-tron-muted hover:bg-tron-accent/5 hover:text-tron-text"
-                  }`}
-                >
-                  {label}
-                </Link>
-              );
-            })}
-          </div>
-        )}
+      {/* ── Mobile top bar ──────────────────────────────────── */}
+      <div className="md:hidden sticky top-0 z-50 flex h-12 items-center justify-between px-4"
+        style={{ background: "var(--tron-bg-panel)", borderBottom: "1px solid var(--tron-border)" }}>
+        <span className="font-mono text-sm font-bold" style={{ color: "var(--tron-text)" }}>Operator</span>
+        <button
+          type="button"
+          onClick={() => setMobileOpen((o) => !o)}
+          className="flex h-8 w-8 items-center justify-center rounded"
+          style={{ color: "var(--tron-text-muted)" }}
+          aria-expanded={mobileOpen}
+          aria-label="Menu"
+        >
+          {mobileOpen ? (
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="2" y1="2" x2="14" y2="14" /><line x1="14" y1="2" x2="2" y2="14" />
+            </svg>
+          ) : (
+            <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="2" y1="5" x2="14" y2="5" /><line x1="2" y1="8" x2="14" y2="8" /><line x1="2" y1="11" x2="14" y2="11" />
+            </svg>
+          )}
+        </button>
       </div>
-    </nav>
+
+      {/* Mobile dropdown */}
+      {mobileOpen && (
+        <div className="md:hidden fixed inset-x-0 top-12 z-40 shadow-xl"
+          style={{ background: "var(--tron-bg-panel)", borderBottom: "1px solid var(--tron-border)" }}>
+          <nav className="px-3 py-3 space-y-0.5">
+            {[...primaryNav, ...secondaryNav].map((item) => (
+              <NavItem key={item.href} {...item} />
+            ))}
+            <div className="pt-2 flex items-center justify-between px-1">
+              <ThemeToggle />
+              <button type="button" onClick={logout}
+                className="text-[12px] font-medium"
+                style={{ color: "var(--tron-text-dim)" }}>
+                Sign out
+              </button>
+            </div>
+          </nav>
+        </div>
+      )}
+    </>
   );
 }
