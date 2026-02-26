@@ -43,6 +43,9 @@ project = {
 (p / "thesis.json").write_text(json.dumps({"current": "", "confidence": 0.0, "evidence": []}, indent=2))
 PY
 
+# Seed prior knowledge (utility-ranked principles + findings) for better initial queries
+python3 "$OPERATOR_ROOT/tools/research_knowledge_seed.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+
 echo "$PROJECT_ID" > "$ART/project_id.txt"
 echo "Created project: $PROJECT_ID" >> "$PWD/log.txt"
 echo "$PROJECT_ID"

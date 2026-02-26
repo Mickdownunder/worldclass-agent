@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.research_common import project_dir, load_project, audit_log
 
-# Evidence Gate thresholds (single source of truth, configurable via this dict)
+# Evidence Gate thresholds (single source of truth; overridden by calibrator when >= 10 outcomes)
 EVIDENCE_GATE_THRESHOLDS = {
     "findings_count_min": 8,
     "unique_source_count_min": 5,
@@ -24,6 +24,18 @@ EVIDENCE_GATE_THRESHOLDS = {
     "claim_support_rate_min": 0.5,
     "high_reliability_source_ratio_min": 0.5,
 }
+
+
+def _get_thresholds():
+    """Return calibrated thresholds if >= 10 successful projects, else defaults."""
+    try:
+        from tools.research_calibrator import get_calibrated_thresholds
+        cal = get_calibrated_thresholds()
+        if cal:
+            return {**EVIDENCE_GATE_THRESHOLDS, **cal}
+    except Exception:
+        pass
+    return EVIDENCE_GATE_THRESHOLDS
 
 # Adaptive gate: primary metric = absolute verified claim count
 HARD_PASS_VERIFIED_MIN = 5   # >= 5 verified = always pass
@@ -50,7 +62,8 @@ def _load_explore_stats(proj: Path) -> dict:
 
 def _effective_findings_min(metrics: dict) -> int:
     """Adaptive floor: lower if read success rate is low."""
-    base = EVIDENCE_GATE_THRESHOLDS["findings_count_min"]
+    t = _get_thresholds()
+    base = t["findings_count_min"]
     attempts = metrics.get("read_attempts", 0)
     successes = metrics.get("read_successes", 0)
     if attempts <= 0:
@@ -131,7 +144,7 @@ def _is_reader_pipeline_failure(metrics: dict) -> bool:
 def _collect_reasons(metrics: dict, effective_findings_min: int, has_reliability_data: bool = False) -> list[str]:
     """Build list of failure reasons from metrics vs thresholds."""
     reasons = []
-    t = EVIDENCE_GATE_THRESHOLDS
+    t = _get_thresholds()
     if metrics["findings_count"] < effective_findings_min:
         reasons.append(f"findings_count {metrics['findings_count']} < {effective_findings_min}")
     if metrics["unique_source_count"] < t["unique_source_count_min"]:
@@ -158,10 +171,11 @@ def _decide_gate(metrics: dict) -> tuple[str, str | None]:
         return "pass", None
     if vc >= SOFT_PASS_VERIFIED_MIN and rate >= REVIEW_ZONE_RATE:
         return "pending_review", None
+    t = _get_thresholds()
     if rate < HARD_FAIL_RATE or vc < SOFT_PASS_VERIFIED_MIN:
-        if vc < EVIDENCE_GATE_THRESHOLDS["verified_claim_count_min"] or rate < EVIDENCE_GATE_THRESHOLDS["claim_support_rate_min"]:
+        if vc < t["verified_claim_count_min"] or rate < t["claim_support_rate_min"]:
             return "fail", "failed_verification_inconclusive"
-        if metrics.get("high_reliability_source_ratio", 0) < EVIDENCE_GATE_THRESHOLDS["high_reliability_source_ratio_min"]:
+        if metrics.get("high_reliability_source_ratio", 0) < t["high_reliability_source_ratio_min"]:
             return "fail", "failed_source_diversity"
         return "fail", "failed_insufficient_evidence"
     return "fail", "failed_insufficient_evidence"

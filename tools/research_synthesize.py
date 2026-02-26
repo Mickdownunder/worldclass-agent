@@ -132,6 +132,26 @@ def _build_ref_map(findings: list[dict], claim_ledger: list[dict]) -> tuple[dict
     return ref_map, ref_list_with_titles
 
 
+def _detect_gaps(section_body: str, section_title: str, question: str, project_id: str) -> list[dict]:
+    """WARP-style gap detection: LLM returns list of {description, suggested_query} where evidence is insufficient."""
+    if not section_body or len(section_body) < 200:
+        return []
+    system = """You are a research analyst. Given a draft section, identify 0-3 GAPS where evidence is missing or weak.
+Return JSON: {"gaps": [{"description": "what is missing", "suggested_query": "search query to find evidence"}]}.
+If the section is well-supported, return {"gaps": []}. Output only valid JSON."""
+    user = f"QUESTION: {question}\n\nSECTION: {section_title}\n\nDRAFT:\n{section_body[:4000]}\n\nReturn JSON with key 'gaps'."
+    try:
+        result = llm_call(_model(), system, user, project_id=project_id)
+        text = (result.text or "").strip()
+        if "```" in text:
+            text = re.sub(r"^```(?:json)?\s*", "", text).split("```")[0].strip()
+        out = json.loads(text)
+        gaps = out.get("gaps", [])
+        return gaps[:3] if isinstance(gaps, list) else []
+    except Exception:
+        return []
+
+
 def _synthesize_section(
     section_title: str,
     findings_for_section: list[dict],
@@ -313,6 +333,34 @@ def run_synthesis(project_id: str) -> str:
         if not section_findings:
             continue
         body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources)
+        if os.environ.get("RESEARCH_WARP_DEEPEN") == "1" and i == 0 and len(body) > 300:
+            gaps = _detect_gaps(body, title, question, project_id)
+            if gaps and gaps[0].get("suggested_query"):
+                try:
+                    from tools.research_web_search import search_brave, search_serper
+                    from tools.research_common import load_secrets
+                    secrets = load_secrets()
+                    q = gaps[0]["suggested_query"][:100]
+                    res = search_brave(q, 5) if secrets.get("BRAVE_API_KEY") else (search_serper(q, 5) if secrets.get("SERPER_API_KEY") else [])
+                    if res and len(res) > 0:
+                        url = res[0].get("url", "")
+                        if url:
+                            import subprocess
+                            r = subprocess.run(
+                                [sys.executable, str(Path(__file__).resolve().parent / "research_web_reader.py"), url],
+                                capture_output=True, text=True, timeout=30, cwd=str(Path(__file__).resolve().parent.parent)
+                            )
+                            if r.returncode == 0:
+                                try:
+                                    wr = json.loads(r.stdout)
+                                    if wr.get("text"):
+                                        new_f = {"url": url, "title": wr.get("title", ""), "excerpt": (wr.get("text") or "")[:1500]}
+                                        section_findings = section_findings + [new_f]
+                                        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources)
+                                except Exception:
+                                    pass
+                except Exception:
+                    pass
         deep_parts.append(f"## {title}\n\n{body}")
     parts.append("\n\n".join(deep_parts))
     parts.append("\n\n---\n\n")

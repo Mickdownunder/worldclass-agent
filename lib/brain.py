@@ -227,7 +227,13 @@ class Brain:
             r for r in state["memory"].get("recent_reflections", [])
             if (r.get("quality") or 0) >= 0.6
         ]
-        state["research_context"] = brain_context.compile(self.memory)
+        # Optional query: focus context on current research topic (utility-ranked retrieval)
+        goal = ""
+        for p in (state.get("research_projects") or []):
+            if p.get("status") != "done" and (p.get("question") or "").strip():
+                goal = (p.get("question") or "").strip()[:500]
+                break
+        state["research_context"] = brain_context.compile(self.memory, query=goal or None)
 
         # Governance level
         state["governance"] = {

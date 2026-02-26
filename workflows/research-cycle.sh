@@ -866,10 +866,13 @@ try:
     gate_metrics = d.get("quality_gate", {}).get("evidence_gate", {}).get("metrics", {})
     quality_proxy = gate_metrics.get("claim_support_rate", 0.0)
     mem.record_quality(job_id=project_id, score=float(quality_proxy), workflow_id="research-cycle", notes=f"gate_fail | {metrics['findings_count']} findings, {metrics['source_count']} sources")
+    mem.record_project_outcome(project_id=project_id, domain=d.get("domain"), critic_score=float(quality_proxy), user_verdict="none", gate_metrics_json=json.dumps(gate_metrics), findings_count=metrics["findings_count"], source_count=metrics["source_count"])
     mem.close()
 except Exception as e:
     print(f"[brain] reflection failed (non-fatal): {e}", file=sys.stderr)
 BRAIN_REFLECT
+      python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
     else
     echo "$GATE_RESULT" > "$ART/evidence_gate_result.json" 2>/dev/null || true
     python3 - "$PROJ_DIR" "$ART" <<'GATE_PASS'
@@ -914,6 +917,8 @@ for src in rel.get("sources", []):
       f.write_text(json.dumps(data, indent=2))
 VERIFY_PY
     fi
+    # Update source credibility from verify outcomes (per-domain)
+    python3 "$TOOLS/research_source_credibility.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
     # Evidence gate passed — advance to synthesize (no loop-back; gate already enforces evidence)
     advance_phase "synthesize"
     fi
@@ -1106,6 +1111,25 @@ d["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 (proj_dir / "project.json").write_text(json.dumps(d, indent=2))
 QF_FAIL
       python3 "$TOOLS/research_abort_report.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" "$SCORE" <<'OUTCOME_RECORD' 2>> "$PWD/log.txt" || true
+import json, sys
+from pathlib import Path
+proj_dir, op_root, project_id, score = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], float(sys.argv[4])
+sys.path.insert(0, str(op_root))
+d = json.loads((proj_dir / "project.json").read_text())
+try:
+    from lib.memory import Memory
+    mem = Memory()
+    fc = len(list((proj_dir / "findings").glob("*.json")))
+    sc = len([f for f in (proj_dir / "sources").glob("*.json") if "_content" not in f.name])
+    gate_metrics = d.get("quality_gate", {}).get("evidence_gate", {}).get("metrics", {})
+    mem.record_project_outcome(project_id=project_id, domain=d.get("domain"), critic_score=score, user_verdict="rejected", gate_metrics_json=json.dumps(gate_metrics), findings_count=fc, source_count=sc)
+    mem.close()
+except Exception as e:
+    print(f"[outcome] failed (non-fatal): {e}", file=sys.stderr)
+OUTCOME_RECORD
+      python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
     else
     # Persist quality_gate and critique to project (passed)
     python3 - "$PROJ_DIR" "$ART" "$SCORE" <<'QG'
@@ -1183,10 +1207,14 @@ try:
     critic_score = d.get("quality_gate", {}).get("critic_score")
     if critic_score is not None:
         mem.record_quality(job_id=project_id, score=float(critic_score), workflow_id="research-cycle", notes=f"{metrics['findings_count']} findings, {metrics['source_count']} sources")
+    gate_metrics = d.get("quality_gate", {}).get("evidence_gate", {}).get("metrics", {})
+    mem.record_project_outcome(project_id=project_id, domain=d.get("domain"), critic_score=float(critic_score) if critic_score is not None else None, user_verdict="approved", gate_metrics_json=json.dumps(gate_metrics), findings_count=metrics["findings_count"], source_count=metrics["source_count"])
     mem.close()
 except Exception as e:
     print(f"[brain] reflection failed (non-fatal): {e}", file=sys.stderr)
 BRAIN_REFLECT
+    python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
     fi
     ;;
   done)
