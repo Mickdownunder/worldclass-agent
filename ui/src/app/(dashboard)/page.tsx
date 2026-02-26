@@ -138,13 +138,12 @@ export default async function CommandCenterPage() {
         {health.jobs_failed != null && health.jobs_failed > 0 && (
           <>
             <div className="h-4 w-px" style={{ background: "var(--tron-border)" }} />
-            <Link
-              href="/jobs?status=FAILED"
-              className="flex items-center gap-1.5 font-semibold transition-opacity hover:opacity-80"
+            <span
+              className="flex items-center gap-1.5 font-semibold"
               style={{ color: "var(--tron-error)" }}
             >
               {health.jobs_failed} failed job{health.jobs_failed !== 1 ? "s" : ""}
-            </Link>
+            </span>
           </>
         )}
 
@@ -174,11 +173,11 @@ export default async function CommandCenterPage() {
             ))}
           </ul>
           <Link
-            href="/jobs?status=FAILED"
+            href="/research"
             className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium transition-opacity hover:opacity-80"
             style={{ color: "var(--tron-error)" }}
           >
-            View failed jobs →
+            View research projects →
           </Link>
         </div>
       )}
@@ -186,24 +185,26 @@ export default async function CommandCenterPage() {
       {/* ── Stats row ─────────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         {[
-          { label: "Running Jobs",     value: runningJobsCount,      color: "var(--tron-accent)", href: "/jobs?status=RUNNING" },
+          { label: "Running Jobs",     value: runningJobsCount,      color: "var(--tron-accent)", href: null as string | null },
           { label: "Completed",        value: doneProjects.length,   color: "var(--tron-success)", href: "/research" },
           { label: "Failed",           value: failedProjects.length, color: failedProjects.length > 0 ? "var(--tron-error)" : "var(--tron-text-dim)", href: "/research" },
           { label: "Total Spend",      value: `$${totalSpend.toFixed(2)}`, color: "var(--tron-text)", href: "/research" },
           { label: "Avg Verify Rate",  value: avgVerifyRate,         color: "var(--tron-text)",   href: "/research" },
           { label: "Blocked Reads",    value: blockedReads,          color: blockedReads === "—" ? "var(--tron-text-dim)" : "var(--tron-error)", href: "/research" },
-        ].map((s) => (
-          <Link
-            key={s.label}
-            href={s.href}
-            className="stat-card block transition-colors hover:border-tron-accent"
-          >
-            <div className="metric-label">{s.label}</div>
-            <div className="mt-1 font-mono text-2xl font-bold" style={{ color: s.color }}>
-              {s.value}
-            </div>
-          </Link>
-        ))}
+        ].map((s) => {
+          const Wrapper = s.href ? Link : "div";
+          return (
+            <Wrapper
+              key={s.label}
+              {...(s.href ? { href: s.href, className: "stat-card block transition-colors hover:border-tron-accent" } : { className: "stat-card" })}
+            >
+              <div className="metric-label">{s.label}</div>
+              <div className="mt-1 font-mono text-2xl font-bold" style={{ color: s.color }}>
+                {s.value}
+              </div>
+            </Wrapper>
+          );
+        })}
       </div>
 
       {/* Attention Queue */}
@@ -386,8 +387,7 @@ export default async function CommandCenterPage() {
       {/* ── Secondary links ───────────────────────────────────── */}
       <div className="flex flex-wrap gap-2">
         {[
-          { href: "/jobs",   label: "Audit Logs" },
-          { href: "/packs",  label: "Playbooks" },
+          { href: "/packs",  label: "Content Packs" },
           { href: "/memory", label: "Memory & Graph" },
         ].map((l) => (
           <Link
