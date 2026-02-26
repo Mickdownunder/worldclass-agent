@@ -173,6 +173,12 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
             pass
     claims_out = []
     for i, c in enumerate(claims_in):
+        try:
+            from tools.research_progress import step as progress_step
+            # get project_id from somewhere... Wait, build_claim_ledger doesn't take project_id. Let's get it from proj_path.name
+            progress_step(proj_path.name, f"Verifying claim {i+1}/{len(claims_in)}", i+1, len(claims_in))
+        except Exception:
+            pass
         claim_id = f"cl_{i}_{hash(c.get('claim', '')[:100]) % 10000}"
         text = (c.get("claim") or "").strip()
         supporting = c.get("supporting_sources") or []

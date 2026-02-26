@@ -4,6 +4,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { CreateProjectForm } from "@/components/CreateProjectForm";
 import { LiveRefresh } from "@/components/LiveRefresh";
 import { StatusBadge } from "@/components/StatusBadge";
+import { ProjectRowProgress } from "@/components/ProjectRowProgress";
 
 export const dynamic = "force-dynamic";
 
@@ -121,27 +122,12 @@ export default async function ResearchPage() {
                     <p className="truncate font-medium leading-tight" style={{ color: "var(--tron-text)" }}>
                       {p.question || "Untitled"}
                     </p>
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <div
-                        className="h-0.5 w-24 overflow-hidden rounded-full"
-                        style={{ background: "var(--tron-border)" }}
-                      >
-                        <div
-                          className="h-full rounded-full transition-all"
-                          style={{
-                            width: `${progress}%`,
-                            background: p.status === "done"
-                              ? "var(--tron-success)"
-                              : p.status === "failed"
-                              ? "var(--tron-error)"
-                              : "var(--tron-accent)",
-                          }}
-                        />
-                      </div>
-                      <span className="text-[9px] font-mono" style={{ color: "var(--tron-text-dim)" }}>
-                        {progress}%
-                      </span>
-                    </div>
+                    <ProjectRowProgress
+                      projectId={p.id}
+                      isActive={isActive}
+                      status={p.status}
+                      progressPercent={progress}
+                    />
                   </div>
 
                   {/* Project ID (short) */}

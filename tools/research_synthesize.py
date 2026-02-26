@@ -315,6 +315,11 @@ def run_synthesis(project_id: str) -> str:
                 playbook_instructions = pb.get("synthesis_instructions")
             except Exception:
                 pass
+    try:
+        from tools.research_progress import step as progress_step
+        progress_step(project_id, "Generating outline")
+    except Exception:
+        pass
     section_titles = _outline_sections(question, clusters, playbook_instructions, project_id)
 
     now = datetime.now(timezone.utc)
@@ -332,8 +337,18 @@ def run_synthesis(project_id: str) -> str:
         section_findings = [findings[j] for j in cluster if 0 <= j < len(findings)]
         if not section_findings:
             continue
+        try:
+            from tools.research_progress import step as progress_step
+            progress_step(project_id, f"Writing section {i+1}/{len(clusters)}: {title}", i+1, len(clusters))
+        except Exception:
+            pass
         body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources)
         if os.environ.get("RESEARCH_WARP_DEEPEN") == "1" and i == 0 and len(body) > 300:
+            try:
+                from tools.research_progress import step as progress_step
+                progress_step(project_id, "Deepening gaps")
+            except Exception:
+                pass
             gaps = _detect_gaps(body, title, question, project_id)
             if gaps and gaps[0].get("suggested_query"):
                 try:

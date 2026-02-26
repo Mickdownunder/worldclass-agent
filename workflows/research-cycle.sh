@@ -36,6 +36,10 @@ QUESTION=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json'));
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$PROJ_DIR/log.txt" 2>/dev/null; echo "$*" >&2; }
 
+progress_start() { python3 "$TOOLS/research_progress.py" start "$PROJECT_ID" "$1" 2>/dev/null || true; }
+progress_step() { python3 "$TOOLS/research_progress.py" step "$PROJECT_ID" "$1" "${2:-}" "${3:-}" 2>/dev/null || true; }
+progress_done() { python3 "$TOOLS/research_progress.py" done "$PROJECT_ID" 2>/dev/null || true; }
+
 # Pause-on-Rate-Limit: if project was paused, check if enough time passed (30 min cooldown)
 if [ "$PHASE" != "done" ]; then
   PROJ_STATUS=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('status',''), end='')")
@@ -95,6 +99,8 @@ advance_phase() {
 case "$PHASE" in
   explore)
     log "Phase: EXPLORE — search and read initial sources"
+    progress_start "explore"
+    progress_step "Searching: $QUESTION"
     # Dependency preflight: must pass before any reader call (no silent 0 findings)
     # Capture stdout and stderr separately so we can include root cause on parse failure
     PREFLIGHT_ERR="$ART/preflight_stderr.txt"
@@ -287,6 +293,8 @@ RANK_SRC
       url=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('url',''), end='')")
       [ -n "$url" ] || continue
       read_attempts=$((read_attempts+1))
+      domain=$(echo "$url" | awk -F/ '{print $3}' | sed 's/^www\.//')
+      progress_step "Reading source $read_attempts/$MAX_READ: $domain" "$read_attempts" "$MAX_READ"
       python3 "$TOOLS/research_web_reader.py" "$url" > "$ART/read_result.json" 2>> "$PWD/log.txt" || true
       if [ -f "$ART/read_result.json" ]; then
         if python3 -c "
@@ -351,6 +359,7 @@ read_failures = max(0, attempts - successes)
 }, indent=2))
 STATS
     # Deep extraction: 2-5 key facts per long source (for research-firm-grade reports)
+    progress_step "Extracting findings"
     python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
     SOURCES_COUNT=$(python3 -c "
 from pathlib import Path
@@ -391,6 +400,8 @@ READER_FAIL
     ;;
   focus)
     log "Phase: FOCUS — gap analysis and targeted search"
+    progress_start "focus"
+    progress_step "Analyzing gaps"
     if [ -f "$PROJ_DIR/verify/deepening_queries.json" ]; then
       log "Iterative deepening: using targeted queries from verify gaps"
       DEEP_COUNT=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/verify/deepening_queries.json')); print(len(d.get('queries',[])), end='')" 2>/dev/null) || DEEP_COUNT=0
@@ -494,6 +505,8 @@ RANK_FOCUS
       url=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('url',''), end='')")
       [ -n "$url" ] || continue
       focus_read_attempts=$((focus_read_attempts+1))
+      domain=$(echo "$url" | awk -F/ '{print $3}' | sed 's/^www\.//')
+      progress_step "Deep-reading: $domain" "$focus_read_attempts" 10
       python3 "$TOOLS/research_web_reader.py" "$url" > "$ART/read_result.json" 2>> "$PWD/log.txt" || true
       if [ -f "$ART/read_result.json" ]; then
         if python3 -c "
@@ -545,15 +558,20 @@ if text:
 INNER
     done < "$ART/focus_read_order.txt"
     log "Focus reads: $focus_read_attempts attempted, $focus_read_successes succeeded"
+    progress_step "Extracting focused findings"
     python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
     advance_phase "connect"
     ;;
   connect)
+    progress_start "connect"
     source "$OPERATOR_ROOT/workflows/research/phases/connect.sh"
     ;;
   verify)
     log "Phase: VERIFY — source reliability, claim verification, fact-check"
+    progress_start "verify"
+    progress_step "Checking source reliability"
     python3 "$TOOLS/research_verify.py" "$PROJECT_ID" source_reliability > "$ART/source_reliability.json" 2>> "$PWD/log.txt" || true
+    progress_step "Verifying claims"
     python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification > "$ART/claim_verification.json" 2>> "$PWD/log.txt" || true
     python3 "$TOOLS/research_verify.py" "$PROJECT_ID" fact_check > "$ART/fact_check.json" 2>> "$PWD/log.txt" || true
     # Persist verify artifacts to project for synthesize phase (may run in another job)
@@ -562,6 +580,7 @@ INNER
     [ -f "$ART/claim_verification.json" ] && cp "$ART/claim_verification.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     [ -f "$ART/fact_check.json" ] && cp "$ART/fact_check.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     # Claim ledger: deterministic is_verified (V3)
+    progress_step "Building claim ledger"
     python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_ledger > "$ART/claim_ledger.json" 2>> "$PWD/log.txt" || true
     [ -f "$ART/claim_ledger.json" ] && cp "$ART/claim_ledger.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     # Counter-evidence: search for contradicting sources for top 3 verified claims (before gate)
@@ -925,6 +944,8 @@ VERIFY_PY
     ;;
   synthesize)
     log "Phase: SYNTHESIZE — report"
+    progress_start "synthesize"
+    progress_step "Generating outline"
     export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
     # Multi-pass section-by-section synthesis (research-firm-grade report)
     python3 "$TOOLS/research_synthesize.py" "$PROJECT_ID" > "$ART/report.md" 2>> "$PWD/log.txt" || true
@@ -1079,6 +1100,7 @@ if manifest_entries:
 }, indent=2))
 PY
     # Quality Gate: critic pass, optionally revise if score < 0.6
+    progress_step "Running critic"
     python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$PWD/log.txt" || true
     SCORE=0.5
     if [ -f "$ART/critique.json" ]; then
@@ -1175,6 +1197,7 @@ if manifest_path.exists():
 MANIFEST_UPDATE
     # Generate PDF report (non-fatal)
     log "Generating PDF report..."
+    progress_step "Generating PDF"
     python3 "$OPERATOR_ROOT/tools/research_pdf_report.py" "$PROJECT_ID" 2>>"$PWD/log.txt" || log "PDF generation failed (non-fatal)"
     # Store verified findings in Memory DB for cross-domain learning (non-fatal)
     python3 "$OPERATOR_ROOT/tools/research_embed.py" "$PROJECT_ID" 2>>"$PWD/log.txt" || true

@@ -17,6 +17,7 @@ import { ReviewPanel } from "@/components/ReviewPanel";
 import { CancelRunButton } from "@/components/CancelRunButton";
 import { ExecutionTree } from "@/components/ExecutionTree";
 import { LiveRefresh } from "@/components/LiveRefresh";
+import { ActivityFeed } from "@/components/ActivityFeed";
 import { ResearchDetailTabs } from "./ResearchDetailTabs";
 
 export const dynamic = "force-dynamic";
@@ -101,7 +102,7 @@ export default async function ResearchProjectPage({
             <h1 className="text-lg font-semibold leading-snug" style={{ color: "var(--tron-text)" }}>
               {project.question || "Untitled Research"}
             </h1>
-            <LiveRefresh enabled={isActive} intervalMs={5000} showIndicator={true} />
+            <LiveRefresh enabled={isActive} intervalMs={5000} showIndicator={true} projectId={project.id} />
             <div className="w-full mt-1 flex items-center gap-2">
               <span className="font-mono text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
                 {id}
@@ -238,6 +239,9 @@ export default async function ResearchProjectPage({
 
       {/* ── Gate Metrics (inline, lightweight) ───────────────── */}
       <GateMetricsInline project={project} calibratedThresholds={calibratedThresholds ?? undefined} />
+
+      {/* ── Activity Feed ─────────────────────────────────────── */}
+      <ActivityFeed projectId={id} />
 
       {/* ── Tabs (Report, Findings, Sources, History, Audit) ─── */}
       <div

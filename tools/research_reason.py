@@ -48,6 +48,11 @@ def _llm_json(system: str, user: str, project_id: str = "") -> dict | list:
 
 
 def gap_analysis(proj_path: Path, project: dict, project_id: str = "") -> dict:
+    try:
+        from tools.research_progress import step as progress_step
+        progress_step(project_id or proj_path.name, "Analyzing gaps")
+    except Exception:
+        pass
     findings = _load_findings(proj_path)
     question = project.get("question", "")
     items = json.dumps([{"title": f.get("title"), "excerpt": (f.get("excerpt") or "")[:500]} for f in findings], indent=2)[:8000]
