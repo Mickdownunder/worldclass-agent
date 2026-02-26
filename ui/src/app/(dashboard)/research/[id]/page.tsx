@@ -5,7 +5,9 @@ import {
   getLatestReportMarkdown,
   getLatestReportPdf,
   getAudit,
+  getCalibratedThresholds,
   type ResearchProjectDetail,
+  type CalibratedThresholds,
 } from "@/lib/operator/research";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StartCycleButton } from "@/components/StartCycleButton";
@@ -54,10 +56,11 @@ export default async function ResearchProjectPage({
   const project = await getResearchProject(id);
   if (!project) notFound();
 
-  const [markdown, pdfInfo, audit] = await Promise.all([
+  const [markdown, pdfInfo, audit, calibratedThresholds] = await Promise.all([
     getLatestReportMarkdown(id),
     getLatestReportPdf(id),
     project.status === "pending_review" ? getAudit(id) : Promise.resolve(null),
+    getCalibratedThresholds(),
   ]);
   const TERMINAL_STATUSES = new Set(["done", "failed", "cancelled"]);
   const isTerminal = TERMINAL_STATUSES.has(project.status) || project.status.startsWith("failed");
@@ -190,7 +193,7 @@ export default async function ResearchProjectPage({
 
         {/* Started at footer */}
         <div
-          className="px-5 py-2 flex items-center gap-4"
+          className="px-5 py-2 flex items-center gap-4 flex-wrap"
           style={{ borderTop: "1px solid var(--tron-border)", background: "var(--tron-bg)" }}
         >
           <span className="text-[11px] font-mono" style={{ color: "var(--tron-text-dim)" }}>
@@ -199,6 +202,11 @@ export default async function ResearchProjectPage({
           {project.feedback_count > 0 && (
             <span className="text-[11px] font-mono" style={{ color: "var(--tron-text-dim)" }}>
               Feedback: <span style={{ color: "var(--tron-text-muted)" }}>{project.feedback_count}</span>
+            </span>
+          )}
+          {project.prior_knowledge && (project.prior_knowledge.principles_count > 0 || project.prior_knowledge.findings_count > 0) && (
+            <span className="text-[11px] font-mono" style={{ color: "var(--tron-text-dim)" }}>
+              Seeded with <span style={{ color: "var(--tron-accent)" }}>{project.prior_knowledge.principles_count}</span> principles and <span style={{ color: "var(--tron-accent)" }}>{project.prior_knowledge.findings_count}</span> findings from past projects
             </span>
           )}
         </div>
@@ -229,7 +237,7 @@ export default async function ResearchProjectPage({
       </div>
 
       {/* ── Gate Metrics (inline, lightweight) ───────────────── */}
-      <GateMetricsInline project={project} />
+      <GateMetricsInline project={project} calibratedThresholds={calibratedThresholds ?? undefined} />
 
       {/* ── Tabs (Report, Findings, Sources, History, Audit) ─── */}
       <div
@@ -246,7 +254,13 @@ export default async function ResearchProjectPage({
 }
 
 /* ── Inline Gate Metrics ─────────────────────────────────────── */
-function GateMetricsInline({ project }: { project: ResearchProjectDetail }) {
+function GateMetricsInline({
+  project,
+  calibratedThresholds,
+}: {
+  project: ResearchProjectDetail;
+  calibratedThresholds?: CalibratedThresholds | null;
+}) {
   const gate = project.quality_gate?.evidence_gate;
   const metrics = gate?.metrics;
 
@@ -265,13 +279,16 @@ function GateMetricsInline({ project }: { project: ResearchProjectDetail }) {
   }
 
   const gateStatus = gate.status || (gate as { decision?: string }).decision || "pending";
+  const minSources = calibratedThresholds?.unique_source_count_min ?? 5;
+  const minFindings = calibratedThresholds?.findings_count_min ?? 8;
+  const minVerified = calibratedThresholds?.verified_claim_count_min ?? 2;
   const items = [
-    { label: "Sources Found", value: metrics.unique_source_count, threshold: 5 },
-    { label: "Findings", value: metrics.findings_count, threshold: 8 },
-    { label: "Verified Claims", value: metrics.verified_claim_count, threshold: 2 },
-    { label: "Support Rate", value: `${Math.round(metrics.claim_support_rate * 100)}%`, threshold: null },
-    { label: "Source Reliability", value: `${Math.round(metrics.high_reliability_source_ratio * 100)}%`, threshold: null },
-    { label: "Read Success", value: `${metrics.read_successes}/${metrics.read_attempts}`, threshold: null },
+    { label: "Sources Found", value: metrics.unique_source_count, minRequired: minSources },
+    { label: "Findings", value: metrics.findings_count, minRequired: minFindings },
+    { label: "Verified Claims", value: metrics.verified_claim_count, minRequired: minVerified },
+    { label: "Support Rate", value: `${Math.round(metrics.claim_support_rate * 100)}%`, minRequired: null as number | null },
+    { label: "Source Reliability", value: `${Math.round(metrics.high_reliability_source_ratio * 100)}%`, minRequired: null as number | null },
+    { label: "Read Success", value: `${metrics.read_successes}/${metrics.read_attempts}`, minRequired: null as number | null },
   ];
 
   return (
@@ -337,6 +354,9 @@ function GateMetricsInline({ project }: { project: ResearchProjectDetail }) {
             <div className="metric-label mb-1">{m.label}</div>
             <div className="font-mono text-sm font-bold" style={{ color: "var(--tron-text)" }}>
               {m.value}
+              {m.minRequired != null && (
+                <span className="ml-1 font-normal text-tron-dim">/ min {m.minRequired}</span>
+              )}
             </div>
           </div>
         ))}

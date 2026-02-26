@@ -3,6 +3,42 @@ import path from "path";
 import { execSync } from "child_process";
 import { OPERATOR_ROOT } from "./config";
 
+export interface CalibratedThresholds {
+  findings_count_min?: number;
+  unique_source_count_min?: number;
+  verified_claim_count_min?: number;
+  claim_support_rate_min?: number;
+  high_reliability_source_ratio_min?: number;
+}
+
+/** Fetch current calibrated evidence-gate thresholds (from project_outcomes). Returns null if < 10 successful projects. */
+export async function getCalibratedThresholds(): Promise<CalibratedThresholds | null> {
+  try {
+    const script = [
+      "import json, os, sys",
+      "root = os.environ.get('OPERATOR_ROOT', '/root/operator')",
+      "sys.path.insert(0, root)",
+      "try:",
+      "  from tools.research_calibrator import get_calibrated_thresholds",
+      "  t = get_calibrated_thresholds()",
+      "  print(json.dumps(t if t is not None else {}))",
+      "except Exception:",
+      "  print('{}')",
+    ].join("\n");
+    const out = execSync("python3 -c " + JSON.stringify(script), {
+      cwd: OPERATOR_ROOT,
+      encoding: "utf8",
+      timeout: 10000,
+      env: { ...process.env, OPERATOR_ROOT },
+    }).trim();
+    const t = JSON.parse(out || "{}") as CalibratedThresholds;
+    if (Object.keys(t).length === 0) return null;
+    return t;
+  } catch {
+    return null;
+  }
+}
+
 const RESEARCH_ROOT = path.join(OPERATOR_ROOT, "research");
 
 const PROJECT_ID_RE = /^proj-[a-zA-Z0-9_-]+$/;
@@ -54,6 +90,11 @@ export interface PhaseTiming {
   duration_s: number;
 }
 
+export interface PriorKnowledgeInfo {
+  principles_count: number;
+  findings_count: number;
+}
+
 export interface ResearchProjectDetail extends ResearchProjectSummary {
   completed_at?: string;
   last_report_path?: string;
@@ -62,6 +103,11 @@ export interface ResearchProjectDetail extends ResearchProjectSummary {
     evidence_gate?: EvidenceGate;
     critic_score?: number;
     quality_gate_status?: string;
+    calibrated_thresholds?: {
+      findings_count_min?: number;
+      unique_source_count_min?: number;
+      verified_claim_count_min?: number;
+    };
   };
   phase_timings?: Record<string, PhaseTiming>;
   config?: {
@@ -70,6 +116,7 @@ export interface ResearchProjectDetail extends ResearchProjectSummary {
   };
   phase_history?: string[];
   spend_breakdown?: Record<string, number>;
+  prior_knowledge?: PriorKnowledgeInfo;
 }
 
 export async function listResearchProjects(): Promise<ResearchProjectSummary[]> {
@@ -153,6 +200,18 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
     } catch {
       // ignore
     }
+    let priorKnowledge: PriorKnowledgeInfo | undefined;
+    try {
+      const pkPath = path.join(projPath, "prior_knowledge.json");
+      const pkRaw = await readFile(pkPath, "utf8");
+      const pk = JSON.parse(pkRaw) as { principles?: unknown[]; findings?: unknown[] };
+      priorKnowledge = {
+        principles_count: Array.isArray(pk.principles) ? pk.principles.length : 0,
+        findings_count: Array.isArray(pk.findings) ? pk.findings.length : 0,
+      };
+    } catch {
+      // ignore
+    }
     return {
       id: typeof data.id === "string" ? data.id : projectId,
       question: typeof data.question === "string" ? data.question : "",
@@ -185,6 +244,7 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
         typeof data.spend_breakdown === "object" && data.spend_breakdown !== null
           ? (data.spend_breakdown as Record<string, number>)
           : undefined,
+      prior_knowledge: priorKnowledge,
     };
   } catch {
     return null;
