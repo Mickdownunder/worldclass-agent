@@ -19,7 +19,7 @@ interface ProgressData {
   started_at?: string;
 }
 
-export function ActivityFeed({ projectId }: { projectId: string }) {
+export function ActivityFeed({ projectId, currentPhase, isProjectActive }: { projectId: string; currentPhase?: string; isProjectActive?: boolean }) {
   const [progress, setProgress] = useState<ProgressData | null>(null);
   const [isRunning, setIsRunning] = useState<boolean>(false);
 
@@ -28,7 +28,7 @@ export function ActivityFeed({ projectId }: { projectId: string }) {
     
     const poll = async () => {
       try {
-        const res = await fetch(`/api/research/${projectId}/progress`);
+        const res = await fetch(`/api/research/projects/${projectId}/progress`);
         if (res.ok) {
           const data = await res.json();
           if (mounted) {
@@ -49,13 +49,14 @@ export function ActivityFeed({ projectId }: { projectId: string }) {
     };
   }, [projectId]);
 
-  if (!progress || (!isRunning && (!progress.steps_completed || progress.steps_completed.length === 0))) {
+  if (!isProjectActive) {
     return null;
   }
 
-  // Display current step at top, then recent completed steps below
-  const stepsCompleted = progress.steps_completed || [];
-  // reverse to show newest first
+  const hasProgressData = progress && (isRunning || (progress.steps_completed && progress.steps_completed.length > 0));
+
+  const displayPhase = (hasProgressData ? progress?.phase : currentPhase) || "—";
+  const stepsCompleted = progress?.steps_completed || [];
   const reversedSteps = [...stepsCompleted].reverse().slice(0, 5);
 
   return (
@@ -65,15 +66,15 @@ export function ActivityFeed({ projectId }: { projectId: string }) {
     >
       <div className="px-5 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid var(--tron-border)" }}>
         <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--tron-text-muted)" }}>
-          Live Activity Feed
+          Live Activity
         </span>
-        <span className="font-mono text-[10px]" style={{ color: "var(--tron-text-dim)" }}>
-          Phase: {progress.phase || "—"}
+        <span className="font-mono text-[10px] uppercase" style={{ color: "var(--tron-text-dim)" }}>
+          Phase: {displayPhase}
         </span>
       </div>
       
       <div className="p-4 space-y-3">
-        {isRunning && progress.step && (
+        {isRunning && progress?.step && (
           <div className="flex items-center gap-3">
             <span
               className="h-2 w-2 shrink-0 rounded-full animate-pulse"
@@ -89,15 +90,22 @@ export function ActivityFeed({ projectId }: { projectId: string }) {
             ) : null}
           </div>
         )}
-        
-        {!isRunning && progress.step === "Done" && (
+
+        {!isRunning && hasProgressData && progress?.step === "Done" && (
+          <div className="flex items-center gap-3">
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: "var(--tron-success)" }} />
+            <span className="text-sm font-mono" style={{ color: "var(--tron-success)" }}>Phase completed</span>
+          </div>
+        )}
+
+        {!isRunning && !hasProgressData && isProjectActive && (
           <div className="flex items-center gap-3">
             <span
-              className="h-2 w-2 shrink-0 rounded-full"
-              style={{ background: "var(--tron-success)" }}
+              className="h-2 w-2 shrink-0 rounded-full animate-pulse"
+              style={{ background: "var(--tron-accent)" }}
             />
-            <span className="text-sm font-mono" style={{ color: "var(--tron-success)" }}>
-              Phase completed
+            <span className="text-sm font-mono" style={{ color: "var(--tron-text-muted)" }}>
+              Processing {currentPhase ? currentPhase.toUpperCase() : "..."} phase...
             </span>
           </div>
         )}

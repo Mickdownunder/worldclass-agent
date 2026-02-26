@@ -33,7 +33,7 @@ while [ $run -lt $MAX_RUNS ]; do
   run=$((run + 1))
   echo "[Run $run] Phase: $phase — starting cycle job..."
   job_dir=$($OP job new --workflow research-cycle --request "$PROJECT_ID")
-  $OP run "$job_dir" --timeout 300
+  $OP run "$job_dir" --timeout 900
   echo "[Run $run] Done."
 done
 

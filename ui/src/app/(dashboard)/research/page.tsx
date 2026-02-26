@@ -109,7 +109,7 @@ export default async function ResearchPage() {
           <div className="divide-y" style={{ borderColor: "var(--tron-border)" }}>
             {projects.map((p) => {
               const progress = phaseProgress(p.phase);
-              const isActive = p.status !== "done" && p.status !== "failed";
+              const isActive = !["done", "failed", "cancelled"].includes(p.status) && !p.status.startsWith("failed_");
               return (
                 <Link
                   key={p.id}

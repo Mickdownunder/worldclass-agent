@@ -122,47 +122,38 @@ export interface ResearchProjectDetail extends ResearchProjectSummary {
 export async function listResearchProjects(): Promise<ResearchProjectSummary[]> {
   try {
     const entries = await readdir(RESEARCH_ROOT, { withFileTypes: true });
-    const projects: ResearchProjectSummary[] = [];
-    for (const e of entries) {
-      if (!e.isDirectory() || !e.name.startsWith("proj-")) continue;
-      const projPath = path.join(RESEARCH_ROOT, e.name);
-      try {
-        const projectJson = path.join(projPath, "project.json");
-        const raw = await readFile(projectJson, "utf8");
-        const data = JSON.parse(raw) as Record<string, unknown>;
-        const findingsDir = path.join(projPath, "findings");
-        let findingsCount = 0;
+    const projectDirs = entries.filter((e) => e.isDirectory() && e.name.startsWith("proj-"));
+
+    const projects = await Promise.all(
+      projectDirs.map(async (e): Promise<ResearchProjectSummary | null> => {
+        const projPath = path.join(RESEARCH_ROOT, e.name);
         try {
-          const files = await readdir(findingsDir);
-          findingsCount = files.filter((f) => f.endsWith(".json")).length;
+          const [raw, findingsFiles, reportFiles] = await Promise.all([
+            readFile(path.join(projPath, "project.json"), "utf8"),
+            readdir(path.join(projPath, "findings")).catch(() => [] as string[]),
+            readdir(path.join(projPath, "reports")).catch(() => [] as string[]),
+          ]);
+          const data = JSON.parse(raw) as Record<string, unknown>;
+          return {
+            id: typeof data.id === "string" ? data.id : e.name,
+            question: typeof data.question === "string" ? data.question : "",
+            status: typeof data.status === "string" ? data.status : "unknown",
+            phase: typeof data.phase === "string" ? data.phase : "explore",
+            created_at: typeof data.created_at === "string" ? data.created_at : "",
+            findings_count: findingsFiles.filter((f) => f.endsWith(".json")).length,
+            reports_count: reportFiles.filter((f) => f.endsWith(".md")).length,
+            current_spend: typeof data.current_spend === "number" ? data.current_spend : 0,
+            domain: typeof data.domain === "string" ? data.domain : "unknown",
+          };
         } catch {
-          // ignore
+          return null;
         }
-        const reportsDir = path.join(projPath, "reports");
-        let reportsCount = 0;
-        try {
-          const files = await readdir(reportsDir);
-          reportsCount = files.filter((f) => f.endsWith(".md")).length;
-        } catch {
-          // ignore
-        }
-        projects.push({
-          id: typeof data.id === "string" ? data.id : e.name,
-          question: typeof data.question === "string" ? data.question : "",
-          status: typeof data.status === "string" ? data.status : "unknown",
-          phase: typeof data.phase === "string" ? data.phase : "explore",
-          created_at: typeof data.created_at === "string" ? data.created_at : "",
-          findings_count: findingsCount,
-          reports_count: reportsCount,
-          current_spend: typeof data.current_spend === "number" ? data.current_spend : 0,
-          domain: typeof data.domain === "string" ? data.domain : "unknown",
-        });
-      } catch {
-        // skip broken projects
-      }
-    }
-    projects.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
-    return projects;
+      })
+    );
+
+    return projects
+      .filter((p): p is ResearchProjectSummary => p !== null)
+      .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;

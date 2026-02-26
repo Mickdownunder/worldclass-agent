@@ -16,7 +16,7 @@ import sys
 # Use venv if present so op can call Brain (Brain needs tenacity for LLM)
 _operator_root = os.environ.get("OPERATOR_ROOT") or os.path.expanduser("~/operator")
 _venv_python = os.path.join(_operator_root, ".venv", "bin", "python3")
-if os.path.isfile(_venv_python):
+if os.path.isfile(_venv_python) and os.path.realpath(sys.executable) != os.path.realpath(_venv_python):
     os.execv(_venv_python, [_venv_python] + sys.argv)
 
 import json, time, uuid, subprocess, fcntl, signal

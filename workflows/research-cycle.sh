@@ -98,386 +98,209 @@ advance_phase() {
 
 case "$PHASE" in
   explore)
-    log "Phase: EXPLORE — search and read initial sources"
+    log "Phase: EXPLORE — 3-round adaptive planning/search/read/coverage"
     progress_start "explore"
-    progress_step "Searching: $QUESTION"
-    # Dependency preflight: must pass before any reader call (no silent 0 findings)
-    # Capture stdout and stderr separately so we can include root cause on parse failure
-    PREFLIGHT_ERR="$ART/preflight_stderr.txt"
-    PREFLIGHT=$(python3 "$TOOLS/research_preflight.py" 2>"$PREFLIGHT_ERR" || true)
-    echo "$PREFLIGHT" > "$ART/preflight_stdout.txt"
-    PREFLIGHT_OK=$(echo "$PREFLIGHT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('ok') else 0, end='')" 2>/dev/null) || echo "0"
-    if [ "$PREFLIGHT_OK" != "1" ]; then
-      log "Preflight failed — not running explore"
-      python3 - "$PROJ_DIR" "$ART" <<'PREFLIGHT_FAIL'
-import json, sys
-from pathlib import Path
-from datetime import datetime, timezone
-proj_dir, art = Path(sys.argv[1]), Path(sys.argv[2])
-stdout_path = art / "preflight_stdout.txt"
-stderr_path = art / "preflight_stderr.txt"
-preflight_str = stdout_path.read_text().strip() if stdout_path.exists() else ""
-stderr_content = stderr_path.read_text().strip()[:500] if stderr_path.exists() else ""
-parse_msg = None
-try:
-  preflight = json.loads(preflight_str) if preflight_str else {}
-except Exception as parse_err:
-  preflight = {}
-  stderr_suffix = f" stderr: {stderr_content}" if stderr_content else ""
-  parse_msg = f"Preflight parse failed: {str(parse_err)[:200]}; raw (first 200 chars): {repr(preflight_str[:200])}{stderr_suffix}"
-if not preflight or preflight.get("fail_code") is None:
-  preflight = {"fail_code": "failed_dependency_preflight_error", "message": parse_msg or "Preflight parse failed"}
-reasons = [preflight.get("message", "Dependency preflight failed")]
-if stderr_content and stderr_content not in str(reasons):
-  reasons.append("preflight_stderr: " + stderr_content[:300])
-d = json.loads((proj_dir / "project.json").read_text())
-d["status"] = preflight.get("fail_code") or "failed_dependency_preflight_error"
-d.setdefault("quality_gate", {})["evidence_gate"] = {
-  "status": "failed",
-  "fail_code": preflight.get("fail_code"),
-  "reasons": reasons,
-  "metrics": {},
-}
-d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M:%SZ")
-d["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-(proj_dir / "project.json").write_text(json.dumps(d, indent=2))
-PREFLIGHT_FAIL
-      echo "Preflight failed — project status set."
-      exit 1
-    fi
-    # Rate-limit: throttle new findings per project per day (watchdog)
-    OVER_LIMIT=0
-    if [ -f "$TOOLS/research_watchdog.py" ]; then
-      OVER_LIMIT=$(python3 "$TOOLS/research_watchdog.py" rate-limit "$PROJECT_ID" 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('over_limit') else 0, end='')" 2>/dev/null) || true
-    fi
-    USE_ACADEMIC=$(python3 -c "
-import json
-from pathlib import Path
-d = json.loads(Path('$PROJ_DIR/project.json').read_text())
-domain = d.get('domain', 'general')
-q = d.get('question', '').lower()
-academic_domains = {'academic', 'science', 'medical', 'engineering', 'research'}
-academic_keywords = {'study', 'mechanism', 'theory', 'algorithm', 'clinical', 'experiment', 'methodology', 'hypothesis'}
-skip_keywords = {'sales', 'revenue', 'company', 'startup', 'acquisition', 'stock', 'price', 'market', 'launch', 'product', 'review', 'commercial', 'performance', 'shutdown', 'deal'}
-if domain in academic_domains or any(k in q for k in academic_keywords):
-    print('1', end='')
-elif any(k in q for k in skip_keywords):
-    print('0', end='')
-else:
-    print('1', end='')
-" 2>/dev/null) || USE_ACADEMIC="1"
-    if [ "$USE_ACADEMIC" = "1" ]; then
-      WEB_MAX=15
-    else
-      WEB_MAX=20
-      log "Skipping academic search (non-academic topic detected)"
-    fi
-    python3 "$TOOLS/research_web_search.py" "$QUESTION" --max "$WEB_MAX" > "$ART/web_search.json" 2>> "$PWD/log.txt" || true
-    if [ "$USE_ACADEMIC" = "1" ]; then
-      python3 "$TOOLS/research_academic.py" semantic_scholar "$QUESTION" --max 5 > "$ART/semantic_scholar.json" 2>> "$PWD/log.txt" || true
-      python3 "$TOOLS/research_academic.py" arxiv "$QUESTION" --max 5 > "$ART/arxiv.json" 2>> "$PWD/log.txt" || true
-    fi
-    # Query diversification: 2 alternative search angles for source diversity
-    python3 - "$PROJ_DIR" "$ART" "$QUESTION" "$PROJECT_ID" "$OPERATOR_ROOT" <<'ALTQUERY' 2>> "$PWD/log.txt" || true
-import json, sys, os
-from pathlib import Path
-proj_dir, art, question, project_id, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
-os.chdir(op_root)
-sys.path.insert(0, str(op_root))
-from tools.research_common import llm_call
-existing = "main question and keyword search"
-system = "Generate exactly 2 alternative search queries that approach the research question from different angles (e.g. different terminology, opposing viewpoint, related but distinct aspect). Return valid JSON array of 2 strings only: [\"query1\", \"query2\"]."
-user = f"QUESTION: {question}\nEXISTING COVERAGE: {existing}\n\nReturn 2 alternative search queries as JSON array."
-try:
-    result = llm_call(os.environ.get("RESEARCH_EXTRACT_MODEL", "gpt-4.1-mini"), "", user, project_id=project_id)
-    text = (result.text or "").strip()
-    if text.startswith("```"): text = text.split("```")[1].replace("json", "").strip()
-    out = json.loads(text)
-    if isinstance(out, list) and len(out) >= 2:
-        (art / "explore_alt_queries.json").write_text(json.dumps(out[:2]))
-except Exception:
-    pass
-ALTQUERY
-    if [ -f "$ART/explore_alt_queries.json" ]; then
-      for aidx in 0 1; do
-        alt_q=$(python3 -c "
-import json
-try:
-  d = json.load(open('$ART/explore_alt_queries.json'))
-  q = d[$aidx] if isinstance(d, list) and len(d) > $aidx else ''
-  print(q.strip() if isinstance(q, str) else '', end='')
-except Exception:
-  pass
-" 2>/dev/null)
-        [ -z "$alt_q" ] && continue
-        python3 "$TOOLS/research_web_search.py" "$alt_q" --max 5 > "$ART/explore_alt_$aidx.json" 2>> "$PWD/log.txt" || true
-      done
-    fi
-    python3 - "$PROJ_DIR" "$ART" "$QUESTION" <<'PY'
+
+    progress_step "Creating research plan"
+    python3 "$TOOLS/research_planner.py" "$QUESTION" "$PROJECT_ID" > "$ART/research_plan.json"
+    cp "$ART/research_plan.json" "$PROJ_DIR/research_plan.json"
+
+    QUERY_COUNT=$(python3 -c "import json; d=json.load(open('$ART/research_plan.json')); print(len(d.get('queries',[])), end='')" 2>/dev/null || echo "0")
+    COMPLEXITY=$(python3 -c "import json; d=json.load(open('$ART/research_plan.json')); print(d.get('complexity','moderate'), end='')" 2>/dev/null || echo "moderate")
+    READ_LIMIT=$(python3 -c "c='$COMPLEXITY'; print(40 if c=='complex' else 25 if c=='moderate' else 15, end='')")
+
+    progress_step "Searching $QUERY_COUNT targeted queries"
+    python3 "$TOOLS/research_web_search.py" --queries-file "$ART/research_plan.json" --max-per-query 5 > "$ART/web_search_round1.json" 2>> "$PWD/log.txt" || true
+
+    python3 - "$PROJ_DIR" "$ART/research_plan.json" "$ART/web_search_round1.json" <<'FILTER_AND_SAVE'
 import json, sys, hashlib, re
 from pathlib import Path
-proj_dir, art, question = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
-STOP = {"what","when","where","which","about","their","these","those","from","with","that","this","have","been","were","will","into","only","also","more","than","each","using","focus","sources","investigate","research","every","clearly","label","prioritize"}
-core_words = set()
-for raw_w in question.lower().split():
-  for part in re.split(r'[/,]', raw_w):
-    clean = re.sub(r'[^a-z0-9]', '', part)
-    if len(clean) >= 4 and clean not in STOP:
-      core_words.add(clean)
+proj_dir = Path(sys.argv[1]); plan_path = Path(sys.argv[2]); search_path = Path(sys.argv[3])
+plan = json.loads(plan_path.read_text()) if plan_path.exists() else {}
+results = json.loads(search_path.read_text()) if search_path.exists() else []
+q_terms = set()
+for q in plan.get("queries", []):
+    qq = str(q.get("query","")).lower()
+    for t in re.findall(r"[a-z0-9\-\+]{3,}", qq):
+        q_terms.add(t)
+for e in plan.get("entities", []):
+    for t in re.findall(r"[a-z0-9\-\+]{3,}", str(e).lower()):
+        q_terms.add(t)
+topic_ids = {str(t.get("id","")) for t in plan.get("topics", [])}
 saved = 0
-skipped = 0
-for name in ["web_search.json", "semantic_scholar.json", "arxiv.json", "explore_alt_0.json", "explore_alt_1.json"]:
-  f = art / name
-  if not f.exists(): continue
-  try: data = json.loads(f.read_text())
-  except Exception: continue
-  for item in (data if isinstance(data, list) else []):
+for item in (results if isinstance(results, list) else []):
     url = (item.get("url") or "").strip()
-    if not url: continue
-    title_desc = f"{item.get('title','')} {item.get('description','')}".lower()
-    overlap = sum(1 for w in core_words if w in title_desc)
-    if overlap < 1:
-      skipped += 1
-      continue
+    if not url:
+        continue
+    title_desc = f"{item.get('title','')} {item.get('description','')} {item.get('abstract','')}".lower()
+    has_topic = str(item.get("topic_id","")) in topic_ids if topic_ids else False
+    overlap = sum(1 for w in q_terms if w and w in title_desc)
+    if not has_topic and overlap < 1:
+        continue
     fid = hashlib.sha256(url.encode()).hexdigest()[:12]
-    (proj_dir / "sources" / f"{fid}.json").write_text(json.dumps({**item, "confidence": 0.5, "source_quality": "unknown"}))
+    out = dict(item)
+    out["confidence"] = float(out.get("confidence", 0.5))
+    out["source_quality"] = out.get("source_quality", "unknown")
+    (proj_dir / "sources" / f"{fid}.json").write_text(json.dumps(out))
     saved += 1
-if skipped > 0:
-  import sys as _s
-  print(f"Post-search filter: {saved} saved, {skipped} irrelevant skipped", file=_s.stderr)
-PY
-    # Read sources: dynamic limit from project config; cap to 0 if over rate-limit
-    MAX_READ=$(python3 -c "
-import json
-from pathlib import Path
-p = Path('$PROJ_DIR/project.json')
-d = json.loads(p.read_text()) if p.exists() else {}
-max_sources = d.get('config', {}).get('max_sources', 15)
-base = min(max(10, max_sources), 50)
-over = $OVER_LIMIT
-print(0 if over else base, end='')
-")
-    if [ "$MAX_READ" -eq 0 ] && [ "$OVER_LIMIT" -eq 1 ]; then
-      log "Rate limit reached — skipping new reads this cycle"
-    fi
-    # Rank sources by domain reputation + title relevance to read best first
-    python3 - "$PROJ_DIR" "$QUESTION" "$ART" <<'RANK_SRC'
+print(saved)
+FILTER_AND_SAVE
+
+    python3 - "$PROJ_DIR" "$ART/research_plan.json" "$ART" <<'SMART_RANK'
 import json, sys, re
 from pathlib import Path
-proj_dir, question, art = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
-q_words = set(re.sub(r'[^a-z0-9 ]', '', question.lower()).split())
-q_words = {w for w in q_words if len(w) >= 4}
-DOMAIN_RANK = {"nytimes.com":10,"reuters.com":10,"apnews.com":10,"theverge.com":9,"arstechnica.com":9,"techcrunch.com":9,"bbc.com":9,"bbc.co.uk":9,"wsj.com":9,"ft.com":9,"bloomberg.com":9,"fortune.com":8,"axios.com":8,"wired.com":8,"theguardian.com":8,"cnbc.com":8,"washingtonpost.com":8}
+proj_dir = Path(sys.argv[1]); plan = json.loads(Path(sys.argv[2]).read_text()); art = Path(sys.argv[3])
+topics = {str(t.get("id","")): t for t in plan.get("topics", [])}
+entities = [str(e).lower() for e in plan.get("entities", [])]
+source_type_by_topic = {tid: set((t.get("source_types") or [])) for tid, t in topics.items()}
+DOMAIN_RANK = {"arxiv.org":10,"semanticscholar.org":10,"nature.com":10,"science.org":10,"openai.com":9,"anthropic.com":9,"google.com":8,"reuters.com":8,"nytimes.com":8}
+per_domain = {}
 ranked = []
 for f in (proj_dir / "sources").glob("*.json"):
     if f.name.endswith("_content.json"): continue
     try:
         d = json.loads(f.read_text())
-        url = (d.get("url") or "").strip()
-        if not url: continue
-        domain = url.split("/")[2].replace("www.","") if len(url.split("/")) > 2 else ""
-        dscore = DOMAIN_RANK.get(domain, 5)
-        td = f"{d.get('title','')} {d.get('description','')}".lower()
-        relevance = sum(1 for w in q_words if w in td)
-        ranked.append((-(dscore * 10 + relevance), str(f)))
     except Exception:
-        pass
+        continue
+    url = (d.get("url") or "").strip()
+    if not url: continue
+    domain = url.split("/")[2].replace("www.","") if "://" in url else ""
+    per_domain.setdefault(domain, 0)
+    if per_domain[domain] >= 3:
+        continue
+    tid = str(d.get("topic_id",""))
+    topic = topics.get(tid, {})
+    priority = int(topic.get("priority", 3))
+    prio_boost = {1: 30, 2: 15, 3: 5}.get(priority, 5)
+    stypes = source_type_by_topic.get(tid, set())
+    type_boost = 0
+    if "paper" in stypes and ("arxiv" in domain or "semanticscholar" in domain):
+        type_boost += 15
+    text = f"{d.get('title','')} {d.get('description','')} {d.get('abstract','')}".lower()
+    entity_boost = sum(3 for e in entities if e and e in text)
+    domain_boost = DOMAIN_RANK.get(domain, 4)
+    score = prio_boost + type_boost + entity_boost + domain_boost
+    ranked.append((-score, domain, str(f)))
+    per_domain[domain] += 1
 ranked.sort()
-(art / "read_order.txt").write_text("\n".join(path for _, path in ranked))
-RANK_SRC
+(art / "read_order_round1.txt").write_text("\n".join(path for _, _, path in ranked))
+SMART_RANK
+
     read_attempts=0
     read_successes=0
     while IFS= read -r f; do
       [ -f "$f" ] || continue
-      [ $read_attempts -ge "$MAX_READ" ] && break
+      [ $read_attempts -ge "$READ_LIMIT" ] && break
       url=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('url',''), end='')")
       [ -n "$url" ] || continue
       read_attempts=$((read_attempts+1))
       domain=$(echo "$url" | awk -F/ '{print $3}' | sed 's/^www\.//')
-      progress_step "Reading source $read_attempts/$MAX_READ: $domain" "$read_attempts" "$MAX_READ"
+      progress_step "Reading source $read_attempts/$READ_LIMIT: $domain" "$read_attempts" "$READ_LIMIT"
       python3 "$TOOLS/research_web_reader.py" "$url" > "$ART/read_result.json" 2>> "$PWD/log.txt" || true
       if [ -f "$ART/read_result.json" ]; then
-        if python3 -c "
-import json
-try:
-  d = json.load(open('$ART/read_result.json'))
-  text = (d.get('text') or '').strip()
-  err = (d.get('error') or '').strip()
-  exit(0 if text and not err else 1)
-except Exception:
-  exit(1)
-" 2>/dev/null; then
+        if python3 -c "import json; d=json.load(open('$ART/read_result.json')); t=(d.get('text') or d.get('abstract') or '').strip(); e=(d.get('error') or '').strip(); exit(0 if t and not e else 1)" 2>/dev/null; then
           read_successes=$((read_successes+1))
         fi
       fi
-      python3 - "$PROJ_DIR" "$ART" "$url" <<'INNER'
+      python3 - "$PROJ_DIR" "$ART" "$url" <<'SAVE_READ'
 import json, sys, hashlib
 from pathlib import Path
 proj_dir, art, url = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
-if not (art / "read_result.json").exists():
+p = art / "read_result.json"
+if not p.exists():
   sys.exit(0)
-data = json.loads((art / "read_result.json").read_text())
-key = hashlib.sha256(url.encode()).hexdigest()[:12]
-(proj_dir / "sources" / f"{key}_content.json").write_text(json.dumps(data))
+data = json.loads(p.read_text())
+sid = hashlib.sha256(url.encode()).hexdigest()[:12]
+(proj_dir / "sources" / f"{sid}_content.json").write_text(json.dumps(data))
 text = (data.get("text") or data.get("abstract") or "")[:8000]
 if text:
-  import re as _re
-  question = ""
-  try:
-    question = json.loads((proj_dir / "project.json").read_text()).get("question", "")
-  except Exception:
-    pass
-  if question:
-    q_lower = question.lower()
-    t_lower = text[:4000].lower()
-    STOP = {"what","when","where","which","about","their","these","those","from","with","that","this","have","been","were","will","into","only","also","more","than","each","using","focus","sources","investigate","research","every","clearly","label","prioritize","hard","extract","numeric","english","publication","date","cross","check","should","does","could","would"}
-    q_words = set()
-    for raw_w in q_lower.split():
-      for part in _re.split(r'[/,]', raw_w):
-        clean = _re.sub(r'[^a-z0-9]', '', part)
-        if len(clean) >= 4 and clean not in STOP:
-          q_words.add(clean)
-    matches = sum(1 for w in q_words if w in t_lower)
-    threshold = max(2, min(4, int(len(q_words) * 0.12)))
-    if matches < threshold:
-      sys.exit(0)
   fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
   (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:4000], "source": "read", "confidence": 0.6}))
-INNER
-    done < "$ART/read_order.txt"
-    # Persist read stats for gate diagnosis; fail fast if 0 extractable content despite sources
-    mkdir -p "$PROJ_DIR/explore"
-    python3 - "$PROJ_DIR" "$read_attempts" "$read_successes" <<'STATS'
-import json, sys
+SAVE_READ
+    done < "$ART/read_order_round1.txt"
+
+    progress_step "Assessing source coverage"
+    python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round1.json"
+    cp "$ART/coverage_round1.json" "$PROJ_DIR/coverage_round1.json"
+    COVERAGE_PASS=$(python3 -c "import json; print(json.load(open('$ART/coverage_round1.json')).get('pass', False), end='')" 2>/dev/null || echo "False")
+
+    if [ "$COVERAGE_PASS" != "True" ]; then
+      progress_step "Filling coverage gaps (Round 2)"
+      python3 "$TOOLS/research_planner.py" --gap-fill "$ART/coverage_round1.json" "$PROJECT_ID" > "$ART/gap_queries.json"
+      python3 "$TOOLS/research_web_search.py" --queries-file "$ART/gap_queries.json" --max-per-query 8 > "$ART/gap_search_round2.json" 2>> "$PWD/log.txt" || true
+      python3 - "$PROJ_DIR" "$ART/gap_search_round2.json" <<'SAVE_GAP'
+import json, sys, hashlib
 from pathlib import Path
-proj_dir, attempts, successes = Path(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
-read_failures = max(0, attempts - successes)
-(proj_dir / "explore" / "read_stats.json").write_text(json.dumps({
-  "read_attempts": attempts,
-  "read_successes": successes,
-  "read_failures": read_failures,
-}, indent=2))
-STATS
-    # Deep extraction: 2-5 key facts per long source (for research-firm-grade reports)
+proj_dir, in_path = Path(sys.argv[1]), Path(sys.argv[2])
+data = json.loads(in_path.read_text()) if in_path.exists() else []
+for item in (data if isinstance(data, list) else []):
+    u = (item.get("url") or "").strip()
+    if not u: continue
+    sid = hashlib.sha256(u.encode()).hexdigest()[:12]
+    (proj_dir / "sources" / f"{sid}.json").write_text(json.dumps(item))
+SAVE_GAP
+      python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round2.json"
+      cp "$ART/coverage_round2.json" "$PROJ_DIR/coverage_round2.json"
+    fi
+
+    THIN_TOPICS=$(python3 -c "import json; d=json.load(open('$ART/coverage_round2.json')) if __import__('pathlib').Path('$ART/coverage_round2.json').exists() else json.load(open('$ART/coverage_round1.json')); print(json.dumps(d.get('thin_priority_topics', [])), end='')" 2>/dev/null || echo "[]")
+    if [ "$THIN_TOPICS" != "[]" ]; then
+      progress_step "Deep-diving thin topics (Round 3)"
+      echo "$THIN_TOPICS" > "$ART/thin_topics.json"
+      python3 "$TOOLS/research_planner.py" --perspective-rotate "$ART/thin_topics.json" "$PROJECT_ID" > "$ART/depth_queries.json"
+      python3 "$TOOLS/research_web_search.py" --queries-file "$ART/depth_queries.json" --max-per-query 5 > "$ART/depth_search_round3.json" 2>> "$PWD/log.txt" || true
+      python3 - "$PROJ_DIR" "$ART/depth_search_round3.json" <<'SAVE_DEPTH'
+import json, sys, hashlib
+from pathlib import Path
+proj_dir, in_path = Path(sys.argv[1]), Path(sys.argv[2])
+data = json.loads(in_path.read_text()) if in_path.exists() else []
+for item in (data if isinstance(data, list) else []):
+    u = (item.get("url") or "").strip()
+    if not u: continue
+    sid = hashlib.sha256(u.encode()).hexdigest()[:12]
+    (proj_dir / "sources" / f"{sid}.json").write_text(json.dumps(item))
+SAVE_DEPTH
+      python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round3.json"
+      cp "$ART/coverage_round3.json" "$PROJ_DIR/coverage_round3.json"
+    fi
+
     progress_step "Extracting findings"
     python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
-    SOURCES_COUNT=$(python3 -c "
-from pathlib import Path
-p = Path('$PROJ_DIR/sources')
-print(len([f for f in p.glob('*.json') if not f.name.endswith('_content.json')]), end='')
-")
-    if [ "$SOURCES_COUNT" -gt 0 ] && [ "$read_successes" -eq 0 ]; then
-      log "Reader pipeline: 0 extractable content from $read_attempts read(s) — status failed_reader_no_extractable_content"
-      python3 - "$PROJ_DIR" <<'READER_FAIL'
-import json, sys
-from pathlib import Path
-from datetime import datetime, timezone
-proj_dir = Path(sys.argv[1])
-d = json.loads((proj_dir / "project.json").read_text())
-d["status"] = "failed_reader_no_extractable_content"
-d.setdefault("quality_gate", {})["evidence_gate"] = {
-  "status": "failed",
-  "fail_code": "failed_reader_no_extractable_content",
-  "reasons": ["zero_extractable_sources", "read_successes=0 with sources present"],
-  "metrics": {"read_attempts": 0, "read_successes": 0, "read_failures": 0},
-}
-stats_file = proj_dir / "explore" / "read_stats.json"
-if stats_file.exists():
-  try:
-    stats = json.loads(stats_file.read_text())
-    d["quality_gate"]["evidence_gate"]["metrics"].update(stats)
-  except Exception:
-    pass
-d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-d["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-(proj_dir / "project.json").write_text(json.dumps(d, indent=2))
-READER_FAIL
-      python3 "$TOOLS/research_abort_report.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
-      echo "Reader pipeline: 0 extractable content — project status set. Abort report generated."
-      exit 1
-    fi
     advance_phase "focus"
     ;;
   focus)
-    log "Phase: FOCUS — gap analysis and targeted search"
+    log "Phase: FOCUS — targeted deep-dive from coverage gaps"
     progress_start "focus"
-    progress_step "Analyzing gaps"
-    if [ -f "$PROJ_DIR/verify/deepening_queries.json" ]; then
-      log "Iterative deepening: using targeted queries from verify gaps"
-      DEEP_COUNT=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/verify/deepening_queries.json')); print(len(d.get('queries',[])), end='')" 2>/dev/null) || DEEP_COUNT=0
-      for qidx in 0 1 2 3 4; do
-        [ "$qidx" -ge "${DEEP_COUNT:-0}" ] && break
-        extra_query=$(python3 -c "
-import json, sys
-d = json.load(open('$PROJ_DIR/verify/deepening_queries.json'))
-q = d.get('queries', [])
-i = $qidx
-print((q[i] if i < len(q) else '').strip(), end='')
-" 2>/dev/null)
-        [ -z "$extra_query" ] && continue
-        python3 "$TOOLS/research_web_search.py" "$extra_query" --max 5 > "$ART/focus_search_$qidx.json" 2>> "$PWD/log.txt" || true
-      done
-      rm -f "$PROJ_DIR/verify/deepening_queries.json"
-    else
-      python3 "$TOOLS/research_reason.py" "$PROJECT_ID" gap_analysis > "$ART/gaps.json" 2>> "$PWD/log.txt" || true
-      for gidx in 0 1 2; do
-        [ ! -f "$ART/gaps.json" ] && break
-        extra_query=$(python3 - "$ART/gaps.json" "$QUESTION" "$gidx" <<'GAPONE'
-import json, sys
-gaps_file, fallback, idx = sys.argv[1], sys.argv[2], int(sys.argv[3])
-try:
-  d = json.load(open(gaps_file))
-  gaps = d.get("gaps", [])[:3]
-  g = gaps[idx] if idx < len(gaps) else None
-  q = (g.get("suggested_search", "") or fallback).strip()
-  print(q, end="")
-except Exception:
-  print(fallback, end="")
-GAPONE
-)
-        [ -z "$extra_query" ] && extra_query="$QUESTION"
-        python3 "$TOOLS/research_web_search.py" "$extra_query" --max 5 > "$ART/focus_search_$gidx.json" 2>> "$PWD/log.txt" || true
-      done
-    fi
-    # Merge focus search results into sources
-    if ls "$ART"/focus_search_*.json 1>/dev/null 2>&1; then
-      python3 - "$PROJ_DIR" "$ART" "$QUESTION" <<'PY'
-import json, sys, hashlib, re
+    progress_step "Analyzing coverage gaps"
+    COV_FILE="$ART/coverage_round3.json"
+    [ -f "$COV_FILE" ] || COV_FILE="$ART/coverage_round2.json"
+    [ -f "$COV_FILE" ] || COV_FILE="$ART/coverage_round1.json"
+    python3 "$TOOLS/research_planner.py" --gap-fill "$COV_FILE" "$PROJECT_ID" > "$ART/focus_queries.json"
+    python3 "$TOOLS/research_web_search.py" --queries-file "$ART/focus_queries.json" --max-per-query 8 > "$ART/focus_search.json" 2>> "$PWD/log.txt" || true
+    python3 - "$PROJ_DIR" "$ART/focus_search.json" <<'FOCUS_SAVE'
+import json, sys, hashlib
 from pathlib import Path
-proj_dir, art, question = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
-STOP = {"what","when","where","which","about","their","these","those","from","with","that","this","have","been","were","will","into","only","also","more","than","each","using","focus","sources","investigate","research","every","clearly","label","prioritize"}
-core_words = set()
-for raw_w in question.lower().split():
-  for part in re.split(r'[/,]', raw_w):
-    clean = re.sub(r'[^a-z0-9]', '', part)
-    if len(clean) >= 4 and clean not in STOP:
-      core_words.add(clean)
-for name in ["focus_search.json", "focus_search_0.json", "focus_search_1.json", "focus_search_2.json", "focus_search_3.json", "focus_search_4.json"]:
-  f = art / name
-  if not f.exists():
-    continue
-  try:
-    data = json.loads(f.read_text())
-    for item in (data if isinstance(data, list) else []):
-      url = (item.get("url") or "").strip()
-      if not url: continue
-      title_desc = f"{item.get('title','')} {item.get('description','')}".lower()
-      if sum(1 for w in core_words if w in title_desc) < 1:
+proj_dir, src = Path(sys.argv[1]), Path(sys.argv[2])
+data = json.loads(src.read_text()) if src.exists() else []
+for item in (data if isinstance(data, list) else []):
+    url = (item.get("url") or "").strip()
+    if not url:
         continue
-      fid = hashlib.sha256(url.encode()).hexdigest()[:12]
-      (proj_dir / "sources" / f"{fid}.json").write_text(json.dumps({**item, "confidence": 0.5}))
-  except Exception:
-    pass
-PY
-    fi
-    # Read newly discovered focus sources (skip already-read ones), ranked by priority
-    python3 - "$PROJ_DIR" "$QUESTION" "$ART" <<'RANK_FOCUS'
-import json, sys, re
+    sid = hashlib.sha256(url.encode()).hexdigest()[:12]
+    (proj_dir / "sources" / f"{sid}.json").write_text(json.dumps(item))
+FOCUS_SAVE
+
+    python3 - "$PROJ_DIR" "$ART/focus_queries.json" "$ART" <<'RANK_FOCUS'
+import json, sys
 from pathlib import Path
-proj_dir, question, art = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3])
-q_words = set(re.sub(r'[^a-z0-9 ]', '', question.lower()).split())
-q_words = {w for w in q_words if len(w) >= 4}
-DOMAIN_RANK = {"nytimes.com":10,"reuters.com":10,"apnews.com":10,"theverge.com":9,"arstechnica.com":9,"techcrunch.com":9,"bbc.com":9,"wsj.com":9,"bloomberg.com":9,"fortune.com":8,"axios.com":8,"wired.com":8,"theguardian.com":8}
+proj_dir, qpath, art = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+plan = json.loads(qpath.read_text()) if qpath.exists() else {}
+topic_boost = {}
+for i, q in enumerate(plan.get("queries", [])):
+    tid = str(q.get("topic_id",""))
+    if tid not in topic_boost:
+        topic_boost[tid] = max(1, 10 - i)
+DOMAIN_RANK = {"arxiv.org":10,"semanticscholar.org":10,"nature.com":10,"science.org":10,"openai.com":9,"anthropic.com":9,"reuters.com":8,"nytimes.com":8}
 ranked = []
 for f in (proj_dir / "sources").glob("*.json"):
     if f.name.endswith("_content.json"): continue
@@ -485,15 +308,13 @@ for f in (proj_dir / "sources").glob("*.json"):
     if (proj_dir / "sources" / f"{sid}_content.json").exists(): continue
     try:
         d = json.loads(f.read_text())
-        url = (d.get("url") or "").strip()
-        if not url: continue
-        domain = url.split("/")[2].replace("www.","") if len(url.split("/")) > 2 else ""
-        dscore = DOMAIN_RANK.get(domain, 5)
-        td = f"{d.get('title','')} {d.get('description','')}".lower()
-        relevance = sum(1 for w in q_words if w in td)
-        ranked.append((-(dscore * 10 + relevance), str(f)))
     except Exception:
-        pass
+        continue
+    url = (d.get("url") or "").strip()
+    if not url: continue
+    domain = url.split("/")[2].replace("www.","") if "://" in url else ""
+    score = DOMAIN_RANK.get(domain, 4) + topic_boost.get(str(d.get("topic_id","")), 0)
+    ranked.append((-score, str(f)))
 ranked.sort()
 (art / "focus_read_order.txt").write_text("\n".join(path for _, path in ranked))
 RANK_FOCUS
@@ -501,61 +322,32 @@ RANK_FOCUS
     focus_read_successes=0
     while IFS= read -r f; do
       [ -f "$f" ] || continue
-      [ $focus_read_attempts -ge 10 ] && break
+      [ $focus_read_attempts -ge 15 ] && break
       url=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('url',''), end='')")
       [ -n "$url" ] || continue
       focus_read_attempts=$((focus_read_attempts+1))
       domain=$(echo "$url" | awk -F/ '{print $3}' | sed 's/^www\.//')
-      progress_step "Deep-reading: $domain" "$focus_read_attempts" 10
+      progress_step "Deep-reading: $domain" "$focus_read_attempts" 15
       python3 "$TOOLS/research_web_reader.py" "$url" > "$ART/read_result.json" 2>> "$PWD/log.txt" || true
       if [ -f "$ART/read_result.json" ]; then
-        if python3 -c "
-import json
-try:
-  d = json.load(open('$ART/read_result.json'))
-  text = (d.get('text') or '').strip()
-  err = (d.get('error') or '').strip()
-  exit(0 if text and not err else 1)
-except Exception:
-  exit(1)
-" 2>/dev/null; then
+        if python3 -c "import json; d=json.load(open('$ART/read_result.json')); t=(d.get('text') or d.get('abstract') or '').strip(); e=(d.get('error') or '').strip(); exit(0 if t and not e else 1)" 2>/dev/null; then
           focus_read_successes=$((focus_read_successes+1))
         fi
       fi
-      python3 - "$PROJ_DIR" "$ART" "$url" <<'INNER'
+      python3 - "$PROJ_DIR" "$ART" "$url" <<'FOCUS_READ'
 import json, sys, hashlib
 from pathlib import Path
 proj_dir, art, url = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
 if not (art / "read_result.json").exists():
   sys.exit(0)
 data = json.loads((art / "read_result.json").read_text())
-key = hashlib.sha256(url.encode()).hexdigest()[:12]
-(proj_dir / "sources" / f"{key}_content.json").write_text(json.dumps(data))
+sid = hashlib.sha256(url.encode()).hexdigest()[:12]
+(proj_dir / "sources" / f"{sid}_content.json").write_text(json.dumps(data))
 text = (data.get("text") or data.get("abstract") or "")[:8000]
 if text:
-  import re as _re
-  question = ""
-  try:
-    question = json.loads((proj_dir / "project.json").read_text()).get("question", "")
-  except Exception:
-    pass
-  if question:
-    q_lower = question.lower()
-    t_lower = text[:4000].lower()
-    STOP = {"what","when","where","which","about","their","these","those","from","with","that","this","have","been","were","will","into","only","also","more","than","each","using","focus","sources","investigate","research","every","clearly","label","prioritize","hard","extract","numeric","english","publication","date","cross","check","should","does","could","would"}
-    q_words = set()
-    for raw_w in q_lower.split():
-      for part in _re.split(r'[/,]', raw_w):
-        clean = _re.sub(r'[^a-z0-9]', '', part)
-        if len(clean) >= 4 and clean not in STOP:
-          q_words.add(clean)
-    matches = sum(1 for w in q_words if w in t_lower)
-    threshold = max(2, min(4, int(len(q_words) * 0.12)))
-    if matches < threshold:
-      sys.exit(0)
   fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
   (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:4000], "source": "read", "confidence": 0.6}))
-INNER
+FOCUS_READ
     done < "$ART/focus_read_order.txt"
     log "Focus reads: $focus_read_attempts attempted, $focus_read_successes succeeded"
     progress_step "Extracting focused findings"
@@ -1114,7 +906,8 @@ PY
         REV_TS=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'), end='')")
         cp "$ART/revised_report.md" "$PROJ_DIR/reports/report_${REV_TS}_revised.md"
       fi
-      # Re-check score after revision; if still low, fail with failed_quality_gate (V3)
+      # Re-run critic on revised report and use NEW score for quality gate
+      python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$PWD/log.txt" || true
       SCORE=$(python3 -c "import json; d=json.load(open('$ART/critique.json')); print(d.get('score', 0.5), end='')" 2>/dev/null || echo "0.5")
     fi
     if python3 -c "exit(0 if float('$SCORE') < 0.6 else 1)" 2>/dev/null; then

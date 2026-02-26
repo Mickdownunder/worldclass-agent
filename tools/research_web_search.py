@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-Web search for research. Uses Brave Search API or Serper.dev (env: BRAVE_API_KEY or SERPER_API_KEY).
-Outputs JSON array of results to stdout.
-
-Usage:
+Web search for research.
+Single-query mode:
   research_web_search.py "query" [--max 20]
+
+Batch mode:
+  research_web_search.py --queries-file <json> [--max-per-query 5]
 """
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.parse import quote
@@ -77,24 +79,113 @@ def search_serper(query: str, max_results: int = 20) -> list[dict]:
     return results
 
 
+def _search_academic(query: str, max_results: int = 10) -> list[dict]:
+    try:
+        from tools.research_academic import semantic_scholar, arxiv
+    except Exception:
+        return []
+    per = max(1, max_results // 2)
+    out = []
+    out.extend(semantic_scholar(query, per))
+    out.extend(arxiv(query, max_results - per))
+    return out[:max_results]
+
+
+def _load_queries(path: str) -> list[dict]:
+    raw = json.loads(Path(path).read_text())
+    if isinstance(raw, dict) and isinstance(raw.get("queries"), list):
+        return [q for q in raw.get("queries", []) if isinstance(q, dict)]
+    if isinstance(raw, list):
+        return [q for q in raw if isinstance(q, dict)]
+    return []
+
+
+def _progress_step(message: str, current: int, total: int) -> None:
+    project_id = os.environ.get("RESEARCH_PROJECT_ID", "")
+    if not project_id:
+        return
+    try:
+        root = Path(__file__).resolve().parent.parent
+        from subprocess import run
+        run(
+            [sys.executable, str(root / "tools" / "research_progress.py"), "step", project_id, message, str(current), str(total)],
+            check=False,
+            capture_output=True,
+        )
+    except Exception:
+        pass
+
+
+def _search_web(query: str, max_results: int, secrets: dict) -> list[dict]:
+    if secrets.get("BRAVE_API_KEY"):
+        return search_brave(query, max_results)
+    if secrets.get("SERPER_API_KEY"):
+        return search_serper(query, max_results)
+    print("WARN: No BRAVE_API_KEY or SERPER_API_KEY set; returning empty results", file=sys.stderr)
+    return []
+
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: research_web_search.py \"query\" [--max 20]", file=sys.stderr)
+        print("Usage: research_web_search.py \"query\" [--max 20] | --queries-file <json> [--max-per-query 5]", file=sys.stderr)
         sys.exit(2)
+
+    secrets = load_secrets()
+
+    if "--queries-file" in sys.argv:
+        idx = sys.argv.index("--queries-file") + 1
+        if idx >= len(sys.argv):
+            sys.exit(2)
+        qfile = sys.argv[idx]
+        max_per_query = 5
+        if "--max-per-query" in sys.argv:
+            midx = sys.argv.index("--max-per-query") + 1
+            if midx < len(sys.argv):
+                max_per_query = max(1, min(20, int(sys.argv[midx])))
+
+        queries = _load_queries(qfile)
+        all_results: list[dict] = []
+        seen_urls: set[str] = set()
+        total = len(queries)
+        for i, q in enumerate(queries, start=1):
+            query = str(q.get("query") or "").strip()
+            if not query:
+                continue
+            qtype = str(q.get("type") or "web").lower()
+            topic_id = str(q.get("topic_id") or "")
+            perspective = str(q.get("perspective") or "")
+            _progress_step(f"Search {i}/{total}: {query[:80]}", i, total)
+
+            if qtype == "academic":
+                results = _search_academic(query, max_per_query)
+            else:
+                results = _search_web(query, max_per_query, secrets)
+
+            for r in results:
+                url = (r.get("url") or "").strip()
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                all_results.append(
+                    {
+                        **r,
+                        "query": query,
+                        "topic_id": topic_id,
+                        "perspective": perspective,
+                        "query_type": qtype,
+                    }
+                )
+            time.sleep(0.3)
+        print(json.dumps(all_results, indent=2, ensure_ascii=False))
+        return
+
     query = sys.argv[1]
     max_results = 20
     if "--max" in sys.argv:
         idx = sys.argv.index("--max") + 1
         if idx < len(sys.argv):
             max_results = int(sys.argv[idx])
-    secrets = load_secrets()
-    if secrets.get("BRAVE_API_KEY"):
-        results = search_brave(query, max_results)
-    elif secrets.get("SERPER_API_KEY"):
-        results = search_serper(query, max_results)
-    else:
-        print("WARN: No BRAVE_API_KEY or SERPER_API_KEY set; returning empty results", file=sys.stderr)
-        results = []
+    results = _search_web(query, max_results, secrets)
     project_id = os.environ.get("RESEARCH_PROJECT_ID", "")
     if project_id and results:
         try:

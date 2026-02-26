@@ -241,7 +241,7 @@ export default async function ResearchProjectPage({
       <GateMetricsInline project={project} calibratedThresholds={calibratedThresholds ?? undefined} />
 
       {/* ── Activity Feed ─────────────────────────────────────── */}
-      <ActivityFeed projectId={id} />
+      <ActivityFeed projectId={id} currentPhase={project.phase} isProjectActive={isActive} />
 
       {/* ── Tabs (Report, Findings, Sources, History, Audit) ─── */}
       <div
