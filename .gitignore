@@ -35,6 +35,8 @@ ui/.env.local
 **/artifacts/
 *.log
 .cache/
+ui/playwright-report/
+ui/test-results/
 
 # OS
 .DS_Store
