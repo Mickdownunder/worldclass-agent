@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import load_secrets, project_dir, load_project, llm_retry
+from tools.research_common import project_dir, load_project, llm_call
 
 
 def _model():
@@ -34,27 +34,11 @@ def _load_findings(proj_path: Path, max_items: int = 40) -> list[dict]:
 
 def _llm_json(system: str, user: str, project_id: str = "") -> dict | list:
     """Call LLM with retry and optional budget tracking."""
-    from openai import OpenAI
-    secrets = load_secrets()
-    client = OpenAI(api_key=secrets.get("OPENAI_API_KEY"))
+    import re
     model = _model()
-
-    @llm_retry()
-    def _call():
-        return client.responses.create(model=model, instructions=system, input=user)
-
-    resp = _call()
-
-    if project_id:
-        try:
-            from tools.research_budget import track_usage
-            track_usage(project_id, model, resp.usage.input_tokens, resp.usage.output_tokens)
-        except Exception:
-            pass
-
-    text = (resp.output_text or "").strip()
+    result = llm_call(model, system, user, project_id=project_id)
+    text = (result.text or "").strip()
     if text.startswith("```"):
-        import re
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
     try:

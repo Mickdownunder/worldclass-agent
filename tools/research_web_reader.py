@@ -8,6 +8,7 @@ Usage:
   research_web_reader.py <url>
 """
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -200,6 +201,15 @@ def fetch_url(url: str, timeout: int = 15) -> bytes:
         return r.read()
 
 
+# Control chars and NULL that lxml/XML disallow; keep \t \n \r
+_RE_XML_SAFE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+
+def _sanitize_html_for_lxml(html: str) -> str:
+    """Remove NULL bytes and control characters so readability/lxml does not raise."""
+    return _RE_XML_SAFE.sub("", html)
+
+
 def extract_with_readability(html: str, url: str, Document_cls, BeautifulSoup_cls) -> tuple[str, str]:
     doc = Document_cls(html)
     title = doc.title() or ""
@@ -295,8 +305,14 @@ def main():
         try:
             raw = fetch_url(url)
             html = raw.decode("utf-8", errors="replace")
+            html = _sanitize_html_for_lxml(html)
             if HAS_READABILITY:
-                title, text = extract_with_readability(html, url, Document_cls, BeautifulSoup_cls)
+                try:
+                    title, text = extract_with_readability(html, url, Document_cls, BeautifulSoup_cls)
+                except Exception as e:
+                    # readability/lxml can raise on bad HTML (e.g. NULL/control chars); fallback to BS4
+                    print(f"[readability] fallback to BS4 for {url}: {type(e).__name__}", file=sys.stderr)
+                    title, text = extract_with_bs4(html, BeautifulSoup_cls)
             else:
                 title, text = extract_with_bs4(html, BeautifulSoup_cls)
             if _detect_paywall(html) or len(text.strip()) < 100 or _is_cookie_consent(text):
@@ -347,6 +363,15 @@ def main():
                 out["message"] = out["error"][:500]
 
     out["fallback_chain"] = fallback_chain
+    from datetime import datetime, timezone
+    out["crawl_date"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    project_id = os.environ.get("RESEARCH_PROJECT_ID", "")
+    if project_id and out.get("text") and out.get("fallback") in ("jina_first", "jina"):
+        try:
+            from tools.research_budget import track_api_call
+            track_api_call(project_id, "jina_reader", count=1)
+        except Exception:
+            pass
     print(json.dumps(out, indent=2, ensure_ascii=False))
 
 

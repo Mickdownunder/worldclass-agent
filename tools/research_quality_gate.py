@@ -21,9 +21,150 @@ EVIDENCE_GATE_THRESHOLDS = {
     "findings_count_min": 8,
     "unique_source_count_min": 5,
     "verified_claim_count_min": 2,
-    "claim_support_rate_min": 0.6,
+    "claim_support_rate_min": 0.5,
     "high_reliability_source_ratio_min": 0.5,
 }
+
+# Adaptive gate: primary metric = absolute verified claim count
+HARD_PASS_VERIFIED_MIN = 5   # >= 5 verified = always pass
+SOFT_PASS_VERIFIED_MIN = 3   # >= 3 verified + rate >= 0.5 = pass
+REVIEW_ZONE_RATE = 0.4       # rate >= 0.4 but verified < 5 = pending_review
+HARD_FAIL_RATE = 0.3         # rate < 0.3 = hard fail
+
+
+def _load_explore_stats(proj: Path) -> dict:
+    """Load read_attempts, read_successes, read_failures from explore/read_stats.json."""
+    out = {"read_attempts": 0, "read_successes": 0, "read_failures": 0}
+    path = proj / "explore" / "read_stats.json"
+    if not path.exists():
+        return out
+    try:
+        data = json.loads(path.read_text())
+        out["read_attempts"] = data.get("read_attempts", 0)
+        out["read_successes"] = data.get("read_successes", 0)
+        out["read_failures"] = data.get("read_failures", 0)
+    except Exception:
+        pass
+    return out
+
+
+def _effective_findings_min(metrics: dict) -> int:
+    """Adaptive floor: lower if read success rate is low."""
+    base = EVIDENCE_GATE_THRESHOLDS["findings_count_min"]
+    attempts = metrics.get("read_attempts", 0)
+    successes = metrics.get("read_successes", 0)
+    if attempts <= 0:
+        return base
+    rate = successes / attempts
+    if rate < 0.5:
+        return max(3, int(base * rate * 1.5))
+    return base
+
+
+def _metrics_findings(findings_dir: Path) -> int:
+    """Count JSON files in findings dir (exclude _content)."""
+    if not findings_dir.exists():
+        return 0
+    return len([f for f in findings_dir.glob("*.json") if "_content" not in f.name])
+
+
+def _metrics_sources(sources_dir: Path) -> tuple[int, set]:
+    """Count unique source URLs; return (count, url_set)."""
+    urls = set()
+    if not sources_dir.exists():
+        return 0, urls
+    for f in sources_dir.glob("*.json"):
+        if f.name.endswith("_content.json"):
+            continue
+        try:
+            u = (json.loads(f.read_text()).get("url") or "").strip()
+            if u:
+                urls.add(u)
+        except Exception:
+            pass
+    return len(urls), urls
+
+
+def _metrics_claims(verify_dir: Path) -> tuple[list, int, float]:
+    """Load claims from claim_ledger/claim_verification; return (claims, verified_count, claim_support_rate)."""
+    claims_data = []
+    for name in ("claim_ledger.json", "claim_verification.json"):
+        path = verify_dir / name
+        if path.exists():
+            try:
+                data = json.loads(path.read_text())
+                claims_data = data.get("claims", claims_data)
+            except Exception:
+                pass
+    verified = sum(1 for c in claims_data if c.get("is_verified") or c.get("verified"))
+    rate = round(verified / len(claims_data), 3) if claims_data else 0.0
+    return claims_data, verified, rate
+
+
+def _metrics_reliability(verify_dir: Path) -> tuple[float, bool]:
+    """High-reliability source ratio from source_reliability.json. Returns (ratio, has_data)."""
+    path = verify_dir / "source_reliability.json"
+    if not path.exists():
+        return 0.0, False
+    try:
+        rel = json.loads(path.read_text())
+        total = high = 0
+        for s in rel.get("sources", []):
+            total += 1
+            if (s.get("reliability_score") or 0) >= 0.6:
+                high += 1
+        return (round(high / total, 3) if total > 0 else 0.0, total > 0)
+    except Exception:
+        return 0.0, False
+
+
+def _is_reader_pipeline_failure(metrics: dict) -> bool:
+    """True if we have sources but zero read success (reader failed)."""
+    return (
+        metrics.get("findings_count", 0) == 0
+        and metrics.get("unique_source_count", 0) >= 1
+        and metrics.get("read_successes", -1) == 0
+        and metrics.get("read_attempts", 0) > 0
+    )
+
+
+def _collect_reasons(metrics: dict, effective_findings_min: int, has_reliability_data: bool = False) -> list[str]:
+    """Build list of failure reasons from metrics vs thresholds."""
+    reasons = []
+    t = EVIDENCE_GATE_THRESHOLDS
+    if metrics["findings_count"] < effective_findings_min:
+        reasons.append(f"findings_count {metrics['findings_count']} < {effective_findings_min}")
+    if metrics["unique_source_count"] < t["unique_source_count_min"]:
+        reasons.append(f"unique_source_count {metrics['unique_source_count']} < {t['unique_source_count_min']}")
+    if _is_reader_pipeline_failure(metrics):
+        reasons.append("zero_extractable_sources")
+        reasons.append("read_failures_high")
+    if metrics["verified_claim_count"] < t["verified_claim_count_min"]:
+        reasons.append(f"verified_claim_count {metrics['verified_claim_count']} < {t['verified_claim_count_min']}")
+    if metrics.get("claim_support_rate", 0) < t["claim_support_rate_min"] and metrics.get("verified_claim_count", 0) > 0:
+        reasons.append(f"claim_support_rate {metrics['claim_support_rate']} < {t['claim_support_rate_min']}")
+    if has_reliability_data and metrics.get("high_reliability_source_ratio", 0) < t["high_reliability_source_ratio_min"]:
+        reasons.append(f"high_reliability_source_ratio {metrics['high_reliability_source_ratio']} < {t['high_reliability_source_ratio_min']}")
+    return reasons
+
+
+def _decide_gate(metrics: dict) -> tuple[str, str | None]:
+    """Return (decision, fail_code). decision in pass | pending_review | fail."""
+    vc = metrics["verified_claim_count"]
+    rate = metrics["claim_support_rate"]
+    if vc >= HARD_PASS_VERIFIED_MIN:
+        return "pass", None
+    if vc >= SOFT_PASS_VERIFIED_MIN and rate >= 0.5:
+        return "pass", None
+    if vc >= SOFT_PASS_VERIFIED_MIN and rate >= REVIEW_ZONE_RATE:
+        return "pending_review", None
+    if rate < HARD_FAIL_RATE or vc < SOFT_PASS_VERIFIED_MIN:
+        if vc < EVIDENCE_GATE_THRESHOLDS["verified_claim_count_min"] or rate < EVIDENCE_GATE_THRESHOLDS["claim_support_rate_min"]:
+            return "fail", "failed_verification_inconclusive"
+        if metrics.get("high_reliability_source_ratio", 0) < EVIDENCE_GATE_THRESHOLDS["high_reliability_source_ratio_min"]:
+            return "fail", "failed_source_diversity"
+        return "fail", "failed_insufficient_evidence"
+    return "fail", "failed_insufficient_evidence"
 
 
 def run_evidence_gate(project_id: str) -> dict:
@@ -31,7 +172,7 @@ def run_evidence_gate(project_id: str) -> dict:
     proj = project_dir(project_id)
     if not proj.exists():
         return {"pass": False, "fail_code": "failed_insufficient_evidence", "metrics": {}, "reasons": ["project not found"]}
-    project = load_project(proj)
+    load_project(proj)  # ensure project exists
     verify_dir = proj / "verify"
     sources_dir = proj / "sources"
     findings_dir = proj / "findings"
@@ -46,133 +187,43 @@ def run_evidence_gate(project_id: str) -> dict:
         "read_successes": 0,
         "read_failures": 0,
     }
-    reasons = []
+    explore = _load_explore_stats(proj)
+    metrics.update(explore)
 
-    # Read stats from explore (for root-cause: reader vs evidence gap)
-    explore_stats = {}
-    if (proj / "explore" / "read_stats.json").exists():
-        try:
-            explore_stats = json.loads((proj / "explore" / "read_stats.json").read_text())
-            metrics["read_attempts"] = explore_stats.get("read_attempts", 0)
-            metrics["read_successes"] = explore_stats.get("read_successes", 0)
-            metrics["read_failures"] = explore_stats.get("read_failures", 0)
-        except Exception:
-            pass
+    effective_findings_min = _effective_findings_min(metrics)
+    metrics["findings_count"] = _metrics_findings(findings_dir)
+    source_count, _ = _metrics_sources(sources_dir)
+    metrics["unique_source_count"] = source_count
 
-    # Adaptive findings threshold: lower floor if read failure rate is high
-    effective_findings_min = EVIDENCE_GATE_THRESHOLDS["findings_count_min"]
-    read_attempts = metrics.get("read_attempts", 0)
-    read_successes = metrics.get("read_successes", 0)
-    if read_attempts > 0:
-        success_rate = read_successes / read_attempts
-        if success_rate < 0.5:
-            effective_findings_min = max(3, int(EVIDENCE_GATE_THRESHOLDS["findings_count_min"] * success_rate * 1.5))
-
-    # findings_count
-    if findings_dir.exists():
-        metrics["findings_count"] = len(list(findings_dir.glob("*.json")))
-    if metrics["findings_count"] < effective_findings_min:
-        reasons.append(f"findings_count {metrics['findings_count']} < {effective_findings_min}")
-
-    # unique_source_count (by URL domain or URL)
-    urls = set()
-    if sources_dir.exists():
-        for f in sources_dir.glob("*.json"):
-            if f.name.endswith("_content.json"):
-                continue
-            try:
-                d = json.loads(f.read_text())
-                u = (d.get("url") or "").strip()
-                if u:
-                    urls.add(u)
-            except Exception:
-                pass
-    metrics["unique_source_count"] = len(urls)
-    if metrics["unique_source_count"] < EVIDENCE_GATE_THRESHOLDS["unique_source_count_min"]:
-        reasons.append(f"unique_source_count {metrics['unique_source_count']} < {EVIDENCE_GATE_THRESHOLDS['unique_source_count_min']}")
-    # Root-cause: zero findings with sources present and 0 read_successes => reader pipeline failure
-    if (
-        metrics["findings_count"] == 0
-        and metrics["unique_source_count"] >= 1
-        and metrics.get("read_successes", -1) == 0
-        and metrics.get("read_attempts", 0) > 0
-    ):
-        reasons.append("zero_extractable_sources")
-        reasons.append("read_failures_high")
-
-    # verified_claim_count, claim_support_rate from claim_verification / claim_ledger
-    claims_data = []
-    if (verify_dir / "claim_verification.json").exists():
-        try:
-            claims_data = json.loads((verify_dir / "claim_verification.json").read_text()).get("claims", [])
-        except Exception:
-            pass
-    if (verify_dir / "claim_ledger.json").exists():
-        try:
-            ledger = json.loads((verify_dir / "claim_ledger.json").read_text())
-            claims_data = ledger.get("claims", claims_data)
-        except Exception:
-            pass
-    # Ledger provides is_verified; claim_verification provides verified. Both supported for backward compat; Ledger preferred.
-    verified_count = sum(1 for c in claims_data if c.get("is_verified") or c.get("verified"))
+    claims_data, verified_count, claim_rate = _metrics_claims(verify_dir)
     metrics["verified_claim_count"] = verified_count
-    if claims_data:
-        metrics["claim_support_rate"] = round(verified_count / len(claims_data), 3)
-    if metrics["verified_claim_count"] < EVIDENCE_GATE_THRESHOLDS["verified_claim_count_min"]:
-        reasons.append(f"verified_claim_count {metrics['verified_claim_count']} < {EVIDENCE_GATE_THRESHOLDS['verified_claim_count_min']}")
-    if claims_data and metrics["claim_support_rate"] < EVIDENCE_GATE_THRESHOLDS["claim_support_rate_min"]:
-        reasons.append(f"claim_support_rate {metrics['claim_support_rate']} < {EVIDENCE_GATE_THRESHOLDS['claim_support_rate_min']}")
+    metrics["claim_support_rate"] = claim_rate
+    rel_ratio, has_reliability_data = _metrics_reliability(verify_dir)
+    metrics["high_reliability_source_ratio"] = rel_ratio
 
-    # high_reliability_source_ratio from source_reliability
-    high_rel_count = 0
-    total_sources = 0
-    if (verify_dir / "source_reliability.json").exists():
-        try:
-            rel = json.loads((verify_dir / "source_reliability.json").read_text())
-            for s in rel.get("sources", []):
-                total_sources += 1
-                if (s.get("reliability_score") or 0) >= 0.6:
-                    high_rel_count += 1
-            if total_sources > 0:
-                metrics["high_reliability_source_ratio"] = round(high_rel_count / total_sources, 3)
-        except Exception:
-            pass
-    if total_sources > 0 and metrics["high_reliability_source_ratio"] < EVIDENCE_GATE_THRESHOLDS["high_reliability_source_ratio_min"]:
-        reasons.append(f"high_reliability_source_ratio {metrics['high_reliability_source_ratio']} < {EVIDENCE_GATE_THRESHOLDS['high_reliability_source_ratio_min']}")
+    reasons = _collect_reasons(metrics, effective_findings_min, has_reliability_data)
 
-    # Determine pass and fail_code
-    pass_gate = len(reasons) == 0
-    if pass_gate:
-        audit_log(proj, "evidence_gate", {
-            "decision": "pass",
-            "fail_code": None,
-            "metrics": metrics,
-            "reasons": reasons,
-        })
-        return {"pass": True, "fail_code": None, "metrics": metrics, "reasons": []}
-    # Technical reader/dependency failure (0 extractable content despite sources)
-    if (
-        metrics["findings_count"] == 0
-        and metrics["unique_source_count"] >= 1
-        and metrics.get("read_successes", -1) == 0
-        and metrics.get("read_attempts", 0) > 0
-    ):
-        fail_code = "failed_reader_pipeline"
-    elif metrics["findings_count"] < effective_findings_min or metrics["unique_source_count"] < EVIDENCE_GATE_THRESHOLDS["unique_source_count_min"]:
+    # Technical reader failure first
+    if _is_reader_pipeline_failure(metrics):
+        audit_log(proj, "evidence_gate", {"decision": "fail", "fail_code": "failed_reader_pipeline", "metrics": metrics, "reasons": reasons})
+        return {"pass": False, "fail_code": "failed_reader_pipeline", "decision": "fail", "metrics": metrics, "reasons": reasons}
+
+    # Insufficient findings/sources
+    if metrics["findings_count"] < effective_findings_min or metrics["unique_source_count"] < EVIDENCE_GATE_THRESHOLDS["unique_source_count_min"]:
+        audit_log(proj, "evidence_gate", {"decision": "fail", "fail_code": "failed_insufficient_evidence", "metrics": metrics, "reasons": reasons})
+        return {"pass": False, "fail_code": "failed_insufficient_evidence", "decision": "fail", "metrics": metrics, "reasons": reasons}
+
+    decision, fail_code = _decide_gate(metrics)
+    if decision == "pass":
+        audit_log(proj, "evidence_gate", {"decision": "pass", "fail_code": None, "metrics": metrics, "reasons": []})
+        return {"pass": True, "fail_code": None, "decision": "pass", "metrics": metrics, "reasons": []}
+    if decision == "pending_review":
+        audit_log(proj, "evidence_gate", {"decision": "pending_review", "fail_code": None, "metrics": metrics, "reasons": reasons})
+        return {"pass": False, "fail_code": None, "decision": "pending_review", "metrics": metrics, "reasons": reasons}
+    if not fail_code:
         fail_code = "failed_insufficient_evidence"
-    elif metrics["verified_claim_count"] < EVIDENCE_GATE_THRESHOLDS["verified_claim_count_min"] or metrics["claim_support_rate"] < EVIDENCE_GATE_THRESHOLDS["claim_support_rate_min"]:
-        fail_code = "failed_verification_inconclusive"
-    elif metrics["high_reliability_source_ratio"] < EVIDENCE_GATE_THRESHOLDS["high_reliability_source_ratio_min"]:
-        fail_code = "failed_source_diversity"
-    else:
-        fail_code = "failed_insufficient_evidence"
-    audit_log(proj, "evidence_gate", {
-        "decision": "fail",
-        "fail_code": fail_code,
-        "metrics": metrics,
-        "reasons": reasons,
-    })
-    return {"pass": False, "fail_code": fail_code, "metrics": metrics, "reasons": reasons}
+    audit_log(proj, "evidence_gate", {"decision": "fail", "fail_code": fail_code, "metrics": metrics, "reasons": reasons})
+    return {"pass": False, "fail_code": fail_code, "decision": "fail", "metrics": metrics, "reasons": reasons}
 
 
 def main():

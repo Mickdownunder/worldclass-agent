@@ -13,11 +13,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import load_secrets, project_dir, load_project, ensure_project_layout, llm_retry
+from tools.research_common import project_dir, load_project, ensure_project_layout, llm_call
 
 
 def _model():
-    return os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gpt-4.1-mini")
+    return os.environ.get("RESEARCH_CRITIQUE_MODEL", "gpt-5.2")
 
 
 def _load_report(proj_path: Path, art_path: Path | None) -> str:
@@ -34,27 +34,11 @@ def _load_report(proj_path: Path, art_path: Path | None) -> str:
 
 def _llm_json(system: str, user: str, project_id: str = "") -> dict:
     """Call LLM for JSON output with retry and optional budget tracking."""
-    from openai import OpenAI
-    secrets = load_secrets()
-    client = OpenAI(api_key=secrets.get("OPENAI_API_KEY"))
+    import re
     model = _model()
-
-    @llm_retry()
-    def _call():
-        return client.responses.create(model=model, instructions=system, input=user)
-
-    resp = _call()
-
-    if project_id:
-        try:
-            from tools.research_budget import track_usage
-            track_usage(project_id, model, resp.usage.input_tokens, resp.usage.output_tokens)
-        except Exception:
-            pass
-
-    text = (resp.output_text or "").strip()
+    result = llm_call(model, system, user, project_id=project_id)
+    text = (result.text or "").strip()
     if text.startswith("```"):
-        import re
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
     return json.loads(text)
@@ -62,25 +46,9 @@ def _llm_json(system: str, user: str, project_id: str = "") -> dict:
 
 def _llm_text(system: str, user: str, project_id: str = "") -> str:
     """Call LLM for text output with retry and optional budget tracking."""
-    from openai import OpenAI
-    secrets = load_secrets()
-    client = OpenAI(api_key=secrets.get("OPENAI_API_KEY"))
     model = _model()
-
-    @llm_retry()
-    def _call():
-        return client.responses.create(model=model, instructions=system, input=user)
-
-    resp = _call()
-
-    if project_id:
-        try:
-            from tools.research_budget import track_usage
-            track_usage(project_id, model, resp.usage.input_tokens, resp.usage.output_tokens)
-        except Exception:
-            pass
-
-    return (resp.output_text or "").strip()
+    result = llm_call(model, system, user, project_id=project_id)
+    return (result.text or "").strip()
 
 
 def critique_report(proj_path: Path, project: dict, art_path: Path | None = None, project_id: str = "") -> dict:

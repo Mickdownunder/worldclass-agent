@@ -40,6 +40,7 @@ def search_brave(query: str, max_results: int = 20) -> list[dict]:
             "url": w.get("url", ""),
             "description": w.get("description", ""),
             "source": "brave",
+            "published_date": w.get("publishedDate") or w.get("date") or "",
         })
     return results
 
@@ -71,6 +72,7 @@ def search_serper(query: str, max_results: int = 20) -> list[dict]:
             "url": w.get("link", ""),
             "description": w.get("snippet", ""),
             "source": "serper",
+            "published_date": w.get("date") or w.get("publishedDate") or "",
         })
     return results
 
@@ -93,6 +95,14 @@ def main():
     else:
         print("WARN: No BRAVE_API_KEY or SERPER_API_KEY set; returning empty results", file=sys.stderr)
         results = []
+    project_id = os.environ.get("RESEARCH_PROJECT_ID", "")
+    if project_id and results:
+        try:
+            from tools.research_budget import track_api_call
+            api_name = "brave_search" if secrets.get("BRAVE_API_KEY") else "serper_search"
+            track_api_call(project_id, api_name, count=1)
+        except Exception:
+            pass
     print(json.dumps(results, indent=2, ensure_ascii=False))
 
 

@@ -18,12 +18,23 @@ from tools.research_common import project_dir, load_project, save_project
 
 # Cost per token (USD).  Format: model -> (input_cost_per_token, output_cost_per_token)
 MODEL_COSTS: dict[str, tuple[float, float]] = {
-    "gpt-4.1-mini":  (0.40 / 1_000_000,  1.60 / 1_000_000),
-    "gpt-4.1":       (2.00 / 1_000_000,  8.00 / 1_000_000),
-    "gpt-4o-mini":   (0.15 / 1_000_000,  0.60 / 1_000_000),
+    "gpt-4.1-mini":              (0.40 / 1_000_000,  1.60 / 1_000_000),
+    "gpt-4.1":                   (2.00 / 1_000_000,  8.00 / 1_000_000),
+    "gpt-4o-mini":               (0.15 / 1_000_000,  0.60 / 1_000_000),
+    "gpt-5.2":                   (1.75 / 1_000_000, 14.00 / 1_000_000),
+    "gemini-3.1-pro-preview":    (2.00 / 1_000_000, 12.00 / 1_000_000),
 }
 
 _FALLBACK_COST: tuple[float, float] = (1.00 / 1_000_000, 3.00 / 1_000_000)
+
+# API costs per call (USD). Semantic Scholar and arXiv are free.
+API_COSTS: dict[str, float] = {
+    "brave_search": 0.005,   # ~$5/1000 queries
+    "serper_search": 0.001,  # ~$1/1000 queries (plan-dependent)
+    "jina_reader": 0.002,    # ~$2/1000 reads (free tier: 0)
+    "semantic_scholar": 0.0,
+    "arxiv": 0.0,
+}
 
 DEFAULT_BUDGET_LIMIT = 3.00
 
@@ -44,6 +55,20 @@ def track_usage(project_id: str, model: str, input_tokens: int, output_tokens: i
     proj_path = project_dir(project_id)
     data = load_project(proj_path)
     data["current_spend"] = round(data.get("current_spend", 0.0) + added, 8)
+    save_project(proj_path, data)
+    return data["current_spend"]
+
+
+def track_api_call(project_id: str, api_name: str, count: int = 1) -> float:
+    """Track API cost (web search, reader, etc.) and add to project spend. Returns new current_spend."""
+    cost = API_COSTS.get(api_name, 0.0) * count
+    if cost <= 0:
+        return load_project(project_dir(project_id)).get("current_spend", 0.0)
+    proj_path = project_dir(project_id)
+    data = load_project(proj_path)
+    data["current_spend"] = round(data.get("current_spend", 0.0) + cost, 8)
+    data.setdefault("spend_breakdown", {})
+    data["spend_breakdown"][api_name] = round(data["spend_breakdown"].get(api_name, 0.0) + cost, 8)
     save_project(proj_path, data)
     return data["current_spend"]
 

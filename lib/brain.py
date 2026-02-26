@@ -484,12 +484,36 @@ Be honest and specific. A failed job with useful error info is more valuable tha
             reflection = self._llm_json(system_prompt, user_prompt)
         except Exception as e:
             status = action_result.get("status", "unknown")
-            q = 0.7 if status == "DONE" else 0.2
+            exit_code = action_result.get("exit_code", -1)
+            job_dir = action_result.get("job_dir", "")
+            log_text = ""
+            if job_dir:
+                log_path = Path(job_dir) / "log.txt"
+                if log_path.exists():
+                    try:
+                        log_text = log_path.read_text()[-500:]
+                    except Exception:
+                        pass
+            if status == "DONE" and exit_code == 0:
+                q = 0.75
+                outcome = "Job completed successfully"
+                went_well = "Execution completed without errors"
+                went_wrong = "LLM reflection unavailable — using metrics-based assessment"
+            elif status == "FAILED":
+                q = 0.25
+                outcome = f"Job failed (exit code {exit_code})"
+                went_well = "none"
+                went_wrong = f"Job failed: {log_text[-200:]}" if log_text else "Unknown failure"
+            else:
+                q = 0.4
+                outcome = f"Job status: {status}"
+                went_well = "Partial completion"
+                went_wrong = "Unclear outcome"
             reflection = {
-                "outcome_summary": f"Action completed with status: {status}",
-                "went_well": "Execution completed" if status == "DONE" else "none",
-                "went_wrong": str(e) if status != "DONE" else "LLM reflection unavailable",
-                "learnings": "Ensure LLM connectivity for reflection",
+                "outcome_summary": outcome,
+                "went_well": went_well,
+                "went_wrong": went_wrong,
+                "learnings": f"Metrics-based reflection (LLM unavailable: {e})",
                 "quality_score": q,
                 "should_retry": status == "FAILED",
                 "playbook_update": None,

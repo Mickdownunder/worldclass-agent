@@ -15,11 +15,15 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import load_secrets, project_dir, load_project, ensure_project_layout, llm_retry
+from tools.research_common import project_dir, load_project, ensure_project_layout, llm_call
 
 
 def _model():
     return os.environ.get("RESEARCH_EXTRACT_MODEL", "gpt-4.1-mini")
+
+
+def _verify_model():
+    return os.environ.get("RESEARCH_VERIFY_MODEL", "gpt-5.2")
 
 
 def _load_sources(proj_path: Path, max_items: int = 50) -> list[dict]:
@@ -44,27 +48,11 @@ def _load_findings(proj_path: Path, max_items: int = 50) -> list[dict]:
     return findings[:max_items]
 
 
-def _llm_json(system: str, user: str, project_id: str = "") -> dict | list:
-    """Call LLM with retry and optional budget tracking."""
-    from openai import OpenAI
-    secrets = load_secrets()
-    client = OpenAI(api_key=secrets.get("OPENAI_API_KEY"))
-    model = _model()
-
-    @llm_retry()
-    def _call():
-        return client.responses.create(model=model, instructions=system, input=user)
-
-    resp = _call()
-
-    if project_id:
-        try:
-            from tools.research_budget import track_usage
-            track_usage(project_id, model, resp.usage.input_tokens, resp.usage.output_tokens)
-        except Exception:
-            pass
-
-    text = (resp.output_text or "").strip()
+def _llm_json(system: str, user: str, project_id: str = "", *, model: str | None = None) -> dict | list:
+    """Call LLM with retry and optional budget tracking. Uses _model() unless model= is given (e.g. _verify_model())."""
+    m = model if model is not None else _model()
+    result = llm_call(m, system, user, project_id=project_id)
+    text = (result.text or "").strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
@@ -129,7 +117,7 @@ For each claim, list ALL sources that support it — both from full findings AND
 Return JSON: {"claims": [{"claim": "...", "supporting_sources": ["url1", "url2"], "confidence": 0.0-1.0, "verified": true/false}]}
 verified = true only if at least 2 distinct source URLs support the claim. Be strict but thorough in matching."""
     user = f"QUESTION: {question}\n\nFINDINGS (full content):\n{items}\n\nSOURCE METADATA (search snippets — use as supporting evidence for cross-referencing):\n{meta_text}\n\nExtract claims and verification status. Return only valid JSON."
-    out = _llm_json(system, user, project_id=project_id)
+    out = _llm_json(system, user, project_id=project_id, model=_verify_model())
     if isinstance(out, dict) and "claims" in out:
         return out
     return {"claims": out if isinstance(out, list) else []}
@@ -242,7 +230,7 @@ For each fact, state verification status based on how many sources mention it co
 Return JSON: {"facts": [{"statement": "...", "verification_status": "confirmed|disputed|unverifiable", "source": "url or summary"}]}
 confirmed = multiple sources agree; disputed = sources disagree; unverifiable = only one source or unclear."""
     user = f"FINDINGS:\n{items}\n\nList 3-10 key facts with status. Return only valid JSON."
-    out = _llm_json(system, user, project_id=project_id)
+    out = _llm_json(system, user, project_id=project_id, model=_verify_model())
     if isinstance(out, dict) and "facts" in out:
         return out
     return {"facts": out if isinstance(out, list) else []}

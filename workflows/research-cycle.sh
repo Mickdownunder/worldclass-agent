@@ -23,8 +23,13 @@ if [ -z "$PROJECT_ID" ] || [ ! -d "$RESEARCH/$PROJECT_ID" ]; then
 fi
 
 PROJ_DIR="$RESEARCH/$PROJECT_ID"
+export RESEARCH_PROJECT_ID="$PROJECT_ID"
 SECRETS="$OPERATOR_ROOT/conf/secrets.env"
 [ -f "$SECRETS" ] && set -a && source "$SECRETS" && set +a
+export GEMINI_API_KEY="${GEMINI_API_KEY:-}"
+export RESEARCH_SYNTHESIS_MODEL="${RESEARCH_SYNTHESIS_MODEL:-gpt-5.2}"
+export RESEARCH_CRITIQUE_MODEL="${RESEARCH_CRITIQUE_MODEL:-gpt-5.2}"
+export RESEARCH_VERIFY_MODEL="${RESEARCH_VERIFY_MODEL:-gpt-5.2}"
 
 PHASE=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('phase','explore'), end='')")
 QUESTION=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('question',''), end='')")
@@ -70,10 +75,13 @@ if [ "$PHASE" != "done" ] && [ -f "$TOOLS/research_budget.py" ]; then
   if [ "$BUDGET_OK" != "1" ]; then
     log "Budget exceeded — setting status FAILED_BUDGET_EXCEEDED"
     python3 -c "
-import json; from pathlib import Path
+import json
+from pathlib import Path
+from datetime import datetime, timezone
 p = Path('$PROJ_DIR/project.json')
 d = json.loads(p.read_text())
 d['status'] = 'FAILED_BUDGET_EXCEEDED'
+d['completed_at'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 p.write_text(json.dumps(d, indent=2))"
     exit 0
   fi
@@ -81,46 +89,7 @@ fi
 
 advance_phase() {
   local next_phase="$1"
-  python3 - "$PROJ_DIR" "$next_phase" <<'PY'
-import json, sys
-from pathlib import Path
-from datetime import datetime, timezone
-p = Path(sys.argv[1])
-new_phase = sys.argv[2]
-d = json.loads((p / "project.json").read_text())
-now = datetime.now(timezone.utc)
-now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-# Track phase timing
-prev_phase = d.get("phase", "unknown")
-prev_at = d.get("last_phase_at", "")
-if prev_at and prev_phase != new_phase:
-    try:
-        started = datetime.fromisoformat(prev_at.replace("Z", "+00:00"))
-        duration_s = round((now - started).total_seconds(), 1)
-        d.setdefault("phase_timings", {})[prev_phase] = {
-            "started_at": prev_at,
-            "completed_at": now_str,
-            "duration_s": duration_s,
-        }
-    except Exception:
-        pass
-# Phase history for loop-back limit (max 2 returns to same phase)
-d.setdefault("phase_history", []).append(new_phase)
-loop_count = d["phase_history"].count(new_phase)
-if loop_count > 2:
-  order = ["explore", "focus", "connect", "verify", "synthesize", "done"]
-  try:
-    idx = order.index(new_phase)
-    if idx < len(order) - 1:
-      new_phase = order[idx + 1]
-  except ValueError:
-    pass
-d["phase"] = new_phase
-d["last_phase_at"] = now_str
-if new_phase == "done":
-  d["status"] = "done"
-(p / "project.json").write_text(json.dumps(d, indent=2))
-PY
+  python3 "$TOOLS/research_advance_phase.py" "$PROJ_DIR" "$next_phase"
 }
 
 case "$PHASE" in
@@ -164,6 +133,7 @@ d.setdefault("quality_gate", {})["evidence_gate"] = {
   "metrics": {},
 }
 d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M:%SZ")
+d["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 (proj_dir / "project.json").write_text(json.dumps(d, indent=2))
 PREFLIGHT_FAIL
       echo "Preflight failed — project status set."
@@ -201,6 +171,42 @@ else:
       python3 "$TOOLS/research_academic.py" semantic_scholar "$QUESTION" --max 5 > "$ART/semantic_scholar.json" 2>> "$PWD/log.txt" || true
       python3 "$TOOLS/research_academic.py" arxiv "$QUESTION" --max 5 > "$ART/arxiv.json" 2>> "$PWD/log.txt" || true
     fi
+    # Query diversification: 2 alternative search angles for source diversity
+    python3 - "$PROJ_DIR" "$ART" "$QUESTION" "$PROJECT_ID" "$OPERATOR_ROOT" <<'ALTQUERY' 2>> "$PWD/log.txt" || true
+import json, sys, os
+from pathlib import Path
+proj_dir, art, question, project_id, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+os.chdir(op_root)
+sys.path.insert(0, str(op_root))
+from tools.research_common import llm_call
+existing = "main question and keyword search"
+system = "Generate exactly 2 alternative search queries that approach the research question from different angles (e.g. different terminology, opposing viewpoint, related but distinct aspect). Return valid JSON array of 2 strings only: [\"query1\", \"query2\"]."
+user = f"QUESTION: {question}\nEXISTING COVERAGE: {existing}\n\nReturn 2 alternative search queries as JSON array."
+try:
+    result = llm_call(os.environ.get("RESEARCH_EXTRACT_MODEL", "gpt-4.1-mini"), "", user, project_id=project_id)
+    text = (result.text or "").strip()
+    if text.startswith("```"): text = text.split("```")[1].replace("json", "").strip()
+    out = json.loads(text)
+    if isinstance(out, list) and len(out) >= 2:
+        (art / "explore_alt_queries.json").write_text(json.dumps(out[:2]))
+except Exception:
+    pass
+ALTQUERY
+    if [ -f "$ART/explore_alt_queries.json" ]; then
+      for aidx in 0 1; do
+        alt_q=$(python3 -c "
+import json
+try:
+  d = json.load(open('$ART/explore_alt_queries.json'))
+  q = d[$aidx] if isinstance(d, list) and len(d) > $aidx else ''
+  print(q.strip() if isinstance(q, str) else '', end='')
+except Exception:
+  pass
+" 2>/dev/null)
+        [ -z "$alt_q" ] && continue
+        python3 "$TOOLS/research_web_search.py" "$alt_q" --max 5 > "$ART/explore_alt_$aidx.json" 2>> "$PWD/log.txt" || true
+      done
+    fi
     python3 - "$PROJ_DIR" "$ART" "$QUESTION" <<'PY'
 import json, sys, hashlib, re
 from pathlib import Path
@@ -214,7 +220,7 @@ for raw_w in question.lower().split():
       core_words.add(clean)
 saved = 0
 skipped = 0
-for name in ["web_search.json", "semantic_scholar.json", "arxiv.json"]:
+for name in ["web_search.json", "semantic_scholar.json", "arxiv.json", "explore_alt_0.json", "explore_alt_1.json"]:
   f = art / name
   if not f.exists(): continue
   try: data = json.loads(f.read_text())
@@ -328,7 +334,7 @@ if text:
     if matches < threshold:
       sys.exit(0)
   fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
-  (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:2000], "source": "read", "confidence": 0.6}))
+  (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:4000], "source": "read", "confidence": 0.6}))
 INNER
     done < "$ART/read_order.txt"
     # Persist read stats for gate diagnosis; fail fast if 0 extractable content despite sources
@@ -344,6 +350,8 @@ read_failures = max(0, attempts - successes)
   "read_failures": read_failures,
 }, indent=2))
 STATS
+    # Deep extraction: 2-5 key facts per long source (for research-firm-grade reports)
+    python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
     SOURCES_COUNT=$(python3 -c "
 from pathlib import Path
 p = Path('$PROJ_DIR/sources')
@@ -372,6 +380,7 @@ if stats_file.exists():
   except Exception:
     pass
 d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+d["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 (proj_dir / "project.json").write_text(json.dumps(d, indent=2))
 READER_FAIL
       python3 "$TOOLS/research_abort_report.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
@@ -382,9 +391,24 @@ READER_FAIL
     ;;
   focus)
     log "Phase: FOCUS — gap analysis and targeted search"
-    python3 "$TOOLS/research_reason.py" "$PROJECT_ID" gap_analysis > "$ART/gaps.json" 2>> "$PWD/log.txt" || true
-    # Top 3 gaps: run one search per gap and merge to project sources
-    if [ -f "$ART/gaps.json" ]; then
+    if [ -f "$PROJ_DIR/verify/deepening_queries.json" ]; then
+      log "Iterative deepening: using targeted queries from verify gaps"
+      DEEP_COUNT=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/verify/deepening_queries.json')); print(len(d.get('queries',[])), end='')" 2>/dev/null) || DEEP_COUNT=0
+      for qidx in 0 1 2 3 4; do
+        [ "$qidx" -ge "${DEEP_COUNT:-0}" ] && break
+        extra_query=$(python3 -c "
+import json, sys
+d = json.load(open('$PROJ_DIR/verify/deepening_queries.json'))
+q = d.get('queries', [])
+i = $qidx
+print((q[i] if i < len(q) else '').strip(), end='')
+" 2>/dev/null)
+        [ -z "$extra_query" ] && continue
+        python3 "$TOOLS/research_web_search.py" "$extra_query" --max 5 > "$ART/focus_search_$qidx.json" 2>> "$PWD/log.txt" || true
+      done
+      rm -f "$PROJ_DIR/verify/deepening_queries.json"
+    else
+      python3 "$TOOLS/research_reason.py" "$PROJECT_ID" gap_analysis > "$ART/gaps.json" 2>> "$PWD/log.txt" || true
       for gidx in 0 1 2; do
         [ ! -f "$ART/gaps.json" ] && break
         extra_query=$(python3 - "$ART/gaps.json" "$QUESTION" "$gidx" <<'GAPONE'
@@ -403,6 +427,9 @@ GAPONE
         [ -z "$extra_query" ] && extra_query="$QUESTION"
         python3 "$TOOLS/research_web_search.py" "$extra_query" --max 5 > "$ART/focus_search_$gidx.json" 2>> "$PWD/log.txt" || true
       done
+    fi
+    # Merge focus search results into sources
+    if ls "$ART"/focus_search_*.json 1>/dev/null 2>&1; then
       python3 - "$PROJ_DIR" "$ART" "$QUESTION" <<'PY'
 import json, sys, hashlib, re
 from pathlib import Path
@@ -414,7 +441,7 @@ for raw_w in question.lower().split():
     clean = re.sub(r'[^a-z0-9]', '', part)
     if len(clean) >= 4 and clean not in STOP:
       core_words.add(clean)
-for name in ["focus_search.json", "focus_search_0.json", "focus_search_1.json", "focus_search_2.json"]:
+for name in ["focus_search.json", "focus_search_0.json", "focus_search_1.json", "focus_search_2.json", "focus_search_3.json", "focus_search_4.json"]:
   f = art / name
   if not f.exists():
     continue
@@ -514,49 +541,15 @@ if text:
     if matches < threshold:
       sys.exit(0)
   fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
-  (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:2000], "source": "read", "confidence": 0.6}))
+  (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:4000], "source": "read", "confidence": 0.6}))
 INNER
     done < "$ART/focus_read_order.txt"
     log "Focus reads: $focus_read_attempts attempted, $focus_read_successes succeeded"
+    python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
     advance_phase "connect"
     ;;
   connect)
-    log "Phase: CONNECT — contradictions, entity extraction, hypotheses"
-    # Fail fast with explicit code if openai missing (reasoning stack)
-    if ! python3 -c "import openai" 2>/dev/null; then
-      log "OpenAI missing — connect phase failed (failed_dependency_missing_openai)"
-      python3 - "$PROJ_DIR" <<'CONNECT_OPENAI_FAIL'
-import sys, os
-from pathlib import Path
-sys.path.insert(0, os.environ.get("OPERATOR_ROOT", "/root/operator"))
-from tools.research_preflight import apply_connect_openai_fail_to_project
-apply_connect_openai_fail_to_project(Path(sys.argv[1]))
-CONNECT_OPENAI_FAIL
-      echo "Connect failed — project status set."
-      exit 1
-    fi
-    python3 "$TOOLS/research_entity_extract.py" "$PROJECT_ID" >> "$PWD/log.txt" 2>&1 || true
-    python3 "$TOOLS/research_reason.py" "$PROJECT_ID" contradiction_detection > "$PROJ_DIR/contradictions.json" 2>> "$PWD/log.txt" || true
-    python3 "$TOOLS/research_reason.py" "$PROJECT_ID" hypothesis_formation > "$ART/hypotheses.json" 2>> "$PWD/log.txt" || true
-    if [ -f "$ART/hypotheses.json" ]; then
-      python3 - "$PROJ_DIR" "$ART" <<'PY'
-import json, sys
-from pathlib import Path
-p = Path(sys.argv[1])
-art = Path(sys.argv[2])
-try:
-  h = json.loads((art / "hypotheses.json").read_text())
-except (json.JSONDecodeError, OSError):
-  h = {}
-hyps = h.get("hypotheses", [])[:1]
-th = json.loads((p / "thesis.json").read_text())
-th["current"] = hyps[0].get("statement", "") if hyps else ""
-th["confidence"] = hyps[0].get("confidence", 0.5) if hyps else 0.0
-th["evidence"] = [x.get("evidence_summary", "") for x in hyps]
-(p / "thesis.json").write_text(json.dumps(th, indent=2))
-PY
-    fi
-    advance_phase "verify"
+    source "$OPERATOR_ROOT/workflows/research/phases/connect.sh"
     ;;
   verify)
     log "Phase: VERIFY — source reliability, claim verification, fact-check"
@@ -571,6 +564,91 @@ PY
     # Claim ledger: deterministic is_verified (V3)
     python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_ledger > "$ART/claim_ledger.json" 2>> "$PWD/log.txt" || true
     [ -f "$ART/claim_ledger.json" ] && cp "$ART/claim_ledger.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+    # Counter-evidence: search for contradicting sources for top 3 verified claims (before gate)
+    python3 - "$PROJ_DIR" "$ART" "$TOOLS" "$OPERATOR_ROOT" <<'COUNTER_EVIDENCE' 2>> "$PWD/log.txt" || true
+import json, sys, hashlib, subprocess
+from pathlib import Path
+proj_dir, art, tools, op_root = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4])
+verify_dir = proj_dir / "verify"
+claims_data = []
+for f in ["claim_ledger.json", "claim_verification.json"]:
+    p = verify_dir / f
+    if p.exists():
+        try:
+            data = json.loads(p.read_text())
+            claims_data = data.get("claims", data.get("claims", []))
+            break
+        except Exception:
+            pass
+verified = [c for c in claims_data if c.get("is_verified") or c.get("verified")][:3]
+counter_queries = []
+for c in verified:
+    claim_text = (c.get("text") or c.get("claim") or "")[:80].strip()
+    if not claim_text:
+        continue
+    counter_queries.append(f'"{claim_text}" disputed OR incorrect OR false OR misleading')
+    counter_queries.append(f'{claim_text} criticism OR rebuttal OR different numbers')
+counter_queries = counter_queries[:6]
+for i, q in enumerate(counter_queries):
+    out = art / f"counter_search_{i}.json"
+    try:
+        r = subprocess.run([sys.executable, str(tools / "research_web_search.py"), q, "--max", "3"],
+                          capture_output=True, text=True, timeout=60, cwd=str(op_root))
+        if r.stdout and r.stdout.strip():
+            out.write_text(r.stdout)
+    except Exception:
+        pass
+# Merge counter results into sources and collect URLs to read
+existing_urls = set()
+for f in (proj_dir / "sources").glob("*.json"):
+    if f.name.endswith("_content.json"):
+        continue
+    try:
+        u = json.loads(f.read_text()).get("url", "").strip()
+        if u:
+            existing_urls.add(u)
+    except Exception:
+        pass
+urls_to_read = []
+for i in range(6):
+    f = art / f"counter_search_{i}.json"
+    if not f.exists():
+        continue
+    try:
+        data = json.loads(f.read_text())
+        for item in (data if isinstance(data, list) else []):
+            url = (item.get("url") or "").strip()
+            if not url or url in existing_urls:
+                continue
+            existing_urls.add(url)
+            fid = hashlib.sha256(url.encode()).hexdigest()[:12]
+            (proj_dir / "sources" / f"{fid}.json").write_text(json.dumps({**item, "confidence": 0.5, "source_quality": "counter"}))
+            urls_to_read.append(url)
+    except Exception:
+        pass
+(art / "counter_urls_to_read.txt").write_text("\n".join(urls_to_read[:9]))
+COUNTER_EVIDENCE
+    if [ -f "$ART/counter_urls_to_read.txt" ] && [ -s "$ART/counter_urls_to_read.txt" ]; then
+      while IFS= read -r curl; do
+        [ -z "$curl" ] && continue
+        python3 "$TOOLS/research_web_reader.py" "$curl" > "$ART/read_result.json" 2>> "$PWD/log.txt" || true
+        python3 - "$PROJ_DIR" "$ART" "$curl" <<'COUNTER_READ'
+import json, sys, hashlib
+from pathlib import Path
+proj_dir, art, url = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+if not (art / "read_result.json").exists():
+  sys.exit(0)
+data = json.loads((art / "read_result.json").read_text())
+key = hashlib.sha256(url.encode()).hexdigest()[:12]
+(proj_dir / "sources" / f"{key}_content.json").write_text(json.dumps(data))
+text = (data.get("text") or "")[:8000]
+if text:
+  fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
+  (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:4000], "source": "counter_read", "confidence": 0.5}))
+COUNTER_READ
+      done < "$ART/counter_urls_to_read.txt"
+      python3 "$TOOLS/research_reason.py" "$PROJECT_ID" contradiction_detection > "$PROJ_DIR/contradictions.json" 2>> "$PWD/log.txt" || true
+    fi
     # Evidence Gate: must pass before synthesize
     GATE_RESULT=$(python3 "$TOOLS/research_quality_gate.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || echo '{"pass":false}')
     GATE_PASS=$(echo "$GATE_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('pass') else 0, end='')" 2>/dev/null) || echo "0"
@@ -670,7 +748,7 @@ if text:
     if matches < threshold:
       sys.exit(0)
   fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
-  (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:2000], "source": "read", "confidence": 0.6}))
+  (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:4000], "source": "read", "confidence": 0.6}))
 INNER_RECOVERY
         done < "$ART/recovery_read_order.txt"
         log "Recovery reads: $recovery_reads attempted, $recovery_successes succeeded"
@@ -688,6 +766,63 @@ INNER_RECOVERY
       fi
     fi
     if [ "$GATE_PASS" != "1" ]; then
+      GATE_DECISION=$(echo "$GATE_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('decision','fail'), end='')" 2>/dev/null) || GATE_DECISION="fail"
+      if [ "$GATE_DECISION" = "pending_review" ]; then
+        log "Evidence gate: pending_review — awaiting human approval"
+        python3 - "$PROJ_DIR" "$GATE_RESULT" <<'PENDING_REVIEW'
+import json, sys
+from pathlib import Path
+from datetime import datetime, timezone
+proj_dir, gate_str = Path(sys.argv[1]), sys.argv[2]
+try:
+  gate = json.loads(gate_str)
+except Exception:
+  gate = {"decision": "pending_review", "metrics": {}, "reasons": []}
+d = json.loads((proj_dir / "project.json").read_text())
+d["status"] = "pending_review"
+d.setdefault("quality_gate", {})["evidence_gate"] = {
+  "status": "pending_review",
+  "decision": "pending_review",
+  "fail_code": None,
+  "metrics": gate.get("metrics", {}),
+  "reasons": gate.get("reasons", []),
+}
+d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+(proj_dir / "project.json").write_text(json.dumps(d, indent=2))
+PENDING_REVIEW
+        exit 0
+      fi
+      # decision == "fail": try gap-driven loop-back to focus (max 2)
+      python3 "$TOOLS/research_reason.py" "$PROJECT_ID" gap_analysis > "$ART/gaps_verify.json" 2>> "$PWD/log.txt" || true
+      LOOP_BACK=$(python3 - "$PROJ_DIR" "$ART" <<'LOOPCHECK'
+import json, sys
+from pathlib import Path
+proj_dir, art = Path(sys.argv[1]), Path(sys.argv[2])
+d = json.loads((proj_dir / "project.json").read_text())
+gaps = []
+if (art / "gaps_verify.json").exists():
+  try:
+    gaps = json.loads((art / "gaps_verify.json").read_text()).get("gaps", [])
+  except Exception:
+    pass
+high_gaps = [g for g in gaps if g.get("priority") == "high"]
+phase_history = d.get("phase_history", [])
+loopback_count = phase_history.count("focus")
+if high_gaps and loopback_count < 2:
+  queries = [g.get("suggested_search", "").strip() for g in high_gaps[:5] if g.get("suggested_search", "").strip()]
+  if queries:
+    (proj_dir / "verify").mkdir(parents=True, exist_ok=True)
+    (proj_dir / "verify" / "deepening_queries.json").write_text(json.dumps({"queries": queries}, indent=2))
+  print("1" if queries else "0", end="")
+else:
+  print("0", end="")
+LOOPCHECK
+)
+      if [ "$LOOP_BACK" = "1" ]; then
+        log "Evidence gate failed but high-priority gaps found — looping back to focus (deepening)"
+        advance_phase "focus"
+        exit 0
+      fi
       log "Evidence gate failed — not advancing to synthesize"
       python3 - "$PROJ_DIR" "$GATE_RESULT" <<'GATE_FAIL'
 import json, sys
@@ -697,16 +832,44 @@ proj_dir, gate_str = Path(sys.argv[1]), sys.argv[2]
 try:
   gate = json.loads(gate_str)
 except Exception:
-  gate = {"fail_code": "failed_insufficient_evidence", "metrics": {}, "reasons": []}
+  gate = {"fail_code": "failed_insufficient_evidence", "decision": "fail", "metrics": {}, "reasons": []}
 d = json.loads((proj_dir / "project.json").read_text())
 d["status"] = gate.get("fail_code") or "failed_insufficient_evidence"
-d.setdefault("quality_gate", {})["evidence_gate"] = {"status": "failed", "fail_code": gate.get("fail_code"), "metrics": gate.get("metrics", {}), "reasons": gate.get("reasons", [])}
+d.setdefault("quality_gate", {})["evidence_gate"] = {
+  "status": "failed",
+  "decision": gate.get("decision", "fail"),
+  "fail_code": gate.get("fail_code"),
+  "metrics": gate.get("metrics", {}),
+  "reasons": gate.get("reasons", []),
+}
 d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+d["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 (proj_dir / "project.json").write_text(json.dumps(d, indent=2))
 GATE_FAIL
       # Generate abort report from existing data (zero LLM cost)
       python3 "$TOOLS/research_abort_report.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
       log "Abort report generated for $PROJECT_ID"
+      # Brain/Memory reflection after failed run (non-fatal)
+      python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" <<'BRAIN_REFLECT' 2>> "$PWD/log.txt" || true
+import json, sys
+from pathlib import Path
+proj_dir, op_root, project_id = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+sys.path.insert(0, str(op_root))
+try:
+    d = json.loads((proj_dir / "project.json").read_text())
+    metrics = {"project_id": project_id, "status": d.get("status"), "phase": d.get("phase"), "spend": d.get("current_spend", 0), "phase_timings": d.get("phase_timings", {})}
+    metrics["findings_count"] = len(list((proj_dir / "findings").glob("*.json")))
+    metrics["source_count"] = len([f for f in (proj_dir / "sources").glob("*.json") if "_content" not in f.name])
+    from lib.memory import Memory
+    mem = Memory()
+    mem.record_episode("research_complete", f"Research {project_id} finished: {d.get('status')} | {metrics['findings_count']} findings", metadata=metrics)
+    gate_metrics = d.get("quality_gate", {}).get("evidence_gate", {}).get("metrics", {})
+    quality_proxy = gate_metrics.get("claim_support_rate", 0.0)
+    mem.record_quality(job_id=project_id, score=float(quality_proxy), workflow_id="research-cycle", notes=f"gate_fail | {metrics['findings_count']} findings, {metrics['source_count']} sources")
+    mem.close()
+except Exception as e:
+    print(f"[brain] reflection failed (non-fatal): {e}", file=sys.stderr)
+BRAIN_REFLECT
     else
     echo "$GATE_RESULT" > "$ART/evidence_gate_result.json" 2>/dev/null || true
     python3 - "$PROJ_DIR" "$ART" <<'GATE_PASS'
@@ -721,7 +884,7 @@ if (art / "evidence_gate_result.json").exists():
   except Exception:
     pass
 d = json.loads((proj_dir / "project.json").read_text())
-d.setdefault("quality_gate", {})["evidence_gate"] = {"status": "passed", "metrics": gate.get("metrics", {}), "reasons": []}
+d.setdefault("quality_gate", {})["evidence_gate"] = {"status": "passed", "decision": gate.get("decision", "pass"), "metrics": gate.get("metrics", {}), "reasons": []}
 d["quality_gate"]["last_evidence_gate_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 (proj_dir / "project.json").write_text(json.dumps(d, indent=2))
 GATE_PASS
@@ -758,84 +921,24 @@ VERIFY_PY
   synthesize)
     log "Phase: SYNTHESIZE — report"
     export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
-    export RESEARCH_SYNTHESIS_MODEL="${RESEARCH_SYNTHESIS_MODEL:-gpt-4.1-mini}"
+    # Multi-pass section-by-section synthesis (research-firm-grade report)
+    python3 "$TOOLS/research_synthesize.py" "$PROJECT_ID" > "$ART/report.md" 2>> "$PWD/log.txt" || true
     python3 - "$PROJ_DIR" "$ART" "$OPERATOR_ROOT" <<'PY'
 import json, os, sys
 from pathlib import Path
-proj_dir, art, op_root = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
-findings = []
-for f in (proj_dir / "findings").glob("*.json"):
-  try: findings.append(json.loads(f.read_text()))
-  except: pass
-project = json.loads((proj_dir / "project.json").read_text())
-question = project.get("question", "")
-contra = []
-if (proj_dir / "contradictions.json").exists():
-  try: contra = json.loads((proj_dir / "contradictions.json").read_text()).get("contradictions", [])
-  except: pass
-thesis = json.loads((proj_dir / "thesis.json").read_text())
-# Verify artifacts: read from project verify/ (written by verify phase)
-verify_dir = proj_dir / "verify"
-rel_sources = {}
-facts_note = ""
-if (verify_dir / "source_reliability.json").exists():
-  try:
-    rel = json.loads((verify_dir / "source_reliability.json").read_text())
-    rel_sources = {s.get("url"): s for s in rel.get("sources", [])}
-  except: pass
-if (verify_dir / "fact_check.json").exists():
-  try:
-    fc = json.loads((verify_dir / "fact_check.json").read_text())
-    facts_note = json.dumps(fc.get("facts", [])[:15])[:800]
-  except: pass
-# Synthesis gets neutral data; [VERIFIED] is added deterministically later from claim_ledger
-def finding_line(f):
-  url = f.get("url", "")
-  low = rel_sources.get(url, {}).get("reliability_score", 1) < 0.3
-  tag = " [LOW RELIABILITY]" if low else ""
-  return json.dumps({**f, "url": url + tag}, ensure_ascii=False)
-items_text = json.dumps([json.loads(finding_line(f)) for f in findings[:30]], indent=2, ensure_ascii=False)[:15000]
-verify_instruction = "\nDo NOT add [VERIFIED] tags yourself; they will be added automatically from the claim ledger."
-if facts_note:
-  verify_instruction += "\nFACT-CHECK SUMMARY: " + facts_note
-prompt = f"""You are a research analyst. Synthesize into a short structured report.
-
-RESEARCH QUESTION: {question}
-
-FINDINGS (sources marked [LOW RELIABILITY] should be cited with caution):
-{items_text}
-
-CURRENT THESIS: {thesis.get('current', '')} (confidence: {thesis.get('confidence', 0)})
-
-CONTRADICTIONS TO NOTE: {json.dumps(contra)[:1000]}
-{verify_instruction}
-
-Produce markdown: 1) Executive Summary. 2) Key Findings (bulleted, with source). 3) Contradictions/Gaps. 4) Conclusion/Thesis. 5) Suggested Next Steps."""
-from openai import OpenAI
-sys.path.insert(0, str(op_root))
-from tools.research_common import llm_retry
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-model = os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gpt-4.1-mini")
-@llm_retry()
-def _synth_call():
-    return client.responses.create(model=model, input=prompt)
-resp = _synth_call()
-report = (resp.output_text or "").strip()
-# Budget tracking for synthesis call
-try:
-    from tools.research_budget import track_usage
-    _proj_id = proj_dir.name
-    track_usage(_proj_id, model, resp.usage.input_tokens, resp.usage.output_tokens)
-except Exception:
-    pass
 from datetime import datetime, timezone
+proj_dir, art, op_root = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+verify_dir = proj_dir / "verify"
+report = ""
+if (art / "report.md").exists():
+  report = (art / "report.md").read_text()
 ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-# Deterministic [VERIFIED] from claim_ledger (V3): strip all existing [VERIFIED] first, then only ledger-is_verified get the tag
 claim_ledger = []
 if (verify_dir / "claim_ledger.json").exists():
   try:
     claim_ledger = json.loads((verify_dir / "claim_ledger.json").read_text()).get("claims", [])
   except: pass
+sys.path.insert(0, str(op_root))
 from tools.research_verify import apply_verified_tags_to_report
 report = apply_verified_tags_to_report(report, claim_ledger)
 # Deterministic References section (replaces LLM-generated sources list)
@@ -949,11 +1052,25 @@ for rpt in sorted((proj_dir / "reports").glob("report_*.md"), key=lambda p: p.st
     "is_revised": is_revised,
     "quality_score": critique_score,
     "path": f"research/{proj_dir.name}/reports/{name}",
+    "is_final": False,
   })
+# Last report is final (updated after Critic via MANIFEST_UPDATE for quality_score)
+if manifest_entries:
+  manifest_entries[-1]["is_final"] = True
 (proj_dir / "reports" / "manifest.json").write_text(json.dumps({
   "project_id": proj_dir.name,
   "report_count": len(manifest_entries),
   "reports": manifest_entries,
+  "pipeline": {
+    "synthesis_model": os.environ.get("RESEARCH_SYNTHESIS_MODEL", "unknown"),
+    "critique_model": os.environ.get("RESEARCH_CRITIQUE_MODEL", "unknown"),
+    "verify_model": os.environ.get("RESEARCH_VERIFY_MODEL", "unknown"),
+    "gate_thresholds": {
+      "hard_pass_verified_min": 5,
+      "soft_pass_verified_min": 3,
+      "review_zone_rate": 0.4,
+    },
+  },
 }, indent=2))
 PY
     # Quality Gate: critic pass, optionally revise if score < 0.6
@@ -985,6 +1102,7 @@ d["status"] = "failed_quality_gate"
 d.setdefault("quality_gate", {})["critic_score"] = score
 d["quality_gate"]["quality_gate_status"] = "failed"
 d["quality_gate"]["fail_code"] = "failed_quality_gate"
+d["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 (proj_dir / "project.json").write_text(json.dumps(d, indent=2))
 QF_FAIL
       python3 "$TOOLS/research_abort_report.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
@@ -1011,6 +1129,31 @@ if (art / "critique.json").exists():
 QG
     mkdir -p "$PROJ_DIR/verify"
     [ -f "$ART/critique.json" ] && cp "$ART/critique.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+    # Manifest: set quality_score from critique after Critic block
+    python3 - "$PROJ_DIR" <<'MANIFEST_UPDATE' 2>/dev/null || true
+import json, sys
+from pathlib import Path
+proj_dir = Path(sys.argv[1])
+manifest_path = proj_dir / "reports" / "manifest.json"
+if manifest_path.exists():
+    manifest = json.loads(manifest_path.read_text())
+    critique_score = None
+    critique_file = proj_dir / "verify" / "critique.json"
+    if critique_file.exists():
+        try:
+            critique_score = json.loads(critique_file.read_text()).get("score")
+        except Exception:
+            pass
+    for report in manifest.get("reports", []):
+        if report.get("quality_score") is None and critique_score is not None:
+            report["quality_score"] = critique_score
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+MANIFEST_UPDATE
+    # Generate PDF report (non-fatal)
+    log "Generating PDF report..."
+    python3 "$OPERATOR_ROOT/tools/research_pdf_report.py" "$PROJECT_ID" 2>>"$PWD/log.txt" || log "PDF generation failed (non-fatal)"
+    # Store verified findings in Memory DB for cross-domain learning (non-fatal)
+    python3 "$OPERATOR_ROOT/tools/research_embed.py" "$PROJECT_ID" 2>>"$PWD/log.txt" || true
     advance_phase "done"
     # Telegram: Forschung abgeschlossen (only when passed)
     if [ -x "$TOOLS/send-telegram.sh" ]; then
@@ -1022,6 +1165,28 @@ QG
     if [ "${RESEARCH_AUTO_FOLLOWUP:-0}" = "1" ] && [ -f "$TOOLS/research_auto_followup.py" ]; then
       python3 "$TOOLS/research_auto_followup.py" "$PROJECT_ID" >> "$PWD/log.txt" 2>&1 || true
     fi
+    # Brain/Memory reflection after successful run (non-fatal)
+    python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" <<'BRAIN_REFLECT' 2>> "$PWD/log.txt" || true
+import json, sys
+from pathlib import Path
+proj_dir, op_root, project_id = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+sys.path.insert(0, str(op_root))
+try:
+    d = json.loads((proj_dir / "project.json").read_text())
+    metrics = {"project_id": project_id, "status": d.get("status"), "phase": d.get("phase"), "spend": d.get("current_spend", 0), "phase_timings": d.get("phase_timings", {})}
+    metrics["findings_count"] = len(list((proj_dir / "findings").glob("*.json")))
+    metrics["source_count"] = len([f for f in (proj_dir / "sources").glob("*.json") if "_content" not in f.name])
+    metrics["read_success"] = len([f for f in (proj_dir / "sources").glob("*_content.json")])
+    from lib.memory import Memory
+    mem = Memory()
+    mem.record_episode("research_complete", f"Research {project_id} finished: {d.get('status')} | {metrics['findings_count']} findings, {metrics['source_count']} sources", metadata=metrics)
+    critic_score = d.get("quality_gate", {}).get("critic_score")
+    if critic_score is not None:
+        mem.record_quality(job_id=project_id, score=float(critic_score), workflow_id="research-cycle", notes=f"{metrics['findings_count']} findings, {metrics['source_count']} sources")
+    mem.close()
+except Exception as e:
+    print(f"[brain] reflection failed (non-fatal): {e}", file=sys.stderr)
+BRAIN_REFLECT
     fi
     ;;
   done)
