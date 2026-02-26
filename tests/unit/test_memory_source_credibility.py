@@ -1,6 +1,8 @@
 """Unit tests for lib/memory/source_credibility.py — Laplace, upsert."""
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import pytest
-
 from lib.memory import source_credibility as sc
 
 

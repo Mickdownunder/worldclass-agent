@@ -11,7 +11,7 @@ Alle Tests: reine Unit-Tests mit SQLite in-memory, kein LLM, Laufzeit Millisekun
 
 ### 1. `lib/memory/` — Laplace-Formeln und SQL-Logik
 
-#### 1.1 `tests/lib/test_memory_principles.py` (principles.py)
+#### 1.1 `tests/unit/test_memory_principles.py` (principles.py)
 
 | Test | Beschreibung | Assertions |
 |------|--------------|------------|
@@ -28,7 +28,7 @@ Alle Tests: reine Unit-Tests mit SQLite in-memory, kein LLM, Laufzeit Millisekun
 
 ---
 
-#### 1.2 `tests/lib/test_memory_utility.py` (utility.py)
+#### 1.2 `tests/unit/test_memory_utility.py` (utility.py)
 
 | Test | Beschreibung | Assertions |
 |------|--------------|------------|
@@ -44,7 +44,7 @@ Alle Tests: reine Unit-Tests mit SQLite in-memory, kein LLM, Laufzeit Millisekun
 
 ---
 
-#### 1.3 `tests/lib/test_memory_source_credibility.py` (source_credibility.py)
+#### 1.3 `tests/unit/test_memory_source_credibility.py` (source_credibility.py)
 
 | Test | Beschreibung | Assertions |
 |------|--------------|------------|
@@ -58,7 +58,7 @@ Alle Tests: reine Unit-Tests mit SQLite in-memory, kein LLM, Laufzeit Millisekun
 
 ---
 
-#### 1.4 `tests/lib/test_memory_outcomes.py` (outcomes.py)
+#### 1.4 `tests/unit/test_memory_outcomes.py` (outcomes.py)
 
 | Test | Beschreibung | Assertions |
 |------|--------------|------------|
@@ -72,7 +72,7 @@ Alle Tests: reine Unit-Tests mit SQLite in-memory, kein LLM, Laufzeit Millisekun
 
 ---
 
-#### 1.5 `tests/lib/test_memory_schema.py` (schema.py)
+#### 1.5 `tests/unit/test_memory_schema.py` (schema.py)
 
 | Test | Beschreibung | Assertions |
 |------|--------------|------------|
@@ -87,7 +87,7 @@ Alle Tests: reine Unit-Tests mit SQLite in-memory, kein LLM, Laufzeit Millisekun
 
 ### 2. `lib/memory/__init__.py` — retrieve_with_utility()
 
-#### 2.1 `tests/lib/test_memory_facade.py` (Memory.retrieve_with_utility + source_credibility)
+#### 2.1 `tests/unit/test_memory_facade.py` (Memory.retrieve_with_utility + source_credibility)
 
 | Test | Beschreibung | Assertions |
 |------|--------------|------------|
@@ -136,7 +136,7 @@ Alle Tests: reine Unit-Tests mit SQLite in-memory, kein LLM, Laufzeit Millisekun
 
 ### 5. `lib/brain_context.py` — Query-basierter Pfad
 
-#### 5.1 `tests/lib/test_brain_context.py`
+#### 5.1 `tests/unit/test_brain_context.py`
 
 | Test | Beschreibung | Assertions |
 |------|--------------|------------|
@@ -178,16 +178,16 @@ Alle Tests: reine Unit-Tests mit SQLite in-memory, kein LLM, Laufzeit Millisekun
 | Datei | Inhalt (Kurz) |
 |-------|----------------|
 | `tests/lib/test_memory_principles.py` | Laplace update_usage_success, insert, search, domain filter |
-| `tests/lib/test_memory_utility.py` | record_retrieval, update_from_outcome, Laplace, Concurrency optional |
-| `tests/lib/test_memory_facade.py` | retrieve_with_utility Two-Phase, leere DB, unbekannter type, Kandidat ohne id |
+| `tests/unit/test_memory_utility.py` | record_retrieval, update_from_outcome, Laplace, Concurrency optional |
+| `tests/unit/test_memory_facade.py` | retrieve_with_utility Two-Phase, leere DB, unbekannter type, Kandidat ohne id |
 | `tests/tools/test_research_calibrator.py` | < 10 → None, p25 bei 10/11/100, Floor, fehlende Keys |
-| `tests/lib/test_brain_context.py` | query vs. no-query, strategic_principles vorhanden/fehlend, Fallback ohne retrieve_with_utility |
+| `tests/unit/test_brain_context.py` | query vs. no-query, strategic_principles vorhanden/fehlend, Fallback ohne retrieve_with_utility |
 
 Zusätzlich empfohlen (Priorität 1 vollständig):
 
-- `tests/lib/test_memory_source_credibility.py` — update Laplace + Upsert
-- `tests/lib/test_memory_outcomes.py` — get_successful_outcomes Filter
-- `tests/lib/test_memory_schema.py` — init_schema 15 Tabellen, Migration idempotent
+- `tests/unit/test_memory_source_credibility.py` — update Laplace + Upsert
+- `tests/unit/test_memory_outcomes.py` — get_successful_outcomes Filter
+- `tests/unit/test_memory_schema.py` — init_schema 15 Tabellen, Migration idempotent
 
 ---
 
@@ -198,4 +198,4 @@ Zusätzlich empfohlen (Priorität 1 vollständig):
 - **Calibrator/Brain:** `unittest.mock.patch` oder `pytest` fixtures für Memory / get_calibrated_thresholds.
 - **Kein LLM:** Alle Tests ohne echte API-Calls; Distiller/Knowledge-Seed nur soweit ohne LLM testbar (JSON, leere Daten, Crash-Sicherheit).
 
-Nach Umsetzung: `pytest tests/lib/ tests/tools/test_research_calibrator.py tests/tools/test_research_quality_gate.py -v` aus Repo-Root (mit gesetztem PYTHONPATH oder `python -m pytest`).
+Nach Umsetzung: `pytest tests/unit/ tests/tools/test_research_calibrator.py tests/tools/test_research_quality_gate.py -v` aus Repo-Root (mit gesetztem PYTHONPATH oder `python -m pytest`).

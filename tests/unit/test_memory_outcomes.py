@@ -1,7 +1,9 @@
 """Unit tests for lib/memory/outcomes.py — get_successful_outcomes filter."""
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import json
 import pytest
-
 from lib.memory.outcomes import record_outcome, get_successful_outcomes, count_outcomes
 
 

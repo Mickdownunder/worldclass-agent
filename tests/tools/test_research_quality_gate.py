@@ -1,5 +1,6 @@
 """Unit tests for tools/research_quality_gate.py."""
 import json
+from unittest.mock import patch
 import pytest
 
 from tools.research_quality_gate import (
@@ -7,6 +8,7 @@ from tools.research_quality_gate import (
     EVIDENCE_GATE_THRESHOLDS,
     HARD_PASS_VERIFIED_MIN,
     SOFT_PASS_VERIFIED_MIN,
+    _get_thresholds,
 )
 
 
@@ -40,3 +42,19 @@ def test_gate_metrics_populated(tmp_project, mock_operator_root):
     result = run_evidence_gate(pid)
     assert "metrics" in result
     assert "reasons" in result
+
+
+def test_get_thresholds_uses_calibrated_when_available():
+    """When get_calibrated_thresholds returns a dict, _get_thresholds uses it (calibrated overrides default)."""
+    cal = {"findings_count_min": 12, "unique_source_count_min": 6}
+    with patch("tools.research_calibrator.get_calibrated_thresholds", return_value=cal):
+        t = _get_thresholds()
+    assert t["findings_count_min"] == 12
+    assert t["unique_source_count_min"] == 6
+
+
+def test_get_thresholds_uses_default_when_calibrator_none():
+    """When get_calibrated_thresholds returns None, _get_thresholds returns EVIDENCE_GATE_THRESHOLDS."""
+    with patch("tools.research_calibrator.get_calibrated_thresholds", return_value=None):
+        t = _get_thresholds()
+    assert t == EVIDENCE_GATE_THRESHOLDS

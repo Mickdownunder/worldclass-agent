@@ -1,6 +1,8 @@
 """Unit tests for lib/memory/schema.py — init_schema, migrations."""
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import pytest
-
 from lib.memory.schema import init_schema, migrate_research_findings_quality
 
 EXPECTED_TABLES = [

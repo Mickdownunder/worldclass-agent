@@ -1,9 +1,21 @@
 """Shared pytest fixtures: temp project layout, OPERATOR_ROOT, env, memory DB."""
 import os
+import sys
 import json
 import sqlite3
 import pytest
 from pathlib import Path
+
+# Ensure repo root is on path so "lib" and "tools" are importable
+_ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+
+def pytest_configure(config):
+    """Run before collection so lib/tools are importable when test modules load."""
+    if str(_ROOT) not in sys.path:
+        sys.path.insert(0, str(_ROOT))
 
 
 @pytest.fixture

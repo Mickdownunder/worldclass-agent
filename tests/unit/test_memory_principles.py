@@ -1,6 +1,8 @@
 """Unit tests for lib/memory/principles.py — Laplace formula, insert, search."""
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import pytest
-
 from lib.memory.principles import Principles
 
 
@@ -17,7 +19,7 @@ def test_update_usage_success_formula_first_use(memory_conn):
 
 
 def test_update_usage_success_formula_after_success(memory_conn):
-    """usage=1, success_count=1 → update(pid, True): (2)/(4) = 0.5."""
+    """usage=2, success_count=2 after two update(True): (2+1)/(2+2) = 0.75."""
     p = Principles(memory_conn)
     pid = p.insert("guiding", "Do Y", "proj-1")
     p.update_usage_success(pid, True)
@@ -25,11 +27,11 @@ def test_update_usage_success_formula_after_success(memory_conn):
     row = p.get(pid)
     assert row["usage_count"] == 2
     assert row["success_count"] == 2
-    assert abs(row["metric_score"] - 0.5) < 1e-9
+    assert abs(row["metric_score"] - 0.75) < 1e-9
 
 
 def test_update_usage_success_formula_after_failure(memory_conn):
-    """usage=1, success_count=1 → update(pid, False): (1)/(4) = 0.25."""
+    """usage=2, success_count=1 after one True one False: (1+1)/(2+2) = 0.5."""
     p = Principles(memory_conn)
     pid = p.insert("cautionary", "Avoid Z", "proj-1")
     p.update_usage_success(pid, True)
@@ -37,7 +39,7 @@ def test_update_usage_success_formula_after_failure(memory_conn):
     row = p.get(pid)
     assert row["usage_count"] == 2
     assert row["success_count"] == 1
-    assert abs(row["metric_score"] - 0.25) < 1e-9
+    assert abs(row["metric_score"] - 0.5) < 1e-9
 
 
 def test_update_usage_success_usage_1000(memory_conn):
