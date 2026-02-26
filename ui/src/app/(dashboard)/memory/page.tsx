@@ -1,9 +1,25 @@
-import { getMemorySummary } from "@/lib/operator/memory";
+import Link from "next/link";
+import {
+  getMemorySummary,
+  getPrinciples,
+  getSourceCredibility,
+  getProjectOutcomes,
+  getDecisions,
+  getEntities,
+} from "@/lib/operator/memory";
 
 export const dynamic = "force-dynamic";
 
 export default async function MemoryPage() {
-  const mem = await getMemorySummary();
+  const [mem, principles, credibility, { outcomes, total: outcomesTotal }, decisions, { entities }] = await Promise.all([
+    getMemorySummary(),
+    getPrinciples(50),
+    getSourceCredibility(50),
+    getProjectOutcomes(100),
+    getDecisions(30),
+    getEntities(),
+  ]);
+
   if (!mem) {
     return (
       <div className="space-y-6">
