@@ -10,7 +10,7 @@ vi.mock("fs/promises", async (importOriginal) => {
     writeFile: vi.fn(),
   };
 });
-vi.mock("@/lib/operator/config", () => ({ OPERATOR_ROOT: "/tmp/operator-root" }));
+vi.mock("../config", () => ({ OPERATOR_ROOT: "/tmp/operator-root" }));
 
 describe("research (data layer)", () => {
   beforeEach(() => {

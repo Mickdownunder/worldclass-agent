@@ -16,7 +16,7 @@ export async function POST(
     const project = await getResearchProject(id);
     if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
     const result = await cancelResearchProject(id);
-    return NextResponse.json(result);
+    return NextResponse.json({ killed: result.killed, status: result.status });
   } catch (e) {
     return NextResponse.json(
       { error: String((e as Error).message) },

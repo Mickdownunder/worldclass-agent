@@ -1,6 +1,7 @@
-"""Shared pytest fixtures: temp project layout, OPERATOR_ROOT, env."""
+"""Shared pytest fixtures: temp project layout, OPERATOR_ROOT, env, memory DB."""
 import os
 import json
+import sqlite3
 import pytest
 from pathlib import Path
 
@@ -51,3 +52,15 @@ def mock_env(monkeypatch):
     """Minimal env for tests that need RESEARCH_* or API keys (no real keys)."""
     monkeypatch.setenv("RESEARCH_PROJECT_ID", "test-proj", prepend=False)
     # Optional: monkeypatch.setenv("OPENAI_API_KEY", "sk-test") to avoid missing-key errors in code paths that only check presence
+
+
+@pytest.fixture
+def memory_conn():
+    """In-memory SQLite connection with full memory schema for lib/memory unit tests."""
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys=ON")
+    from lib.memory.schema import init_schema
+    init_schema(conn)
+    yield conn
+    conn.close()

@@ -10,6 +10,11 @@ export function CancelRunButton({ projectId }: { projectId: string }) {
   const [confirm, setConfirm] = useState(false);
   const [message, setMessage] = useState("");
 
+  function sanitizeMessage(raw: string): string {
+    if (/__TURBOPACK|__webpack|\(0,\s*__/.test(raw)) return "Cancel failed";
+    return raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
+  }
+
   async function cancel() {
     setLoading(true);
     setMessage("");
@@ -17,7 +22,7 @@ export function CancelRunButton({ projectId }: { projectId: string }) {
       const res = await fetch(`/api/research/projects/${projectId}/cancel`, { method: "POST" });
       const data = await res.json();
       if (!res.ok) {
-        setMessage(data.error ?? "Cancel failed");
+        setMessage(sanitizeMessage(data?.error ?? "Cancel failed"));
         setLoading(false);
         return;
       }
@@ -25,7 +30,7 @@ export function CancelRunButton({ projectId }: { projectId: string }) {
       setConfirm(false);
       router.refresh();
     } catch (e) {
-      setMessage(String((e as Error).message));
+      setMessage(sanitizeMessage(String((e as Error).message)));
     } finally {
       setLoading(false);
     }
