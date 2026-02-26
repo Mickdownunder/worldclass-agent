@@ -1,0 +1,168 @@
+"""Schema creation and migrations for the memory DB."""
+import sqlite3
+
+
+SCHEMA_SQL = """
+    CREATE TABLE IF NOT EXISTS episodes (
+        id          TEXT PRIMARY KEY,
+        ts          TEXT NOT NULL,
+        kind        TEXT NOT NULL,
+        job_id      TEXT,
+        workflow_id TEXT,
+        content     TEXT NOT NULL,
+        metadata    TEXT DEFAULT '{}',
+        embedding   BLOB
+    );
+
+    CREATE TABLE IF NOT EXISTS decisions (
+        id          TEXT PRIMARY KEY,
+        ts          TEXT NOT NULL,
+        phase       TEXT NOT NULL,
+        inputs      TEXT NOT NULL,
+        reasoning   TEXT NOT NULL,
+        decision    TEXT NOT NULL,
+        confidence  REAL NOT NULL DEFAULT 0.5,
+        trace_id    TEXT,
+        job_id      TEXT,
+        metadata    TEXT DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS reflections (
+        id          TEXT PRIMARY KEY,
+        ts          TEXT NOT NULL,
+        job_id      TEXT NOT NULL,
+        workflow_id TEXT,
+        goal        TEXT,
+        outcome     TEXT NOT NULL,
+        went_well   TEXT,
+        went_wrong  TEXT,
+        learnings   TEXT,
+        quality     REAL NOT NULL DEFAULT 0.5,
+        metadata    TEXT DEFAULT '{}',
+        embedding   BLOB
+    );
+
+    CREATE TABLE IF NOT EXISTS playbooks (
+        id          TEXT PRIMARY KEY,
+        ts_created  TEXT NOT NULL,
+        ts_updated  TEXT NOT NULL,
+        domain      TEXT NOT NULL,
+        strategy    TEXT NOT NULL,
+        evidence    TEXT DEFAULT '[]',
+        success_rate REAL DEFAULT 0.0,
+        version     INTEGER DEFAULT 1,
+        metadata    TEXT DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS quality_scores (
+        id          TEXT PRIMARY KEY,
+        ts          TEXT NOT NULL,
+        job_id      TEXT NOT NULL,
+        workflow_id TEXT,
+        score       REAL NOT NULL,
+        dimension   TEXT DEFAULT 'overall',
+        notes       TEXT DEFAULT ''
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_episodes_kind ON episodes(kind);
+    CREATE INDEX IF NOT EXISTS idx_episodes_job ON episodes(job_id);
+    CREATE INDEX IF NOT EXISTS idx_episodes_ts ON episodes(ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_reflections_job ON reflections(job_id);
+    CREATE INDEX IF NOT EXISTS idx_reflections_quality ON reflections(quality DESC);
+    CREATE INDEX IF NOT EXISTS idx_decisions_trace ON decisions(trace_id);
+    CREATE INDEX IF NOT EXISTS idx_quality_workflow ON quality_scores(workflow_id);
+
+    CREATE TABLE IF NOT EXISTS research_findings (
+        id              TEXT PRIMARY KEY,
+        project_id      TEXT NOT NULL,
+        finding_key     TEXT NOT NULL,
+        content_preview  TEXT NOT NULL,
+        embedding_json  TEXT,
+        ts              TEXT NOT NULL,
+        url             TEXT,
+        title           TEXT
+    );
+    CREATE TABLE IF NOT EXISTS memory_admission_events (
+        id              TEXT PRIMARY KEY,
+        ts             TEXT NOT NULL,
+        project_id      TEXT NOT NULL,
+        finding_key     TEXT NOT NULL,
+        decision        TEXT NOT NULL,
+        reason         TEXT DEFAULT '',
+        scores_json    TEXT DEFAULT '{}'
+    );
+    CREATE INDEX IF NOT EXISTS idx_admission_events_project ON memory_admission_events(project_id);
+    CREATE INDEX IF NOT EXISTS idx_admission_events_ts ON memory_admission_events(ts DESC);
+    CREATE TABLE IF NOT EXISTS cross_links (
+        id              TEXT PRIMARY KEY,
+        finding_a_id    TEXT NOT NULL,
+        finding_b_id    TEXT NOT NULL,
+        project_a       TEXT NOT NULL,
+        project_b       TEXT NOT NULL,
+        similarity      REAL NOT NULL,
+        ts              TEXT NOT NULL,
+        notified        INTEGER DEFAULT 0,
+        UNIQUE(finding_a_id, finding_b_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_research_findings_project ON research_findings(project_id);
+    CREATE INDEX IF NOT EXISTS idx_cross_links_projects ON cross_links(project_a, project_b);
+
+    CREATE TABLE IF NOT EXISTS entities (
+        id              TEXT PRIMARY KEY,
+        name            TEXT NOT NULL,
+        type            TEXT NOT NULL,
+        properties_json  TEXT DEFAULT '{}',
+        first_seen_project TEXT,
+        created_at      TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS entity_relations (
+        id              TEXT PRIMARY KEY,
+        entity_a_id     TEXT NOT NULL,
+        entity_b_id     TEXT NOT NULL,
+        relation_type   TEXT NOT NULL,
+        source_project  TEXT NOT NULL,
+        evidence        TEXT DEFAULT '',
+        created_at     TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS entity_mentions (
+        id              TEXT PRIMARY KEY,
+        entity_id      TEXT NOT NULL,
+        project_id     TEXT NOT NULL,
+        finding_key    TEXT,
+        context_snippet TEXT DEFAULT ''
+    );
+    CREATE INDEX IF NOT EXISTS idx_entities_type ON entities(type);
+    CREATE INDEX IF NOT EXISTS idx_entities_name ON entities(name);
+    CREATE INDEX IF NOT EXISTS idx_entity_mentions_project ON entity_mentions(project_id);
+"""
+
+
+def init_schema(conn: sqlite3.Connection) -> None:
+    conn.executescript(SCHEMA_SQL)
+    conn.commit()
+    migrate_research_findings_quality(conn)
+
+
+def migrate_research_findings_quality(conn: sqlite3.Connection) -> None:
+    """Add quality/admission columns to research_findings if missing (backward compat)."""
+    cur = conn.execute("PRAGMA table_info(research_findings)")
+    existing = {row[1] for row in cur.fetchall()}
+    new_cols = [
+        ("relevance_score", "REAL"),
+        ("reliability_score", "REAL"),
+        ("verification_status", "TEXT"),
+        ("evidence_count", "INTEGER"),
+        ("critic_score", "REAL"),
+        ("importance_score", "REAL"),
+        ("admission_state", "TEXT"),
+    ]
+    for name, typ in new_cols:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE research_findings ADD COLUMN {name} {typ}")
+    conn.execute(
+        "UPDATE research_findings SET admission_state = 'quarantined' WHERE admission_state IS NULL"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_research_findings_admission ON research_findings(admission_state)"
+    )
+    conn.commit()
