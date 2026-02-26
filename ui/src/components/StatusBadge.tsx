@@ -5,6 +5,7 @@ type StatusVariant =
   | "done"
   | "failed"
   | "failed_insufficient_evidence"
+  | "failed_rejected_by_reviewer"
   | "explore"
   | "focus"
   | "connect"
@@ -13,6 +14,8 @@ type StatusVariant =
   | "synthesize"
   | "running"
   | "pending"
+  | "pending_review"
+  | "cancelled"
   | "unknown";
 
 const variantStyles: Record<StatusVariant, { bg: string; text: string; border: string; dot?: string }> = {
@@ -20,10 +23,13 @@ const variantStyles: Record<StatusVariant, { bg: string; text: string; border: s
   done:                        { bg: "bg-emerald-500/10",text: "text-emerald-400",border: "border-emerald-500/25" },
   failed:                      { bg: "bg-rose-500/10",   text: "text-rose-400",   border: "border-rose-500/25" },
   failed_insufficient_evidence:{ bg: "bg-rose-500/10",   text: "text-rose-400",   border: "border-rose-500/25" },
+  failed_rejected_by_reviewer: { bg: "bg-rose-500/10",   text: "text-rose-400",   border: "border-rose-500/25" },
+  pending_review:              { bg: "bg-amber-500/10",  text: "text-amber-400",  border: "border-amber-500/25", dot: "bg-amber-400" },
   verifying:                   { bg: "bg-amber-500/10",  text: "text-amber-400",  border: "border-amber-500/25", dot: "bg-amber-400" },
   verify:                      { bg: "bg-amber-500/10",  text: "text-amber-400",  border: "border-amber-500/25", dot: "bg-amber-400" },
   running:                     { bg: "bg-blue-500/10",   text: "text-blue-400",   border: "border-blue-500/25",  dot: "bg-blue-400" },
   pending:                     { bg: "bg-slate-500/10",  text: "text-slate-400",  border: "border-slate-500/20" },
+  cancelled:                   { bg: "bg-slate-500/10",  text: "text-slate-400",  border: "border-slate-500/20" },
   explore:                     { bg: "bg-indigo-500/10", text: "text-indigo-400", border: "border-indigo-500/20", dot: "bg-indigo-400" },
   focus:                       { bg: "bg-violet-500/10", text: "text-violet-400", border: "border-violet-500/20", dot: "bg-violet-400" },
   connect:                     { bg: "bg-cyan-500/10",   text: "text-cyan-400",   border: "border-cyan-500/20",   dot: "bg-cyan-400" },
@@ -31,10 +37,12 @@ const variantStyles: Record<StatusVariant, { bg: string; text: string; border: s
   unknown:                     { bg: "bg-slate-500/10",  text: "text-slate-500",  border: "border-slate-700/30" },
 };
 
-const ACTIVE_STATUSES = new Set(["active", "running", "explore", "focus", "connect", "verify", "verifying", "synthesize"]);
+const ACTIVE_STATUSES = new Set(["active", "running", "explore", "focus", "connect", "verify", "verifying", "synthesize", "pending_review"]);
 
 const DISPLAY_LABELS: Record<string, string> = {
   failed_insufficient_evidence: "FAILED · INSUFF. EVIDENCE",
+  failed_rejected_by_reviewer: "REJECTED BY REVIEWER",
+  pending_review: "PENDING REVIEW",
   verifying: "VERIFYING",
   synthesize: "SYNTHESIZE",
   explore: "EXPLORE",
@@ -46,6 +54,7 @@ const DISPLAY_LABELS: Record<string, string> = {
   done: "DONE",
   failed: "FAILED",
   pending: "PENDING",
+  cancelled: "CANCELLED",
   unknown: "UNKNOWN",
 };
 
@@ -59,7 +68,10 @@ function toVariant(value: string): StatusVariant {
   if (lower.includes("done") || lower.includes("completed") || lower.includes("success"))
     return "done";
   if (lower.includes("run") || lower.includes("active")) return "running";
+  if (lower.includes("pending_review")) return "pending_review";
   if (lower.includes("pending")) return "pending";
+  if (lower.includes("cancelled")) return "cancelled";
+  if (lower.includes("rejected_by_reviewer")) return "failed_rejected_by_reviewer";
   return "unknown";
 }
 

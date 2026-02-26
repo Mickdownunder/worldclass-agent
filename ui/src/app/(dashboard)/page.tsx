@@ -209,6 +209,7 @@ export default async function CommandCenterPage() {
       {/* Attention Queue */}
       {(() => {
         const needsAttention = projects.filter((p) => {
+          if (p.status === "pending_review") return true;
           if (p.status.startsWith("failed")) return true;
           if (p.status === "paused_rate_limited") return true;
           if (p.status === "FAILED_BUDGET_EXCEEDED") return true;

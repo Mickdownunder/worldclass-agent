@@ -1,5 +1,6 @@
-import { readdir, readFile, rm } from "fs/promises";
+import { readdir, readFile, rm, writeFile } from "fs/promises";
 import path from "path";
+import { execSync } from "child_process";
 import { OPERATOR_ROOT } from "./config";
 
 const RESEARCH_ROOT = path.join(OPERATOR_ROOT, "research");
@@ -54,6 +55,7 @@ export interface PhaseTiming {
 }
 
 export interface ResearchProjectDetail extends ResearchProjectSummary {
+  completed_at?: string;
   last_report_path?: string;
   feedback_count: number;
   quality_gate?: {
@@ -67,6 +69,7 @@ export interface ResearchProjectDetail extends ResearchProjectSummary {
     max_sources?: number;
   };
   phase_history?: string[];
+  spend_breakdown?: Record<string, number>;
 }
 
 export async function listResearchProjects(): Promise<ResearchProjectSummary[]> {
@@ -156,6 +159,7 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
       status: typeof data.status === "string" ? data.status : "unknown",
       phase: typeof data.phase === "string" ? data.phase : "explore",
       created_at: typeof data.created_at === "string" ? data.created_at : "",
+      completed_at: typeof data.completed_at === "string" ? data.completed_at : undefined,
       findings_count: findingsCount,
       reports_count: reportsCount,
       current_spend: typeof data.current_spend === "number" ? data.current_spend : 0,
@@ -177,16 +181,78 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
       phase_history: Array.isArray(data.phase_history)
         ? data.phase_history.filter((p): p is string => typeof p === "string")
         : undefined,
+      spend_breakdown:
+        typeof data.spend_breakdown === "object" && data.spend_breakdown !== null
+          ? (data.spend_breakdown as Record<string, number>)
+          : undefined,
     };
   } catch {
     return null;
   }
 }
 
-/** Permanently delete a research project (removes project folder and all contents). */
+/** Permanently delete a research project (removes project folder and all contents). Kills any running processes for this project first. */
 export async function deleteResearchProject(projectId: string): Promise<void> {
+  await cancelResearchProject(projectId).catch(() => {});
   const projPath = safeProjectPath(projectId);
   await rm(projPath, { recursive: true, force: true });
+}
+
+/** Approve or reject a project in pending_review. Approve: set status=active, phase=synthesize. Reject: set status=failed_rejected_by_reviewer. */
+export async function approveProject(
+  projectId: string,
+  action: "approve" | "reject"
+): Promise<{ status: string; phase?: string }> {
+  const projPath = safeProjectPath(projectId);
+  const projectJsonPath = path.join(projPath, "project.json");
+  const raw = await readFile(projectJsonPath, "utf8");
+  const data = JSON.parse(raw) as Record<string, unknown>;
+  if (action === "approve") {
+    data.status = "active";
+    data.phase = "synthesize";
+  } else {
+    data.status = "failed_rejected_by_reviewer";
+  }
+  await writeFile(projectJsonPath, JSON.stringify(data, null, 2), "utf8");
+  return {
+    status: data.status as string,
+    phase: data.phase as string | undefined,
+  };
+}
+
+/** Cancel a running research project: find and kill matching processes, set status=cancelled. */
+export async function cancelResearchProject(projectId: string): Promise<{ killed: number; status: string }> {
+  const projPath = safeProjectPath(projectId);
+  const projectJsonPath = path.join(projPath, "project.json");
+  let killed = 0;
+  try {
+    const pidsOut = execSync(
+      `ps aux | grep -E '${projectId}|${path.basename(projPath)}' | grep -v grep | awk '{print $2}'`,
+      { encoding: "utf8", maxBuffer: 1024 * 1024 }
+    );
+    const pids = pidsOut.trim().split(/\s+/).filter(Boolean);
+    for (const pid of pids) {
+      try {
+        execSync(`kill ${pid}`, { timeout: 2000 });
+        killed += 1;
+      } catch {
+        // process may already be gone
+      }
+    }
+  } catch {
+    // no matching processes
+  }
+  try {
+    const raw = await readFile(projectJsonPath, "utf8");
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    data.status = "cancelled";
+    data.cancelled_at = new Date().toISOString();
+    data.completed_at = new Date().toISOString();
+    await writeFile(projectJsonPath, JSON.stringify(data, null, 2), "utf8");
+  } catch {
+    // project may not exist if already deleted
+  }
+  return { killed, status: "cancelled" };
 }
 
 export async function getLatestReportMarkdown(projectId: string): Promise<string | null> {
@@ -198,6 +264,28 @@ export async function getLatestReportMarkdown(projectId: string): Promise<string
     if (mdFiles.length === 0) return null;
     const content = await readFile(path.join(reportsDir, mdFiles[0]), "utf8");
     return content;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns the latest PDF report path and filename for a project, or null if none exists.
+ */
+export async function getLatestReportPdf(
+  projectId: string
+): Promise<{ path: string; filename: string } | null> {
+  const projPath = safeProjectPath(projectId);
+  try {
+    const reportsDir = path.join(projPath, "reports");
+    const files = await readdir(reportsDir);
+    const pdfFiles = files.filter((f) => f.endsWith(".pdf")).sort().reverse();
+    if (pdfFiles.length === 0) return null;
+    const filename = pdfFiles[0];
+    return {
+      path: path.join(reportsDir, filename),
+      filename,
+    };
   } catch {
     return null;
   }

@@ -4,6 +4,15 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 
+function slugify(text: string): string {
+  return text
+    .replace(/[^\w\s-]/g, "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .toLowerCase()
+    .slice(0, 50);
+}
+
 interface MarkdownViewProps {
   content: string;
   className?: string;
@@ -12,6 +21,8 @@ interface MarkdownViewProps {
    * that trigger this callback (e.g. open the claim evidence slide-over).
    */
   onVerifiedClick?: (claimId?: string) => void;
+  /** When true, add id to headings for TOC anchor links. */
+  headingIds?: boolean;
 }
 
 /**
@@ -30,8 +41,8 @@ function preprocessMarkdown(content: string, enabled: boolean): string {
   );
 }
 
-function makeComponents(onVerifiedClick?: (claimId?: string) => void): Components {
-  return {
+function makeComponents(onVerifiedClick?: (claimId?: string) => void, headingIds?: boolean): Components {
+  const comp: Components = {
     // Intercept inline code to render [VERIFIED] as a clickable badge
     code({ children, className, ...props }) {
       const text = String(children);
@@ -61,11 +72,26 @@ function makeComponents(onVerifiedClick?: (claimId?: string) => void): Component
       );
     },
   };
+  if (headingIds) {
+    comp.h1 = ({ children }) => {
+      const text = String(children);
+      return <h1 id={slugify(text)}>{children}</h1>;
+    };
+    comp.h2 = ({ children }) => {
+      const text = String(children);
+      return <h2 id={slugify(text)}>{children}</h2>;
+    };
+    comp.h3 = ({ children }) => {
+      const text = String(children);
+      return <h3 id={slugify(text)}>{children}</h3>;
+    };
+  }
+  return comp;
 }
 
-export function MarkdownView({ content, className = "", onVerifiedClick }: MarkdownViewProps) {
+export function MarkdownView({ content, className = "", onVerifiedClick, headingIds }: MarkdownViewProps) {
   const processed = preprocessMarkdown(content, !!onVerifiedClick);
-  const components = onVerifiedClick ? makeComponents(onVerifiedClick) : undefined;
+  const components = makeComponents(onVerifiedClick, headingIds);
 
   return (
     <div

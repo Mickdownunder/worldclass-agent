@@ -3,12 +3,16 @@ import { notFound } from "next/navigation";
 import {
   getResearchProject,
   getLatestReportMarkdown,
+  getLatestReportPdf,
+  getAudit,
   type ResearchProjectDetail,
 } from "@/lib/operator/research";
 import { StatusBadge } from "@/components/StatusBadge";
 import { StartCycleButton } from "@/components/StartCycleButton";
 import { CreateFollowupButton } from "@/components/CreateFollowupButton";
 import { DeleteProjectButton } from "@/components/DeleteProjectButton";
+import { ReviewPanel } from "@/components/ReviewPanel";
+import { CancelRunButton } from "@/components/CancelRunButton";
 import { ExecutionTree } from "@/components/ExecutionTree";
 import { LiveRefresh } from "@/components/LiveRefresh";
 import { ResearchDetailTabs } from "./ResearchDetailTabs";
@@ -50,8 +54,24 @@ export default async function ResearchProjectPage({
   const project = await getResearchProject(id);
   if (!project) notFound();
 
-  const markdown = await getLatestReportMarkdown(id);
-  const isActive = project.status !== "done" && project.status !== "failed";
+  const [markdown, pdfInfo, audit] = await Promise.all([
+    getLatestReportMarkdown(id),
+    getLatestReportPdf(id),
+    project.status === "pending_review" ? getAudit(id) : Promise.resolve(null),
+  ]);
+  const TERMINAL_STATUSES = new Set(["done", "failed", "cancelled"]);
+  const isTerminal = TERMINAL_STATUSES.has(project.status) || project.status.startsWith("failed");
+  let completedAt: string | undefined = project.completed_at;
+  if (!completedAt && isTerminal && project.phase_timings) {
+    const timings = Object.values(project.phase_timings);
+    const latest = timings
+      .map((t) => t.completed_at)
+      .filter(Boolean)
+      .sort()
+      .pop();
+    completedAt = latest;
+  }
+  const isActive = !isTerminal;
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -85,9 +105,10 @@ export default async function ResearchProjectPage({
               </span>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2 flex-wrap">
             <StatusBadge status={project.status} />
-            {isActive && <StartCycleButton projectId={id} />}
+            {isActive && project.status !== "pending_review" && <StartCycleButton projectId={id} />}
+            {project.status === "active" && <CancelRunButton projectId={id} />}
             {project.status === "done" && <CreateFollowupButton projectId={id} />}
             <DeleteProjectButton projectId={id} projectQuestion={project.question} />
           </div>
@@ -110,7 +131,7 @@ export default async function ResearchProjectPage({
               value: (
                 <span className="font-mono text-sm font-semibold"
                   style={{ color: "var(--tron-text)" }}>
-                  {elapsed(project.created_at)}
+                  {elapsed(project.created_at, completedAt)}
                 </span>
               ),
             },
@@ -135,8 +156,7 @@ export default async function ResearchProjectPage({
             {
               label: "Budget",
               value: (
-                <span className="font-mono text-sm font-semibold"
-                  style={{ color: "var(--tron-text)" }}>
+                <span className="font-mono text-sm font-semibold" title={project.spend_breakdown && Object.keys(project.spend_breakdown).length > 0 ? Object.entries(project.spend_breakdown).map(([k, v]) => `${k}: $${v.toFixed(4)}`).join(" | ") : undefined} style={{ color: "var(--tron-text)" }}>
                   ${project.current_spend.toFixed(2)} / ${project.config?.budget_limit ?? 3}
                 </span>
               ),
@@ -184,6 +204,10 @@ export default async function ResearchProjectPage({
         </div>
       </div>
 
+      {project.status === "pending_review" && (
+        <ReviewPanel projectId={id} project={project} audit={audit} />
+      )}
+
       {/* ── Execution Tree ────────────────────────────────────── */}
       <div
         className="rounded-lg px-5 py-4"
@@ -213,7 +237,7 @@ export default async function ResearchProjectPage({
         style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg-panel)" }}
       >
         <div className="px-5 pt-4">
-          <ResearchDetailTabs projectId={id} initialMarkdown={markdown} />
+          <ResearchDetailTabs projectId={id} initialMarkdown={markdown} hasPdf={!!pdfInfo} project={project} />
         </div>
         <div style={{ height: 4 }} />
       </div>
@@ -240,7 +264,7 @@ function GateMetricsInline({ project }: { project: ResearchProjectDetail }) {
     );
   }
 
-  const gateStatus = gate.status || "pending";
+  const gateStatus = gate.status || (gate as { decision?: string }).decision || "pending";
   const items = [
     { label: "Sources Found", value: metrics.unique_source_count, threshold: 5 },
     { label: "Findings", value: metrics.findings_count, threshold: 8 },
@@ -258,6 +282,8 @@ function GateMetricsInline({ project }: { project: ResearchProjectDetail }) {
             ? "color-mix(in srgb, var(--tron-success) 30%, transparent)"
             : gateStatus === "failed"
             ? "color-mix(in srgb, var(--tron-error) 30%, transparent)"
+            : gateStatus === "pending_review"
+            ? "color-mix(in srgb, var(--tron-amber, #f59e0b) 30%, transparent)"
             : "var(--tron-border)"
         }`,
         background: "var(--tron-bg-panel)",
@@ -275,18 +301,24 @@ function GateMetricsInline({ project }: { project: ResearchProjectDetail }) {
                 ? "color-mix(in srgb, var(--tron-success) 10%, transparent)"
                 : gateStatus === "failed"
                 ? "color-mix(in srgb, var(--tron-error) 10%, transparent)"
+                : gateStatus === "pending_review"
+                ? "color-mix(in srgb, var(--tron-amber, #f59e0b) 10%, transparent)"
                 : "var(--tron-bg)",
             color:
               gateStatus === "passed"
                 ? "var(--tron-success)"
                 : gateStatus === "failed"
                 ? "var(--tron-error)"
+                : gateStatus === "pending_review"
+                ? "var(--tron-amber, #f59e0b)"
                 : "var(--tron-text-dim)",
             border: `1px solid ${
               gateStatus === "passed"
                 ? "color-mix(in srgb, var(--tron-success) 25%, transparent)"
                 : gateStatus === "failed"
                 ? "color-mix(in srgb, var(--tron-error) 25%, transparent)"
+                : gateStatus === "pending_review"
+                ? "color-mix(in srgb, var(--tron-amber, #f59e0b) 25%, transparent)"
                 : "var(--tron-border)"
             }`,
           }}>
