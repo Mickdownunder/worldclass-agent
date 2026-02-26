@@ -1,4 +1,4 @@
-import { readdir, readFile } from "fs/promises";
+import { readdir, readFile, rm } from "fs/promises";
 import path from "path";
 import { OPERATOR_ROOT } from "./config";
 
@@ -181,6 +181,12 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
   } catch {
     return null;
   }
+}
+
+/** Permanently delete a research project (removes project folder and all contents). */
+export async function deleteResearchProject(projectId: string): Promise<void> {
+  const projPath = safeProjectPath(projectId);
+  await rm(projPath, { recursive: true, force: true });
 }
 
 export async function getLatestReportMarkdown(projectId: string): Promise<string | null> {

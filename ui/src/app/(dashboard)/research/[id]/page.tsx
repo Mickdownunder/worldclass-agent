@@ -8,6 +8,7 @@ import {
 import { StatusBadge } from "@/components/StatusBadge";
 import { StartCycleButton } from "@/components/StartCycleButton";
 import { CreateFollowupButton } from "@/components/CreateFollowupButton";
+import { DeleteProjectButton } from "@/components/DeleteProjectButton";
 import { ExecutionTree } from "@/components/ExecutionTree";
 import { ResearchDetailTabs } from "./ResearchDetailTabs";
 
@@ -86,6 +87,7 @@ export default async function ResearchProjectPage({
             <StatusBadge status={project.status} />
             {isActive && <StartCycleButton projectId={id} />}
             {project.status === "done" && <CreateFollowupButton projectId={id} />}
+            <DeleteProjectButton projectId={id} projectQuestion={project.question} />
           </div>
         </div>
 

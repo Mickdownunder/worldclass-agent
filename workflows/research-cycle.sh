@@ -838,18 +838,96 @@ if (verify_dir / "claim_ledger.json").exists():
   except: pass
 from tools.research_verify import apply_verified_tags_to_report
 report = apply_verified_tags_to_report(report, claim_ledger)
+# Deterministic References section (replaces LLM-generated sources list)
+import re as _re
+# Strip any LLM-generated References/Sources section at end of report
+report = _re.sub(
+    r'\n---\s*\n\*?\*?(?:Sources|References)\*?\*?:?\s*\n.*',
+    '', report, flags=_re.DOTALL | _re.IGNORECASE
+).rstrip()
+report = _re.sub(
+    r'\n#+\s*(?:Sources|References)\s*\n.*',
+    '', report, flags=_re.DOTALL | _re.IGNORECASE
+).rstrip()
+
+# Collect unique URLs with titles from findings + source metadata
+ref_map = {}  # url -> title
+for fp in sorted((proj_dir / "findings").glob("*.json")):
+    try:
+        fd = json.loads(fp.read_text())
+        fu = (fd.get("url") or "").strip()
+        if fu and fu not in ref_map:
+            ref_map[fu] = (fd.get("title") or "").strip()
+    except Exception:
+        pass
+for sp in sorted((proj_dir / "sources").glob("*.json")):
+    if "_content" in sp.name:
+        continue
+    try:
+        sd = json.loads(sp.read_text())
+        su = (sd.get("url") or "").strip()
+        if su and su not in ref_map:
+            ref_map[su] = (sd.get("title") or "").strip()
+    except Exception:
+        pass
+
+# Only include sources that appear in claim_ledger
+cited_urls = set()
+for c in claim_ledger:
+    for u in c.get("supporting_source_ids", []):
+        cited_urls.add(u.strip())
+refs = [(u, ref_map.get(u, "")) for u in cited_urls if u in ref_map]
+refs.sort(key=lambda r: r[1] or r[0])
+
+if refs:
+    report += "\n\n---\n\n## References\n\n"
+    for i, (url, title) in enumerate(refs, 1):
+        if title:
+            report += f"[{i}] {title}  \n    {url}\n\n"
+        else:
+            report += f"[{i}] {url}\n\n"
 (art / "report.md").write_text(report)
 (proj_dir / "reports" / f"report_{ts}.md").write_text(report)
 # Audit: claim_evidence_map per report (include verification_reason for UI: verified/disputed/unverified)
+# Build URL -> excerpt index from findings
+findings_by_url = {}
+for fp in sorted((proj_dir / "findings").glob("*.json")):
+    try:
+        fd = json.loads(fp.read_text())
+        fu = (fd.get("url") or "").strip()
+        if fu and fd.get("excerpt"):
+            findings_by_url.setdefault(fu, fd["excerpt"][:500])
+    except Exception:
+        pass
+
+# Also try source metadata (title+description) as fallback snippet
+for sp in sorted((proj_dir / "sources").glob("*.json")):
+    if "_content" in sp.name:
+        continue
+    try:
+        sd = json.loads(sp.read_text())
+        su = (sd.get("url") or "").strip()
+        if su and su not in findings_by_url:
+            snippet = (sd.get("description") or sd.get("title") or "")[:300]
+            if snippet:
+                findings_by_url[su] = snippet
+    except Exception:
+        pass
+
 claim_evidence_map = {"report_id": f"report_{ts}.md", "ts": ts, "claims": []}
 for c in claim_ledger:
-  claim_evidence_map["claims"].append({
-    "claim_id": c.get("claim_id"),
-    "text": (c.get("text") or "")[:500],
-    "is_verified": c.get("is_verified"),
-    "verification_reason": c.get("verification_reason"),
-    "supporting_source_ids": c.get("supporting_source_ids", []),
-  })
+    evidence = []
+    for src_url in c.get("supporting_source_ids", []):
+        snippet = findings_by_url.get(src_url, "")
+        evidence.append({"url": src_url, "snippet": snippet})
+    claim_evidence_map["claims"].append({
+        "claim_id": c.get("claim_id"),
+        "text": (c.get("text") or "")[:500],
+        "is_verified": c.get("is_verified"),
+        "verification_reason": c.get("verification_reason"),
+        "supporting_source_ids": c.get("supporting_source_ids", []),
+        "supporting_evidence": evidence,
+    })
 (proj_dir / "reports" / f"claim_evidence_map_{ts}.json").write_text(json.dumps(claim_evidence_map, indent=2))
 (proj_dir / "verify" / "claim_evidence_map_latest.json").write_text(json.dumps(claim_evidence_map, indent=2))
 # Generate report manifest
