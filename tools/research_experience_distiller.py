@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""
+Experience Distiller (EvolveR-based): summarize completed research trajectories into
+guiding and cautionary principles. Includes Dedup (among new) and Match-or-Create (vs DB).
+Usage: research_experience_distiller.py <project_id>
+"""
+import json
+import os
+import sys
+from pathlib import Path
+from collections import deque
+
+# Allow importing operator lib and tools
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+SIMILARITY_THRESHOLD_KEYWORDS = 2  # min shared significant words to consider for LLM same-check
+MAX_PAIRS_FOR_DEDUP = 20  # cap LLM calls for pairwise dedup
+TOP_CANDIDATES_FOR_MATCH = 5
+
+
+def _llm_same_principle(principle_a: str, principle_b: str, project_id: str, model: str) -> bool:
+    """LLM: Are these two principles saying the same thing? Yes/No."""
+    from tools.research_common import llm_call
+    system = "You are a research analyst. Answer only Yes or No. Do not explain."
+    user = f"Principle A: {principle_a[:400]}\n\nPrinciple B: {principle_b[:400]}\n\nAre A and B saying the same thing? Answer only Yes or No."
+    try:
+        result = llm_call(model, system, user, project_id=project_id)
+        text = (result.text or "").strip().upper()
+        return text.startswith("YES")
+    except Exception:
+        return False
+
+
+def _llm_equivalent_to_existing(new_principle: str, existing_principle: str, project_id: str, model: str) -> bool:
+    """LLM: Is this new principle equivalent to this existing one? Yes/No."""
+    from tools.research_common import llm_call
+    system = "You are a research analyst. Answer only Yes or No. Do not explain."
+    user = f"New principle: {new_principle[:400]}\n\nExisting principle: {existing_principle[:400]}\n\nIs the new principle equivalent to the existing one (same meaning)? Answer only Yes or No."
+    try:
+        result = llm_call(model, system, user, project_id=project_id)
+        text = (result.text or "").strip().upper()
+        return text.startswith("YES")
+    except Exception:
+        return False
+
+
+def _dedup_principles(principles_data: list[dict], project_id: str, model: str) -> list[dict]:
+    """
+    Among new principles: pairwise LLM same-check, BFS connected components, keep one rep per cluster.
+    Returns list of representative principles (deduplicated).
+    """
+    if len(principles_data) <= 1:
+        return principles_data
+    # Build similarity graph: for each pair with some keyword overlap, ask LLM
+    n = len(principles_data)
+    text_by_i = {i: (p.get("principle") or p.get("description") or "")[:500] for i, p in enumerate(principles_data)}
+    adj: dict[int, list[int]] = {i: [] for i in range(n)}
+    pairs_done = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            if pairs_done >= MAX_PAIRS_FOR_DEDUP:
+                break
+            a, b = text_by_i[i], text_by_i[j]
+            if not a or not b:
+                continue
+            words_a = set(w for w in a.lower().split() if len(w) > 3)
+            words_b = set(w for w in b.lower().split() if len(w) > 3)
+            if len(words_a & words_b) < SIMILARITY_THRESHOLD_KEYWORDS:
+                continue
+            if _llm_same_principle(a, b, project_id, model):
+                adj[i].append(j)
+                adj[j].append(i)
+            pairs_done += 1
+        if pairs_done >= MAX_PAIRS_FOR_DEDUP:
+            break
+    # BFS connected components; keep index with longest description as representative
+    visited = set()
+    representatives = []
+    for start in range(n):
+        if start in visited:
+            continue
+        comp = []
+        q = deque([start])
+        while q:
+            u = q.popleft()
+            if u in visited:
+                continue
+            visited.add(u)
+            comp.append(u)
+            for v in adj[u]:
+                if v not in visited:
+                    q.append(v)
+        rep_idx = max(comp, key=lambda i: len(text_by_i[i]))
+        representatives.append(principles_data[rep_idx])
+    return representatives
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        print("Usage: research_experience_distiller.py <project_id>", file=sys.stderr)
+        sys.exit(2)
+    project_id = sys.argv[1].strip()
+    proj_dir = ROOT / "research" / project_id
+    if not proj_dir.is_dir():
+        print(f"Project dir not found: {proj_dir}", file=sys.stderr)
+        sys.exit(1)
+
+    project_json = proj_dir / "project.json"
+    if not project_json.exists():
+        sys.exit(0)
+    d = json.loads(project_json.read_text())
+    status = d.get("status", "")
+    domain = d.get("domain", "general")
+    question = (d.get("question") or "")[:500]
+    phase_timings = d.get("phase_timings", {})
+    quality_gate = d.get("quality_gate", {})
+    critic_score = quality_gate.get("critic_score")
+    if critic_score is None:
+        critic_score = quality_gate.get("evidence_gate", {}).get("metrics", {}).get("claim_support_rate", 0.5)
+    if not isinstance(critic_score, (int, float)):
+        critic_score = 0.5
+
+    findings_count = len(list((proj_dir / "findings").glob("*.json")))
+    source_count = len([f for f in (proj_dir / "sources").glob("*.json") if "_content" not in f.name])
+
+    trajectory = {
+        "topic": question,
+        "domain": domain,
+        "phases_completed": list(phase_timings.keys()),
+        "phase_timings": phase_timings,
+        "findings_count": findings_count,
+        "source_count": source_count,
+        "final_status": status,
+        "critic_score": critic_score,
+    }
+    trajectory_str = json.dumps(trajectory, indent=2)
+
+    success = (critic_score >= 0.7 and status == "done") or (status == "done" and critic_score >= 0.5)
+    principle_type = "guiding" if success else "cautionary"
+    if success:
+        prompt_instruction = (
+            "Extract 3-5 GUIDING principles for future research projects in this domain. "
+            "Each principle must be abstract enough to generalize, grounded in the trajectory, and actionable. "
+            "Return a JSON array of objects with keys: principle (string), evidence (string), confidence (number 0-1)."
+        )
+    else:
+        prompt_instruction = (
+            "Extract 2-3 CAUTIONARY principles — what to AVOID in future research. "
+            "Return a JSON array of objects with keys: principle (string), evidence (string), confidence (number 0-1)."
+        )
+
+    model = os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gpt-4o-mini")
+    system = (
+        "You are a research quality analyst. Given a completed research project trajectory, "
+        "extract concise principles. Output only valid JSON array, no markdown."
+    )
+    user = f"Trajectory:\n{trajectory_str}\n\n{prompt_instruction}"
+
+    try:
+        from tools.research_common import llm_call
+        result = llm_call(model, system, user, project_id=project_id)
+    except Exception as e:
+        print(f"Distiller LLM failed (non-fatal): {e}", file=sys.stderr)
+        sys.exit(0)
+
+    text = (result.text or "").strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines)
+    try:
+        principles_data = json.loads(text)
+    except json.JSONDecodeError as e:
+        print(f"Distiller JSON parse failed (non-fatal): {e}", file=sys.stderr)
+        sys.exit(0)
+    if not isinstance(principles_data, list):
+        sys.exit(0)
+
+    # Dedup among new principles (EvolveR-style: pairwise + BFS clusters)
+    principles_data = _dedup_principles(principles_data[:15], project_id, model)
+
+    try:
+        from lib.memory import Memory
+        mem = Memory()
+        for p in principles_data:
+            desc = (p.get("principle") or p.get("description") or "").strip()
+            if not desc or len(desc) < 10:
+                continue
+            evidence = p.get("evidence") or ""
+            evidence_json = json.dumps([evidence]) if evidence else "[]"
+
+            # Match or Create: search existing, LLM equivalent check, then update or insert
+            candidates = mem.search_principles(desc, limit=TOP_CANDIDATES_FOR_MATCH, domain=domain or None, principle_type=principle_type)
+            matched = False
+            for c in candidates:
+                existing_desc = (c.get("description") or "")[:500]
+                if not existing_desc:
+                    continue
+                if _llm_equivalent_to_existing(desc, existing_desc, project_id, model):
+                    mem.update_principle_usage_success(c["id"], success=success)
+                    mem.append_principle_evidence(c["id"], project_id, evidence[:500])
+                    matched = True
+                    break
+            if not matched:
+                mem.insert_principle(
+                    principle_type=principle_type,
+                    description=desc[:2000],
+                    source_project_id=project_id,
+                    domain=domain or None,
+                    evidence_json=evidence_json,
+                    metric_score=0.5,
+                )
+        mem.close()
+    except Exception as e:
+        print(f"Distiller Memory write failed (non-fatal): {e}", file=sys.stderr)
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()
