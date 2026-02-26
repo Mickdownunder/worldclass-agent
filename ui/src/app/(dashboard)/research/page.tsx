@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { listResearchProjects } from "@/lib/operator/research";
-import { StatusBadge } from "@/components/StatusBadge";
 import { EmptyState } from "@/components/EmptyState";
 import { CreateProjectForm } from "@/components/CreateProjectForm";
+import { LiveRefresh } from "@/components/LiveRefresh";
+import { StatusBadge } from "@/components/StatusBadge";
 
 export const dynamic = "force-dynamic";
 
@@ -35,10 +36,11 @@ export default async function ResearchPage() {
     <div className="space-y-6 animate-fade-in">
       {/* ── Header ────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
+        <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold tracking-tight" style={{ color: "var(--tron-text)" }}>
             Research Projects
           </h1>
+          <LiveRefresh enabled={active.length > 0} intervalMs={7000} showIndicator={true} />
           <p className="mt-0.5 text-sm" style={{ color: "var(--tron-text-muted)" }}>
             Due-diligence and research jobs — click any row for forensic detail view
           </p>

@@ -10,6 +10,7 @@ import { StartCycleButton } from "@/components/StartCycleButton";
 import { CreateFollowupButton } from "@/components/CreateFollowupButton";
 import { DeleteProjectButton } from "@/components/DeleteProjectButton";
 import { ExecutionTree } from "@/components/ExecutionTree";
+import { LiveRefresh } from "@/components/LiveRefresh";
 import { ResearchDetailTabs } from "./ResearchDetailTabs";
 
 export const dynamic = "force-dynamic";
@@ -73,11 +74,12 @@ export default async function ResearchProjectPage({
           className="flex flex-wrap items-start justify-between gap-4 px-5 py-4"
           style={{ borderBottom: "1px solid var(--tron-border)" }}
         >
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 flex flex-wrap items-center gap-2">
             <h1 className="text-lg font-semibold leading-snug" style={{ color: "var(--tron-text)" }}>
               {project.question || "Untitled Research"}
             </h1>
-            <div className="mt-1 flex items-center gap-2">
+            <LiveRefresh enabled={isActive} intervalMs={5000} showIndicator={true} />
+            <div className="w-full mt-1 flex items-center gap-2">
               <span className="font-mono text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
                 {id}
               </span>

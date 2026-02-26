@@ -73,45 +73,81 @@ def _detect_paywall(html: str) -> bool:
     return False
 
 
+_COOKIE_CONSENT_PATTERNS = re.compile(
+    r"Bevor Sie zu Google weitergehen|"
+    r"Before you continue to Google|"
+    r"Alle akzeptieren|Accept all|"
+    r"cookie-consent-content|"
+    r"consent\.google\.com",
+    re.IGNORECASE,
+)
+
+
+def _is_cookie_consent(text: str) -> bool:
+    """Detect Google/generic cookie consent pages that contain no real article content."""
+    if not text or len(text.strip()) < 50:
+        return True
+    return bool(_COOKIE_CONSENT_PATTERNS.search(text[:2000]))
+
+
 def fetch_via_google_cache(url: str, timeout: int = 15) -> tuple[str, str]:
     """Try Google's cache of the URL. Returns (title, text)."""
-    cache_url = f"https://webcache.googleusercontent.com/search?q=cache:{url}"
-    req = Request(cache_url, headers={"User-Agent": _BROWSER_UA, "Accept-Language": "en-US,en;q=0.9"})
+    cache_url = f"https://webcache.googleusercontent.com/search?q=cache:{url}&hl=en&gl=us"
+    req = Request(cache_url, headers={
+        "User-Agent": _BROWSER_UA,
+        "Accept-Language": "en-US,en;q=0.9",
+        "Cookie": "CONSENT=YES+cb.20210720-07-p0.en+FX+111",
+    })
     try:
         with urlopen(req, timeout=timeout) as r:
             html = r.read().decode("utf-8", errors="replace")
         BeautifulSoup_cls = _get_bs4()
         if BeautifulSoup_cls:
-            return extract_with_bs4(html, BeautifulSoup_cls)
+            title, text = extract_with_bs4(html, BeautifulSoup_cls)
+            if _is_cookie_consent(text):
+                print(f"[google_cache] Cookie-consent page detected for {url}", file=sys.stderr)
+                return ("", "")
+            return (title, text)
     except Exception:
         pass
     return ("", "")
 
 
 def fetch_via_jina(url: str, timeout: int = 45) -> tuple[str, str]:
-    """Fetch readable content via Jina Reader API. Returns (title, markdown_text).
-    Uses ProxyHandler({}) so Jina is called direct (bypasses system proxy)."""
+    """Fetch readable content via Jina Reader API using curl subprocess.
+    curl has network privileges that Python urlopen lacks in sandboxed environments."""
+    import subprocess
     try:
         from tools.research_common import load_secrets
         secrets = load_secrets()
     except Exception:
         secrets = {}
     jina_url = f"https://r.jina.ai/{url}"
-    headers = {
-        "Accept": "text/markdown",
-        "X-No-Cache": "true",
-        "X-Timeout": "30",
-    }
+    cmd = [
+        "curl", "-s", "-S",
+        "-H", "Accept: text/markdown",
+        "-H", "X-No-Cache: true",
+        "-H", f"X-Timeout: {timeout - 10}",
+        "--max-time", str(timeout),
+    ]
     jina_key = secrets.get("JINA_API_KEY", "")
     if jina_key:
-        headers["Authorization"] = f"Bearer {jina_key}"
-    req = Request(jina_url, headers=headers)
+        cmd += ["-H", f"Authorization: Bearer {jina_key}"]
+    cmd.append(jina_url)
     try:
-        opener = build_opener(ProxyHandler({}))
-        with opener.open(req, timeout=timeout) as r:
-            md = r.read().decode("utf-8", errors="replace")
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+        if result.returncode != 0:
+            err = (result.stderr or "").strip()[:200]
+            print(f"[jina] curl error {url}: code={result.returncode} {err}", file=sys.stderr)
+            return ("", "")
+        md = result.stdout
+    except subprocess.TimeoutExpired:
+        print(f"[jina] timeout {url} ({timeout}s)", file=sys.stderr)
+        return ("", "")
     except Exception as exc:
         print(f"[jina] FAIL {url}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return ("", "")
+    if not md or len(md.strip()) < 50:
         return ("", "")
     title = ""
     for line in md.splitlines():
@@ -247,7 +283,7 @@ def main():
 
     if jina_first:
         fb_title, fb_text = fetch_via_jina(url)
-        if fb_text.strip():
+        if fb_text.strip() and not _is_cookie_consent(fb_text):
             out["title"] = fb_title
             out["text"] = fb_text
             out["fallback"] = "jina_first"
@@ -263,7 +299,7 @@ def main():
                 title, text = extract_with_readability(html, url, Document_cls, BeautifulSoup_cls)
             else:
                 title, text = extract_with_bs4(html, BeautifulSoup_cls)
-            if _detect_paywall(html) or len(text.strip()) < 100:
+            if _detect_paywall(html) or len(text.strip()) < 100 or _is_cookie_consent(text):
                 fallback_chain.append({"method": "direct", "result": "paywall_or_thin"})
             else:
                 out["title"] = title
@@ -292,7 +328,7 @@ def main():
             remaining = [r for r in remaining if r[0] != "jina"]
         for fb_name, fb_fn in remaining:
             fb_title, fb_text = fb_fn(url)
-            if fb_text.strip():
+            if fb_text.strip() and not _is_cookie_consent(fb_text):
                 out["title"] = fb_title or out.get("title", "")
                 out["text"] = fb_text
                 out["fallback"] = fb_name
@@ -302,7 +338,8 @@ def main():
                 fallback_chain.append({"method": fb_name, "result": "ok"})
                 break
             else:
-                fallback_chain.append({"method": fb_name, "result": "empty"})
+                reason = "cookie_consent" if (fb_text.strip() and _is_cookie_consent(fb_text)) else "empty"
+                fallback_chain.append({"method": fb_name, "result": reason})
         else:
             if not out["text"]:
                 out["error"] = out.get("error") or "All fallbacks failed"

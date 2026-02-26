@@ -4,6 +4,7 @@ import { listJobs } from "@/lib/operator/jobs";
 import { listResearchProjects } from "@/lib/operator/research";
 import { DashboardQuickActions } from "@/components/DashboardQuickActions";
 import { EventFeed } from "@/components/EventFeed";
+import { LiveRefresh } from "@/components/LiveRefresh";
 import { StatusBadge } from "@/components/StatusBadge";
 
 export const dynamic = "force-dynamic";
@@ -66,14 +67,17 @@ export default async function CommandCenterPage() {
       ? String(blockedReadsValues.reduce((sum, value) => sum + value, 0))
       : "—";
 
+  const needsLiveRefresh = runningJobsCount > 0 || activeProjects.length > 0;
+
   return (
     <div className="space-y-6 animate-fade-in">
       {/* ── Page header ──────────────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
+        <div className="flex items-center gap-3">
           <h1 className="text-xl font-semibold tracking-tight" style={{ color: "var(--tron-text)" }}>
             Command Center
           </h1>
+          <LiveRefresh enabled={needsLiveRefresh} intervalMs={6000} showIndicator={true} />
           <p className="mt-0.5 text-sm" style={{ color: "var(--tron-text-muted)" }}>
             System overview — running jobs, API status, active research
           </p>
