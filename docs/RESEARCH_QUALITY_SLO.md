@@ -13,6 +13,7 @@ Runtime checks and targets for research quality and stability.
 | `failed_dependency_missing_bs4` | Preflight: required module bs4 not installed (reader stack broken) |
 | `failed_reader_no_extractable_content` | Explore: sources present but 0 read_successes (reader failed for all URLs) |
 | `failed_reader_pipeline` | Evidence gate: 0 findings with sources and read_successes=0 (technical extraction failure) |
+| `aem_deadlock` | AEM settlement: cycles > N without state transition (deadlock rate above threshold) |
 
 Projects with these statuses do not reach `done`; they remain in a failed state until criteria are met or the project is reset.
 
@@ -41,6 +42,7 @@ Projects with these statuses do not reach `done`; they remain in a failed state 
 - Policy: `tools/research_memory_policy.py` → `THRESHOLDS`
 - Evidence gate: `tools/research_quality_gate.py` → `EVIDENCE_GATE_THRESHOLDS`
 - Watchdog: `tools/research_watchdog.py` → `DRIFT_*`, `MAX_NEW_FINDINGS_*`
+- AEM (v1): `oracle_integrity_rate >= 0.80` for PASS_STABLE; `tentative_convergence_rate >= 0.60` within TTL; `deadlock_rate <= 0.05`. Enforced in `tools/research_aem_settlement.py` (strict mode: block_synthesize when any threshold violated). Scripts: `tools/research_claim_outcome_schema.py`, `tools/research_episode_metrics.py`, `tools/research_aem_settlement.py`, `tools/research_market_scoring.py`, `tools/research_falsification_gate.py`.
 
 ## V3 SLO targets (start values)
 
