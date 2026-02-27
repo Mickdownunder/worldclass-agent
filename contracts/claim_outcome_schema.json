@@ -1,0 +1,18 @@
+{
+  "schema_version": "v1",
+  "resolution_authority_options": ["internal_auditor", "external_source", "benchmark_suite", "panel"],
+  "outcome_type_options": ["binary", "numeric", "interval", "categorical", "ranking", "explanatory"],
+  "resolution_method_options": ["event", "dataset", "audit_panel", "benchmark", "manual"],
+  "default_claim_outcome": {
+    "resolution_authority": "internal_auditor",
+    "audit_trace_required": false,
+    "allowed_evidence_types": ["primary", "secondary", "review", "dataset", "benchmark"],
+    "oracle_failure_modes": ["ambiguous_resolution", "horizon_exceeded", "evidence_conflict", "oracle_unavailable"],
+    "settlement_confidence_floor_stable": 0.5
+  },
+  "validation_rules": {
+    "panel_or_manual_requires_audit_trace": true,
+    "settlement_confidence_stable_min": 0.5,
+    "evidence_type_mismatch_blocks_stable": true
+  }
+}
