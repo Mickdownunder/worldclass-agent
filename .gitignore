@@ -36,7 +36,7 @@ ui/.env.local
 *.log
 log.txt
 .cache/
-plumber/
+/plumber/
 ui/playwright-report/
 ui/test-results/
 

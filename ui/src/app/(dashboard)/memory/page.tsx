@@ -1,11 +1,16 @@
-import { getMemorySummary } from "@/lib/operator/memory";
+import { getMemorySummary, getDecisions } from "@/lib/operator/memory";
 import { getHealth } from "@/lib/operator/health";
 import { BrainTabs } from "./BrainTabs";
+import { BrainRiverFlowWrapper } from "./BrainRiverFlowWrapper";
 
 export const dynamic = "force-dynamic";
 
 export default async function MemoryPage() {
-  const [mem, health] = await Promise.all([getMemorySummary(), getHealth()]);
+  const [mem, health, decisions] = await Promise.all([
+    getMemorySummary(),
+    getHealth(),
+    getDecisions(50),
+  ]);
 
   if (!mem) {
     return (
@@ -22,85 +27,61 @@ export default async function MemoryPage() {
 
   const { totals } = mem;
 
+  // Build latest cycle from recent decisions: collect most recent entry per phase
+  const latestTrace = (() => {
+    const seen = new Set<string>();
+    const result: typeof decisions = [];
+    for (const d of decisions) {
+      const phase = d.phase?.toLowerCase();
+      if (phase && !seen.has(phase)) {
+        seen.add(phase);
+        result.push(d);
+      }
+    }
+    return result;
+  })();
+
   return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-bold tracking-tight text-tron-text">
-        Brain & Gedächtnis
-      </h1>
-      <p className="max-w-xl text-sm text-tron-muted">
-        Hier siehst du, was das System aus vergangenen Aufgaben gelernt hat (Reflections) und welche Strategien es für die Zukunft anwendet (Playbooks).
-      </p>
-
-      {/* Brain process status: läuft oder hängt */}
-      {health?.brain && ((health.brain.cycle?.count ?? 0) + (health.brain.reflect?.count ?? 0) > 0) && (
-        <div
-          className="rounded-lg px-4 py-3 flex flex-wrap items-center gap-3"
-          style={{
-            background: health.brain.cycle?.stuck || health.brain.reflect?.stuck
-              ? "rgba(245,158,11,0.08)"
-              : "var(--tron-bg-panel)",
-            border: `1px solid ${health.brain.cycle?.stuck || health.brain.reflect?.stuck ? "rgba(245,158,11,0.4)" : "var(--tron-border)"}`,
-          }}
-        >
-          <span className="text-[11px] font-semibold uppercase font-mono" style={{ color: "var(--tron-text-muted)" }}>
-            Brain-Prozesse
-          </span>
-          <span className="font-mono text-sm" style={{ color: "var(--tron-text)" }}>
-            {health.brain.cycle?.count ? `${health.brain.cycle.count} Cycle` : ""}
-            {health.brain.cycle?.count && health.brain.reflect?.count ? " · " : ""}
-            {health.brain.reflect?.count ? `${health.brain.reflect.count} Reflect` : ""}
-          </span>
-          {health.brain.cycle?.max_elapsed_sec != null && health.brain.cycle.max_elapsed_sec > 0 && (
-            <span className="text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
-              längster Cycle: {Math.round(health.brain.cycle.max_elapsed_sec / 60)} min
-            </span>
-          )}
-          {health.brain.reflect?.max_elapsed_sec != null && health.brain.reflect.max_elapsed_sec > 0 && (
-            <span className="text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
-              längster Reflect: {Math.round(health.brain.reflect.max_elapsed_sec / 60)} min
-            </span>
-          )}
-          {(health.brain.cycle?.stuck || health.brain.reflect?.stuck) && (
-            <span
-              className="text-[11px] font-semibold"
-              style={{ color: "var(--tron-warning, #f59e0b)" }}
-            >
-              {"⚠ Hängend (Cycle >10 min oder Reflect >5 min) — ggf. Prozesse beenden: pkill -f 'bin/brain'"}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Top: Stats Bar */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mt-4">
-        <div className="stat-card">
-          <div className="text-[10px] text-tron-dim uppercase font-mono tracking-wider">Ereignisse</div>
-          <div className="text-2xl text-tron-text mt-1">{totals?.episodes ?? 0}</div>
-        </div>
-        <div className="stat-card">
-          <div className="text-[10px] text-tron-dim uppercase font-mono tracking-wider">Entscheidungen</div>
-          <div className="text-2xl text-tron-text mt-1">{totals?.decisions ?? 0}</div>
-        </div>
-        <div className="stat-card">
-          <div className="text-[10px] text-tron-dim uppercase font-mono tracking-wider">Lern-Notizen</div>
-          <div className="text-2xl text-tron-text mt-1">{totals?.reflections ?? 0}</div>
-        </div>
-        <div className="stat-card">
-          <div className="text-[10px] text-tron-dim uppercase font-mono tracking-wider">Ø Qualität</div>
-          <div className="text-2xl text-tron-success mt-1">
-            {totals?.avg_quality != null ? totals.avg_quality.toFixed(2) : "—"}
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="text-[10px] text-tron-dim uppercase font-mono tracking-wider">Prinzipien</div>
-          <div className="text-2xl text-tron-text mt-1">{totals?.principles ?? "—"}</div>
-        </div>
-        <div className="stat-card">
-          <div className="text-[10px] text-tron-dim uppercase font-mono tracking-wider">Outcomes</div>
-          <div className="text-2xl text-tron-text mt-1">{totals?.outcomes ?? "—"}</div>
-        </div>
+    <div className="space-y-6 animate-fade-in">
+      {/* River Flow Hero */}
+      <div
+        className="rounded-xl p-6"
+        style={{
+          background: "linear-gradient(180deg, var(--tron-bg-panel), var(--tron-bg))",
+          border: "1px solid var(--tron-border)",
+        }}
+      >
+        <BrainRiverFlowWrapper
+          latestTrace={latestTrace}
+          totalCycles={totals?.decisions ?? 0}
+          totalReflections={totals?.reflections ?? 0}
+          avgQuality={totals?.avg_quality ?? 0}
+          brain={health?.brain ?? null}
+        />
       </div>
 
+      {/* Stats Grid */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        {[
+          { label: "Ereignisse", value: totals?.episodes ?? 0, color: "var(--tron-text)" },
+          { label: "Entscheidungen", value: totals?.decisions ?? 0, color: "var(--tron-accent)" },
+          { label: "Reflections", value: totals?.reflections ?? 0, color: "#ec4899" },
+          { label: "Ø Qualität", value: totals?.avg_quality != null ? totals.avg_quality.toFixed(2) : "—", color: "var(--tron-success)" },
+          { label: "Prinzipien", value: totals?.principles ?? "—", color: "#8b5cf6" },
+          { label: "Outcomes", value: totals?.outcomes ?? "—", color: "#f59e0b" },
+        ].map((s) => (
+          <div key={s.label} className="stat-card">
+            <div className="text-[10px] uppercase font-mono tracking-wider" style={{ color: "var(--tron-text-dim)" }}>
+              {s.label}
+            </div>
+            <div className="text-2xl font-bold font-mono mt-1" style={{ color: s.color }}>
+              {s.value}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
       <BrainTabs memorySummary={mem} />
     </div>
   );

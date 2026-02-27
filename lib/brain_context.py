@@ -80,15 +80,27 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
     by_project = {k: by_project[k] for k in keys}
     recent = memory.recent_reflections(limit=max_reflections * 2)
     high_reflections = [r for r in recent if (r.get("quality") or 0) >= min_reflection_quality][:max_reflections]
+
+    # Cross-workflow principles: retrieve top-scoring regardless of domain
+    principles = []
+    if hasattr(memory, "list_principles"):
+        principles = memory.list_principles(limit=10)
+
     return {
         "accepted_findings_by_project": by_project,
         "high_quality_reflections": [
             {"job_id": r.get("job_id"), "quality": r.get("quality"), "learnings": (r.get("learnings") or "")[:150]}
             for r in high_reflections
         ],
+        "strategic_principles": [
+            {"description": (p.get("description") or "")[:200], "principle_type": p.get("principle_type"),
+             "metric_score": p.get("metric_score"), "domain": p.get("domain", "")}
+            for p in principles
+        ],
         "totals": {
             "accepted_projects": len(by_project),
             "accepted_findings": sum(len(v) for v in by_project.values()),
             "reflections_above_threshold": len(high_reflections),
+            "principles_count": len(principles),
         },
     }

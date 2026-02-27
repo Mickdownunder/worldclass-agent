@@ -7,6 +7,9 @@ Usage:
   brain perceive
   brain think --goal "..."
   brain reflect <job_dir> [--goal "..."]
+  brain plumber [--target <workflow>] [--governance 0-3]
+  brain plumber --rollback <patch_file>
+  brain plumber --list-patches
   brain memory [--query "..."]
   brain playbooks
   brain quality [--workflow "..."]
@@ -23,7 +26,8 @@ import sys
 # Use venv if present so Brain has tenacity/openai (required for LLM think/reflect)
 _operator_root = os.environ.get("OPERATOR_ROOT") or os.path.expanduser("~/operator")
 _venv_python = os.path.join(_operator_root, ".venv", "bin", "python3")
-if os.path.isfile(_venv_python):
+_in_venv = (hasattr(sys, "prefix") and sys.prefix != sys.base_prefix) or "/.venv/" in (sys.executable or "")
+if os.path.isfile(_venv_python) and not _in_venv:
     os.execv(_venv_python, [_venv_python] + sys.argv)
 
 import json
@@ -170,6 +174,48 @@ def cmd_decisions(args: list[str]):
         print(json.dumps({"decisions": decisions}, indent=2, default=str))
 
 
+def cmd_plumber(args: list[str]):
+    from lib.plumber import (
+        run_plumber, rollback_patch, list_patches,
+        get_fingerprint_stats, _load_fingerprints,
+    )
+
+    if "--rollback" in args:
+        patch_file = args[args.index("--rollback") + 1]
+        result = rollback_patch(patch_file)
+        print(json.dumps(result, indent=2, default=str))
+        return
+
+    if "--list-patches" in args:
+        patches = list_patches()
+        print(json.dumps({"patches": patches}, indent=2, default=str))
+        return
+
+    if "--fingerprints" in args:
+        stats = get_fingerprint_stats()
+        print(json.dumps(stats, indent=2, default=str))
+        return
+
+    if "--fingerprints-full" in args:
+        db = _load_fingerprints()
+        print(json.dumps(db, indent=2, default=str))
+        return
+
+    target = None
+    gov = 2
+    if "--target" in args:
+        target = args[args.index("--target") + 1]
+    if "--governance" in args:
+        gov = int(args[args.index("--governance") + 1])
+
+    report = run_plumber(
+        intent="diagnose-and-fix",
+        target=target,
+        governance_level=gov,
+    )
+    print(json.dumps(report, indent=2, default=str))
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__.strip(), file=sys.stderr)
@@ -183,6 +229,7 @@ def main():
         "perceive": cmd_perceive,
         "think": cmd_think,
         "reflect": cmd_reflect,
+        "plumber": cmd_plumber,
         "memory": cmd_memory,
         "playbooks": cmd_playbooks,
         "quality": cmd_quality,

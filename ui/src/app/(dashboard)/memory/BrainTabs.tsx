@@ -6,8 +6,9 @@ import { PrinciplesTab } from "./tabs/PrinciplesTab";
 import { SourcesTab } from "./tabs/SourcesTab";
 import { BrainTab } from "./tabs/BrainTab";
 import { KnowledgeTab } from "./tabs/KnowledgeTab";
+import { PlumberTab } from "./tabs/PlumberTab";
 
-type TabId = "activity" | "principles" | "sources" | "brain" | "knowledge";
+type TabId = "activity" | "principles" | "sources" | "brain" | "plumber" | "knowledge";
 
 export function BrainTabs({ memorySummary }: { memorySummary: any }) {
   const [activeTab, setActiveTab] = useState<TabId>("activity");
@@ -23,6 +24,7 @@ export function BrainTabs({ memorySummary }: { memorySummary: any }) {
     principles: false,
     sources: false,
     brain: false,
+    plumber: false,
     knowledge: false,
   });
 
@@ -74,6 +76,7 @@ export function BrainTabs({ memorySummary }: { memorySummary: any }) {
     { id: "principles", label: "Principles" },
     { id: "sources", label: "Sources" },
     { id: "brain", label: "Brain" },
+    { id: "plumber", label: "🔧 Plumber" },
     { id: "knowledge", label: "Knowledge" },
   ];
 
@@ -119,6 +122,7 @@ export function BrainTabs({ memorySummary }: { memorySummary: any }) {
         {activeTab === "brain" && (
           <BrainTab decisions={decisions} loading={loading.brain} />
         )}
+        {activeTab === "plumber" && <PlumberTab />}
         {activeTab === "knowledge" && (
           <KnowledgeTab
             entities={entities}

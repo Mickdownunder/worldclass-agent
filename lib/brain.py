@@ -32,8 +32,9 @@ REFLECT_LLM_TIMEOUT_SEC = 90
 
 from .memory import Memory
 from . import brain_context
+from . import plumber as _plumber
 
-BASE = Path.home() / "operator"
+BASE = Path(os.environ.get("OPERATOR_ROOT", str(Path.home() / "operator")))
 CONF = BASE / "conf"
 JOBS = BASE / "jobs"
 WORKFLOWS = BASE / "workflows"
@@ -210,7 +211,7 @@ class Brain:
         else:
             state["research_projects"] = []
 
-        # Research playbooks (domain, strategy for Think)
+        # Research playbooks: merge file-based + DB-learned playbooks
         research_playbooks = []
         playbooks_dir = RESEARCH / "playbooks"
         if playbooks_dir.exists():
@@ -221,9 +222,24 @@ class Brain:
                         "domain": d.get("domain", d.get("id", f.stem)),
                         "name": d.get("name", ""),
                         "strategy": (d.get("strategy", "") or "")[:400],
+                        "source": "file",
                     })
                 except (json.JSONDecodeError, OSError):
                     pass
+        # DB playbooks (learned from reflect() over time)
+        seen_domains = {p["domain"] for p in research_playbooks}
+        for p in self.memory.all_playbooks():
+            domain = p.get("domain", "")
+            if domain and domain not in seen_domains:
+                research_playbooks.append({
+                    "domain": domain,
+                    "name": f"learned:{domain}",
+                    "strategy": (p.get("strategy", "") or "")[:400],
+                    "source": "learned",
+                    "success_rate": p.get("success_rate", 0),
+                    "version": p.get("version", 1),
+                })
+                seen_domains.add(domain)
         state["research_playbooks"] = research_playbooks
 
         # Memory state (only high-quality reflections for planning; low-quality telemetry only)
@@ -239,6 +255,70 @@ class Brain:
                 goal = (p.get("question") or "").strip()[:500]
                 break
         state["research_context"] = brain_context.compile(self.memory, query=goal or None)
+
+        # System health from Plumber (lightweight scan)
+        try:
+            plumber_last = BASE / "plumber" / "last_run.json"
+            if plumber_last.exists():
+                plumber_report = json.loads(plumber_last.read_text())
+                fp = plumber_report.get("fingerprints", {})
+                state["plumber_last_scan"] = {
+                    "timestamp": plumber_report.get("timestamp"),
+                    "issues_found": plumber_report.get("issues_found", 0),
+                    "issues_fixed": plumber_report.get("issues_fixed", 0),
+                    "summary": plumber_report.get("summary", {}),
+                    "fingerprints": {
+                        "total": fp.get("total_fingerprints", 0),
+                        "non_repairable": fp.get("non_repairable", 0),
+                        "on_cooldown": fp.get("on_cooldown", 0),
+                        "fix_success_rate_pct": fp.get("fix_success_rate_pct", 0),
+                        "top_recurring": fp.get("top_recurring", [])[:3],
+                    },
+                    "patch_metrics": plumber_report.get("patch_metrics", {}),
+                }
+        except Exception:
+            pass
+
+        # Workflow health: detect repeated failures for plumber awareness
+        failure_counts: dict[str, int] = {}
+        for j in recent_jobs:
+            if j.get("status") == "FAILED":
+                wf = j.get("workflow", "unknown")
+                failure_counts[wf] = failure_counts.get(wf, 0) + 1
+        sick_workflows = {wf: cnt for wf, cnt in failure_counts.items() if cnt >= 2}
+        if sick_workflows:
+            state["workflow_health"] = {
+                "sick_workflows": sick_workflows,
+                "hint": "Consider plumber:diagnose-and-fix to fix repeated failures",
+            }
+
+        # Workflow quality trends (is each workflow getting better or worse?)
+        try:
+            workflow_trends: dict[str, dict] = {}
+            tracked_wfs = set()
+            for j in recent_jobs:
+                wf = j.get("workflow", "")
+                if wf:
+                    tracked_wfs.add(wf)
+            for wf in list(tracked_wfs)[:10]:
+                scores = self.memory.quality_trend(wf, limit=10)
+                if len(scores) >= 3:
+                    values = [s.get("score", 0) for s in scores]
+                    recent_avg = sum(values[:3]) / 3
+                    older_avg = sum(values[3:]) / max(len(values[3:]), 1)
+                    delta = round(recent_avg - older_avg, 3)
+                    trend = "improving" if delta > 0.05 else "declining" if delta < -0.05 else "stable"
+                    workflow_trends[wf] = {
+                        "recent_avg": round(recent_avg, 3),
+                        "older_avg": round(older_avg, 3),
+                        "delta": delta,
+                        "trend": trend,
+                        "sample_size": len(values),
+                    }
+            if workflow_trends:
+                state["workflow_trends"] = workflow_trends
+        except Exception:
+            pass
 
         # Governance level
         state["governance"] = {
@@ -279,6 +359,28 @@ If memory shows past failures, account for them.
 If playbooks exist for relevant domains, follow their strategies.
 
 Research: If state contains "research_projects" with projects where status != "done" and phase is not "done", consider suggesting "research-cycle" as an action with the project id as reason/context (e.g. action "research-cycle", reason "advance project <project_id>"). Prefer one research-cycle per plan step. Use the workflow id "research-cycle" and the request must be the project id. Research playbooks in state (research_playbooks) describe strategies for different research domains; use them when planning research-related actions.
+
+SELF-HEALING (Plumber): If you observe repeated job failures (2+ failures in the same workflow), suggest action "plumber:diagnose-and-fix" with reason describing the failing workflow (e.g. "research-cycle repeated failures, likely script error"). The Plumber can:
+- Detect and fix shell syntax errors in workflow scripts
+- Analyze job logs for root causes (missing files, modules, timeouts)
+- Create patches with full audit trail
+At governance level ≤1 it only diagnoses; at level 2 it creates dry-run patches; at level 3 it applies fixes automatically.
+Prefer plumber when you see the same workflow failing 2+ times — fixing the root cause is higher impact than retrying.
+
+FINGERPRINT LEARNING: The Plumber tracks every error with a persistent fingerprint. Check state.plumber_last_scan.fingerprints for learning data:
+- "non_repairable" count: errors classified as unfixable (e.g. external API outages, rate limits, disk full, OOM). Do NOT run plumber for these — they need human/infra intervention.
+- "on_cooldown" count: errors where fix attempts failed repeatedly. Plumber will skip these automatically.
+- "fix_success_rate_pct": overall fix success rate — use this to gauge plumber effectiveness.
+- "top_recurring": most frequent error patterns with their workflow and snippet.
+When a workflow's errors are non-repairable, skip it and focus on other productive actions instead of wasting cycles on unfixable issues.
+
+WORKFLOW TRENDS: If state contains "workflow_trends", use it to understand whether workflows are improving or declining:
+- "improving" (delta > 0.05): workflow quality is getting better — keep the current approach.
+- "declining" (delta < -0.05): workflow quality is dropping — investigate or use plumber.
+- "stable": no significant change.
+Prioritize investigating declining workflows over running more cycles on them.
+
+LEARNED PLAYBOOKS: state.research_playbooks may contain entries with "source": "learned". These were generated by the system's own reflect() phase from past successful projects. Treat learned playbooks as valuable — they represent strategies that worked before.
 
 STRATEGIC PRINCIPLES: If state.research_context contains strategic_principles, treat them as hard-won lessons from past projects:
 - GUIDING principles are proven strategies — follow them when applicable.
@@ -392,7 +494,7 @@ Incorporate applicable principles into your plan reasoning."""
     # ------------------------------------------------------------------
 
     def act(self, decision: dict) -> dict:
-        """Execute the decided action through the job engine."""
+        """Execute the decided action through the job engine or internal handler."""
         trace_id = decision.get("_trace_id", _trace_id())
         action = decision.get("action", "none")
 
@@ -408,6 +510,13 @@ Incorporate applicable principles into your plan reasoning."""
             )
             result["_trace_id"] = trace_id
             return result
+
+        # --- Plumber (self-healing) actions ---
+        if action.startswith("plumber:") or action in (
+            "diagnose-and-fix", "diagnose-and-fix-research-cycle-failures",
+            "self-heal", "plumber",
+        ):
+            return self._act_plumber(action, decision, trace_id)
 
         workflow = action if (WORKFLOWS / f"{action}.sh").exists() else None
 
@@ -479,6 +588,78 @@ Incorporate applicable principles into your plan reasoning."""
         return result
 
     # ------------------------------------------------------------------
+    # Internal action: Plumber (self-healing)
+    # ------------------------------------------------------------------
+
+    def _act_plumber(self, action: str, decision: dict, trace_id: str) -> dict:
+        """Run the plumber self-healing subsystem."""
+        reason = (decision.get("reason") or "").strip()
+
+        # Extract target workflow from action or reason
+        target = None
+        import re as _re
+        for pattern in [r"([\w-]+)-failures", r"workflow[:\s]+(\S+)", r"([\w-]+)\.sh"]:
+            m = _re.search(pattern, f"{action} {reason}")
+            if m:
+                target = m.group(1)
+                break
+
+        llm_fn = None
+        try:
+            llm_fn = lambda system, user: self._llm_json(system, user)
+        except Exception:
+            pass
+
+        try:
+            report = _plumber.run_plumber(
+                intent=action,
+                target=target,
+                governance_level=self.governance_level,
+                llm_fn=llm_fn,
+            )
+
+            issues = report.get("issues_found", 0)
+            fixed = report.get("issues_fixed", 0)
+            summary_parts = []
+            for r in report.get("results", [])[:5]:
+                summary_parts.append(
+                    f"[{r.get('type')}] {r.get('target', '?')}: "
+                    f"{r.get('diagnosis', '')[:100]} → {r.get('action', '?')}"
+                )
+            summary = "; ".join(summary_parts) or "No issues detected"
+
+            result = {
+                "executed": True,
+                "action": action,
+                "handler": "plumber",
+                "issues_found": issues,
+                "issues_fixed": fixed,
+                "status": "DONE" if issues == 0 or fixed > 0 else "PARTIAL",
+                "summary": summary,
+                "results": report.get("results", []),
+            }
+            self.memory.record_episode(
+                "act_plumber",
+                f"Plumber ran: {issues} issues found, {fixed} fixed. {summary[:200]}",
+                metadata={"issues_found": issues, "issues_fixed": fixed,
+                          "governance_level": self.governance_level},
+            )
+        except Exception as e:
+            result = {
+                "executed": True,
+                "action": action,
+                "handler": "plumber",
+                "status": "FAILED",
+                "error": str(e),
+            }
+            self.memory.record_episode(
+                "act_plumber_error", f"Plumber failed: {e}",
+            )
+
+        result["_trace_id"] = trace_id
+        return result
+
+    # ------------------------------------------------------------------
     # Phase 5: REFLECT — Evaluate the outcome
     # ------------------------------------------------------------------
 
@@ -514,15 +695,17 @@ Be honest and specific. A failed job with useful error info is more valuable tha
 
         user_prompt = f"GOAL: {goal}\n\nACTION RESULT:\n{json.dumps(action_result, indent=2, default=str)}\n\nJOB LOG (tail):\n{job_context[-3000:]}"
 
+        llm_error: Exception | None = None
         try:
             with ThreadPoolExecutor(max_workers=1) as ex:
                 future = ex.submit(self._llm_json, system_prompt, user_prompt)
                 reflection = future.result(timeout=REFLECT_LLM_TIMEOUT_SEC)
         except (FuturesTimeoutError, TimeoutError):
             reflection = None
-            e = Exception(f"LLM reflection timed out after {REFLECT_LLM_TIMEOUT_SEC}s")
-        except Exception as e:
+            llm_error = Exception(f"LLM reflection timed out after {REFLECT_LLM_TIMEOUT_SEC}s")
+        except Exception as exc:
             reflection = None
+            llm_error = exc
         if reflection is None:
             status = action_result.get("status", "unknown")
             exit_code = action_result.get("exit_code", -1)
@@ -554,7 +737,7 @@ Be honest and specific. A failed job with useful error info is more valuable tha
                 "outcome_summary": outcome,
                 "went_well": went_well,
                 "went_wrong": went_wrong,
-                "learnings": f"Metrics-based reflection (LLM unavailable: {e})",
+                "learnings": f"Metrics-based reflection (LLM unavailable: {llm_error})",
                 "quality_score": q,
                 "should_retry": status == "FAILED",
                 "playbook_update": None,
@@ -587,6 +770,27 @@ Be honest and specific. A failed job with useful error info is more valuable tha
                 strategy=reflection["playbook_update"],
                 evidence=[f"job:{job_id}"],
                 success_rate=quality,
+            )
+
+        # Extract cross-workflow learnings as principles when quality signal is strong
+        learnings = (reflection.get("learnings") or "").strip()
+        if learnings and len(learnings) > 20 and quality >= 0.7:
+            p_type = "guiding"
+            self.memory.insert_principle(
+                principle_type=p_type,
+                description=learnings[:300],
+                source_project_id=job_id,
+                domain=action_result.get("workflow", ""),
+                metric_score=quality,
+            )
+        elif learnings and len(learnings) > 20 and quality <= 0.3:
+            p_type = "cautionary"
+            self.memory.insert_principle(
+                principle_type=p_type,
+                description=learnings[:300],
+                source_project_id=job_id,
+                domain=action_result.get("workflow", ""),
+                metric_score=1 - quality,
             )
 
         self.memory.record_decision(
