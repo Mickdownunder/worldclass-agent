@@ -103,6 +103,34 @@ def build_question_graph(project_id: str) -> dict:
         "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     out = {"questions": [question], "version": "v1"}
+
+    # Migrate legacy init-schema (open/answered) to AEM schema for backward compatibility
+    q_path = proj_path / QUESTIONS_DIR / QUESTIONS_FILENAME
+    if q_path.exists():
+        try:
+            existing = json.loads(q_path.read_text(encoding="utf-8"))
+            if "open" in existing and "questions" not in existing:
+                for q_text in existing.get("open", []):
+                    if isinstance(q_text, str) and q_text.strip():
+                        sub_q = {
+                            "question_id": _question_id_from_text(q_text),
+                            "text": q_text.strip()[:2000],
+                            "state": "open",
+                            "decision_relevance": 0.6,
+                            "uncertainty": {"measurement": 0.5, "mechanism": 0.5, "external_validity": 0.5, "temporal": 0.5},
+                            "evidence_gap_score": 0.5,
+                            "linked_claims": [],
+                            "last_updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                        }
+                        out["questions"].append(sub_q)
+            # Preserve open/answered keys for backward compat with feedback.py
+            if "open" in existing:
+                out["open"] = existing["open"]
+            if "answered" in existing:
+                out["answered"] = existing["answered"]
+        except (json.JSONDecodeError, OSError):
+            pass
+
     return out
 
 

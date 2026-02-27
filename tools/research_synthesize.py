@@ -152,6 +152,23 @@ If the section is well-supported, return {"gaps": []}. Output only valid JSON.""
         return []
 
 
+def _claim_ledger_block(claim_ledger: list[dict]) -> str:
+    """Build CLAIM LEDGER text for section prompt: one line per claim_ref with short text."""
+    lines = []
+    for c in claim_ledger[:40]:
+        cid = (c.get("claim_id") or "").strip()
+        if not cid:
+            continue
+        ver = c.get("claim_version", 1)
+        try:
+            ver = int(ver)
+        except (TypeError, ValueError):
+            ver = 1
+        text = (c.get("text") or "")[:120].replace("\n", " ")
+        lines.append(f"[claim_ref: {cid}@{ver}] {text}")
+    return "\n".join(lines) if lines else ""
+
+
 def _synthesize_section(
     section_title: str,
     findings_for_section: list[dict],
@@ -160,8 +177,10 @@ def _synthesize_section(
     question: str,
     project_id: str,
     rel_sources: dict,
+    claim_ledger: list[dict] | None = None,
 ) -> str:
-    """One LLM call for one deep-analysis section (500–1500 words)."""
+    """One LLM call for one deep-analysis section (500–1500 words). When claim_ledger is provided, section must use [claim_ref: id@version] for every claim-bearing sentence."""
+    claim_ledger = claim_ledger or []
     ref_lines = []
     for f in findings_for_section[:15]:
         url = (f.get("url") or "").strip()
@@ -186,10 +205,15 @@ def _synthesize_section(
         if text:
             full_content.append(f"Source {u}:\n{text[:SOURCE_CONTENT_CHARS]}")
     full_block = "\n\n".join(full_content) if full_content else "(no full content)"
+
+    claim_block = _claim_ledger_block(claim_ledger)
     system = """You are a research analyst. Write a single analytical section of a professional report.
 Use inline citations as [1], [2] etc. to match the reference list provided. Write 500–1500 words.
 State confidence where relevant (e.g. "HIGH confidence (3 sources)" or "LOW (single source)").
 Do not repeat URLs in the body; use only [N] references."""
+    if claim_block:
+        system += """
+For every factual claim or finding you state, you MUST cite the claim from the CLAIM LEDGER by including exactly one [claim_ref: claim_id@version] in that sentence. Example: "The effect was significant [claim_ref: cl_1@1]." Use only claim_refs from the CLAIM LEDGER list below. Do not introduce new claims; only cite existing ledger claims."""
     user = f"""RESEARCH QUESTION: {question}
 
 SECTION TITLE: {section_title}
@@ -202,8 +226,15 @@ FINDINGS FOR THIS SECTION:
 
 FULL SOURCE CONTENT (use for depth):
 {full_block[:20000]}
+"""
+    if claim_block:
+        user += f"""
+CLAIM LEDGER (you MUST use these exact refs for every claim-bearing sentence; include [claim_ref: id@version] in the same sentence as the claim):
+{claim_block}
 
-Write the section markdown (no title repeated; start with body)."""
+Write the section markdown (no title repeated; start with body). Every sentence that states a factual claim must contain [claim_ref: id@version] from the list above."""
+    else:
+        user += "\nWrite the section markdown (no title repeated; start with body)."
     try:
         result = llm_call(_model(), system, user, project_id=project_id)
         return (result.text or "").strip()
@@ -266,7 +297,66 @@ One line per item, bold the number. Only include verified or clearly sourced dat
 
 SYNTHESIZE_CHECKPOINT = "synthesize_checkpoint.json"
 
-# Hard synthesis contract (Spec §6.2–6.3): no new claims; every claim-bearing sentence maps to ledger.
+# Explicit claim_ref format: [claim_ref: id@ver] or [claim_ref: id1@v1; id2@v2] (semicolon-separated). Machine-parseable.
+CLAIM_REF_PATTERN = re.compile(r"\[claim_ref:\s*([^\]]+)\]", re.IGNORECASE)
+
+
+def _normalize_ref(ref: str) -> str | None:
+    """Normalize to claim_id@version; return None if invalid."""
+    ref = (ref or "").strip()
+    if not ref or "@" not in ref:
+        return None
+    parts = ref.split("@", 1)
+    cid, ver = parts[0].strip(), parts[1].strip()
+    if not cid:
+        return None
+    try:
+        int(ver)
+    except ValueError:
+        return None
+    return f"{cid}@{ver}"
+
+
+def extract_claim_refs_from_report(report: str) -> list[str]:
+    """Extract all claim_ref values from report. Returns list of normalized refs (id@version)."""
+    refs: list[str] = []
+    for m in CLAIM_REF_PATTERN.finditer(report):
+        inner = m.group(1).strip()
+        for part in re.split(r"[;,]", inner):
+            r = _normalize_ref(part)
+            if r:
+                refs.append(r)
+    return refs
+
+
+def _build_valid_claim_ref_set(claim_ledger: list[dict]) -> set[str]:
+    """Set of valid claim_ref strings (claim_id@version) from ledger."""
+    out: set[str] = set()
+    for c in claim_ledger:
+        cid = (c.get("claim_id") or "").strip()
+        if not cid:
+            continue
+        ver = c.get("claim_version", 1)
+        try:
+            ver = int(ver)
+        except (TypeError, ValueError):
+            ver = 1
+        out.add(f"{cid}@{ver}")
+    return out
+
+
+def _sentence_contains_valid_claim_ref(sentence: str, valid_refs: set[str]) -> bool:
+    """True if sentence contains at least one [claim_ref: X@Y] with X@Y in valid_refs."""
+    for m in CLAIM_REF_PATTERN.finditer(sentence):
+        inner = m.group(1).strip()
+        for part in re.split(r"[;,]", inner):
+            r = _normalize_ref(part)
+            if r and r in valid_refs:
+                return True
+    return False
+
+
+# Hard synthesis contract (Spec §6.2–6.3): no new claims; every claim-bearing sentence maps to ledger via explicit claim_ref.
 def _normalize_for_match(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").lower().strip())
 
@@ -281,9 +371,10 @@ def _is_claim_like_sentence(sentence: str) -> bool:
     signals = ("found that", "study shows", "report states", "data indicate", "percent", "%", "research suggests", "evidence shows", "according to")
     if any(sig in lower for sig in signals):
         return True
-    if any(c.isdigit() for c in s):
+    import re as _re
+    if _re.search(r'\d+\s*%|\d+\.\d+', s):
         return True
-    return len(words) >= 18  # Long declarative sentence likely a claim
+    return False
 
 
 def _sentence_overlaps_claim(sentence: str, claim_texts_normalized: list[str]) -> bool:
@@ -303,18 +394,34 @@ def _sentence_overlaps_claim(sentence: str, claim_texts_normalized: list[str]) -
 
 def validate_synthesis_contract(report: str, claim_ledger: list[dict], mode: str) -> dict:
     """
-    Returns dict: unreferenced_claim_sentence_count, new_claims_in_synthesis (same), tentative_labels_ok, valid.
-    valid = (unreferenced == 0 and new_claims == 0) and (tentative_labels_ok or mode != "strict").
+    Hard claim_ref-enforced contract (Spec §6.2–6.3):
+    - Every claim_ref in report must resolve to an existing ledger entry.
+    - Every claim-bearing sentence must carry at least one valid [claim_ref: id@version].
+    - No new claims (claim-like sentence without valid ref => violation).
+    When claim_ledger is empty (non-AEM), ref checks are skipped for backward compatibility.
+    Returns dict: unknown_refs, unreferenced_claim_sentences, unreferenced_claim_sentence_count,
+      new_claims_in_synthesis (same count), tentative_labels_ok, valid.
     """
-    claim_texts = [c.get("text") or "" for c in claim_ledger if (c.get("text") or "").strip()]
-    claim_texts_normalized = [_normalize_for_match(t) for t in claim_texts]
-    unreferenced = 0
-    sentences = re.split(r"[.!?]\s+", report)
-    for sent in sentences:
-        if not _is_claim_like_sentence(sent):
-            continue
-        if not _sentence_overlaps_claim(sent, claim_texts_normalized):
-            unreferenced += 1
+    valid_refs = _build_valid_claim_ref_set(claim_ledger)
+    refs_in_report = extract_claim_refs_from_report(report)
+    unknown_refs = [r for r in refs_in_report if r not in valid_refs]
+    # Unique unknown for count
+    unknown_refs_unique = list(dict.fromkeys(unknown_refs))
+
+    unreferenced_sentences: list[str] = []
+    if valid_refs:
+        # Only require explicit refs when we have a non-empty ledger (AEM path)
+        sentences = re.split(r"(?<=[.!?])\s+", report)
+        for sent in sentences:
+            sent = sent.strip()
+            if not sent or len(sent) < 20:
+                continue
+            if not _is_claim_like_sentence(sent):
+                continue
+            if not _sentence_contains_valid_claim_ref(sent, valid_refs):
+                unreferenced_sentences.append(sent[:200])
+    unreferenced_count = len(unreferenced_sentences)
+
     tentative_ok = True
     tentative_claims = [c for c in claim_ledger if (c.get("falsification_status") or "").strip() == "PASS_TENTATIVE"]
     if tentative_claims:
@@ -326,12 +433,14 @@ def validate_synthesis_contract(report: str, claim_ledger: list[dict], mode: str
             if "tentative" not in report_lower and "[tentative]" not in report_lower and "pass_tentative" not in report_lower:
                 tentative_ok = False
                 break
-    valid = unreferenced == 0 and tentative_ok
-    if mode == "strict":
-        valid = valid and unreferenced == 0
+
+    ref_valid = len(unknown_refs_unique) == 0 and (unreferenced_count == 0 or not valid_refs)
+    valid = ref_valid and tentative_ok
     return {
-        "unreferenced_claim_sentence_count": unreferenced,
-        "new_claims_in_synthesis": unreferenced,
+        "unknown_refs": unknown_refs_unique,
+        "unreferenced_claim_sentences": unreferenced_sentences,
+        "unreferenced_claim_sentence_count": unreferenced_count,
+        "new_claims_in_synthesis": unreferenced_count,
         "tentative_labels_ok": tentative_ok,
         "valid": valid,
     }
@@ -456,7 +565,7 @@ def run_synthesis(project_id: str) -> str:
             progress_step(project_id, f"Writing section {i+1}/{len(clusters)}: {title}", i+1, len(clusters))
         except Exception:
             pass
-        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources)
+        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger)
         if os.environ.get("RESEARCH_WARP_DEEPEN") == "1" and i == 0 and len(body) > 300:
             try:
                 from tools.research_progress import step as progress_step
@@ -485,7 +594,7 @@ def run_synthesis(project_id: str) -> str:
                                     if wr.get("text"):
                                         new_f = {"url": url, "title": wr.get("title", ""), "excerpt": (wr.get("text") or "")[:1500]}
                                         section_findings = section_findings + [new_f]
-                                        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources)
+                                        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger)
                                 except Exception:
                                     pass
                 except Exception:
@@ -564,15 +673,30 @@ def run_synthesis(project_id: str) -> str:
         else:
             report_body += f"[{i}] {url}\n\n"
 
-    # Hard synthesis contract (Spec §6.2–6.3): validate; strict/enforce block on violation
+    # Hard synthesis contract (Spec §6.2–6.3): explicit claim_ref; validate; enforce/strict block on violation
     mode = (os.environ.get("AEM_ENFORCEMENT_MODE") or "observe").strip().lower()
     if mode not in ("observe", "enforce", "strict"):
         mode = "observe"
     validation = validate_synthesis_contract(report_body, claim_ledger, mode)
+    contract_status = {
+        "valid": validation["valid"],
+        "mode": mode,
+        "unknown_refs": validation.get("unknown_refs", []),
+        "unreferenced_claim_sentence_count": validation.get("unreferenced_claim_sentence_count", 0),
+        "tentative_labels_ok": validation.get("tentative_labels_ok", True),
+        "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    try:
+        (proj_path / "synthesis_contract_status.json").write_text(
+            json.dumps(contract_status, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception:
+        pass
     if not validation["valid"] and mode in ("enforce", "strict"):
         raise SynthesisContractError(
-            f"Synthesis contract violation: unreferenced_claim_sentence_count={validation['unreferenced_claim_sentence_count']}, "
-            f"new_claims_in_synthesis={validation['new_claims_in_synthesis']}, tentative_labels_ok={validation['tentative_labels_ok']}"
+            f"Synthesis contract violation: unknown_refs={validation.get('unknown_refs', [])}, "
+            f"unreferenced_claim_sentence_count={validation.get('unreferenced_claim_sentence_count', 0)}, "
+            f"tentative_labels_ok={validation.get('tentative_labels_ok')}"
         )
 
     return report_body

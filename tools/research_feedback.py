@@ -51,10 +51,24 @@ def main():
 
     if fb_type == "redirect" and comment:
         project = load_project(proj_path)
-        q_file = proj_path / "questions.json"
+        q_file = proj_path / "questions" / "questions.json"
+        if not q_file.exists():
+            q_file = proj_path / "questions.json"
         if q_file.exists():
             q_data = json.loads(q_file.read_text())
             q_data.setdefault("open", []).append(comment)
+            if "questions" in q_data:
+                from tools.research_question_graph import _question_id_from_text
+                q_data["questions"].append({
+                    "question_id": _question_id_from_text(comment),
+                    "text": comment.strip()[:2000],
+                    "state": "open",
+                    "decision_relevance": 0.6,
+                    "uncertainty": {"measurement": 0.5, "mechanism": 0.5, "external_validity": 0.5, "temporal": 0.5},
+                    "evidence_gap_score": 0.5,
+                    "linked_claims": [],
+                    "last_updated": ts,
+                })
             q_file.write_text(json.dumps(q_data, indent=2))
         project["phase"] = "focus"
         save_project(proj_path, project)
