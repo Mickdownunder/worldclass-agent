@@ -215,17 +215,22 @@ export default async function CommandCenterPage() {
           { label: "Avg Verify Rate",  value: avgVerifyRate,         color: "var(--tron-text)",   href: "/research" },
           { label: "Blocked Reads",    value: blockedReads,          color: blockedReads === "—" ? "var(--tron-text-dim)" : "var(--tron-error)", href: "/research" },
         ].map((s) => {
-          const Wrapper = s.href ? Link : "div";
-          return (
-            <Wrapper
-              key={s.label}
-              {...(s.href ? { href: s.href, className: "stat-card block transition-colors hover:border-tron-accent" } : { className: "stat-card" })}
-            >
+          const content = (
+            <>
               <div className="metric-label">{s.label}</div>
               <div className="mt-1 font-mono text-2xl font-bold" style={{ color: s.color }}>
                 {s.value}
               </div>
-            </Wrapper>
+            </>
+          );
+          return s.href ? (
+            <Link key={s.label} href={s.href} className="stat-card block transition-colors hover:border-tron-accent">
+              {content}
+            </Link>
+          ) : (
+            <div key={s.label} className="stat-card">
+              {content}
+            </div>
           );
         })}
       </div>
@@ -410,7 +415,6 @@ export default async function CommandCenterPage() {
       {/* ── Secondary links ───────────────────────────────────── */}
       <div className="flex flex-wrap gap-2">
         {[
-          { href: "/packs",  label: "Content Packs" },
           { href: "/memory", label: "Memory & Graph" },
         ].map((l) => (
           <Link

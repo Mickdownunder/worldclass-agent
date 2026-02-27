@@ -22,7 +22,7 @@
 | 7 | `ui/src/app/api/memory/outcomes/route.ts` | 6 | Kein Auth-Check — Project Outcomes öffentlich | critical |
 | 8 | `ui/src/app/api/memory/principles/route.ts` | 6 | Kein Auth-Check — Learned Principles öffentlich | critical |
 | 9 | `ui/src/app/api/agents/route.ts` | 6 | Kein Auth-Check — Agent/Workflow Details öffentlich | critical |
-| 10 | `ui/src/app/api/packs/route.ts` | 6 | Kein Auth-Check — Pack Listing öffentlich | critical |
+| 10 | ~~`ui/src/app/api/packs/route.ts`~~ | — | **Entfernt** (Packs-UI entfernt) | — |
 | 11 | `ui/src/app/api/jobs/route.ts` | 9 | Kein Auth-Check — Job Summaries öffentlich | critical |
 | 12 | `ui/src/app/api/jobs/[id]/route.ts` | 6 | Kein Auth-Check — Individual Job Detail + Logs öffentlich | critical |
 | 13 | `ui/src/app/api/research/calibrated-thresholds/route.ts` | 6 | Kein Auth-Check — Calibrated Thresholds öffentlich | critical |

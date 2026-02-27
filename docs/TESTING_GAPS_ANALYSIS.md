@@ -33,7 +33,6 @@ Coverage ausführen: `cd ui && npm run test:coverage`. HTML-Report: `ui/coverage
 - `app/api/research/projects/[id]/findings` (research-findings.test.ts)
 - `app/api/research/projects/[id]/cancel` (research/projects/__tests__/cancel.test.ts)
 - `app/api/agents` (agents/__tests__/route.test.ts)
-- `app/api/packs` (packs/__tests__/route.test.ts)
 - `app/api/actions/retry` (actions/retry/__tests__/route.test.ts)
 - `app/api/memory` (memory/__tests__/route.test.ts)
 
@@ -54,7 +53,6 @@ Coverage ausführen: `cd ui && npm run test:coverage`. HTML-Report: `ui/coverage
 | `api/research/projects/[id]/cycle` | Kritisch | Research-Cycle-Start |
 | `api/research/projects/[id]/report` | Hoch | Report-Generierung |
 | `api/research/projects/[id]/report/pdf` | Mittel | PDF-Export |
-| `api/packs/route` | Mittel | Packs-Liste |
 | `api/auth/logout` | Mittel | Session-Invalidierung |
 | `api/auth/session` | Mittel | Session-Check |
 | `api/actions/factory` | Hoch | Factory-Workflows |

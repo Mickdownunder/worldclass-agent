@@ -83,12 +83,10 @@ const primaryNav = [
   { href: "/research", label: "Research Projects",   icon: <IconSearch /> },
   { href: "/memory",   label: "Memory & Graph",      icon: <IconDatabase /> },
   { href: "/jobs",     label: "Audit Logs",          icon: <IconClipboard /> },
-  { href: "/packs",    label: "Settings & Playbooks",icon: <IconSettings /> },
 ];
 
 const secondaryNav = [
   { href: "/agents",  label: "Agents",   icon: <IconBolt /> },
-  { href: "/clients", label: "Clients",  icon: <IconUsers /> },
   { href: "/research/insights", label: "Insights", icon: <IconTerminal /> },
 ];
 

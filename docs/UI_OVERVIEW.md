@@ -105,10 +105,10 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 
 - **Memory & Graph** (`/memory`): Episoden, Reflexionen, Principles, Credibility, Decisions, Entities (Brain-Tabs).
 - **Audit Logs** (`/jobs`): Job-Liste, Detail, Retry.
-- **Settings & Playbooks** (`/packs`): Packs-Liste und -Detail, Playbooks.
 - **Agents** (`/agents`): Konfigurierte Agents/Workflows.
-- **Clients** (`/clients`): Client-Konfiguration (factory/clients).
 - **Insights** (`/research/insights`): Cross-Domain-Insights (Findings über Projekte hinweg).
+
+(Packs und Clients sind in der UI nicht mehr angeboten; Backend/Factory nutzt weiterhin `factory/packs` und `factory/clients`.)
 
 Alles liest bzw. triggert gegen den gleichen Operator (Dateisystem + `op`).
 
