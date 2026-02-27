@@ -67,6 +67,11 @@ Return JSON: {"gaps": [{"description": "...", "priority": "high|medium|low", "su
 
 
 def hypothesis_formation(proj_path: Path, project: dict, project_id: str = "") -> dict:
+    try:
+        from tools.research_progress import step as progress_step
+        progress_step(project_id or proj_path.name, "KI: Forming hypotheses")
+    except Exception:
+        pass
     findings = _load_findings(proj_path)
     question = project.get("question", "")
     items = json.dumps([{"title": f.get("title"), "excerpt": (f.get("excerpt") or "")[:500]} for f in findings], indent=2)[:8000]
@@ -78,6 +83,11 @@ Return JSON: {"hypotheses": [{"statement": "...", "confidence": 0.0-1.0, "eviden
 
 
 def contradiction_detection(proj_path: Path, project: dict, project_id: str = "") -> dict:
+    try:
+        from tools.research_progress import step as progress_step
+        progress_step(project_id or proj_path.name, "KI: Detecting contradictions")
+    except Exception:
+        pass
     findings = _load_findings(proj_path)
     items = json.dumps([{"url": f.get("url"), "title": f.get("title"), "excerpt": (f.get("excerpt") or "")[:400]} for f in findings], indent=2)[:10000]
     system = """You are a research analyst. Identify CONTRADICTIONS: pairs of findings that disagree on the same fact or claim.

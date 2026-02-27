@@ -36,6 +36,14 @@ def _llm_json(system: str, user: str, project_id: str = "") -> list:
     return []
 
 
+def _progress_step(project_id: str, message: str, index: int | None = None, total: int | None = None) -> None:
+    try:
+        from tools.research_progress import step as progress_step
+        progress_step(project_id, message, index, total)
+    except Exception:
+        pass
+
+
 def run(project_id: str) -> int:
     proj_path = project_dir(project_id)
     if not proj_path.exists():
@@ -43,10 +51,11 @@ def run(project_id: str) -> int:
     sources_dir = proj_path / "sources"
     findings_dir = proj_path / "findings"
     findings_dir.mkdir(parents=True, exist_ok=True)
+    content_files = [f for f in sources_dir.glob("*_content.json")]
+    total_sources = len(content_files)
+    _progress_step(project_id, "KI: Extracting key facts from sources", 0, max(1, total_sources))
     added = 0
-    for f in sources_dir.glob("*.json"):
-        if "_content" not in f.name:
-            continue
+    for idx, f in enumerate(content_files, start=1):
         try:
             d = json.loads(f.read_text())
             text = (d.get("text") or d.get("abstract") or "").strip()
@@ -54,6 +63,7 @@ def run(project_id: str) -> int:
             continue
         if len(text) < MIN_CONTENT_LEN:
             continue
+        _progress_step(project_id, "KI: Extracting key facts from sources", idx, max(1, total_sources))
         base_id = f.stem.replace("_content", "")
         url = ""
         title = ""

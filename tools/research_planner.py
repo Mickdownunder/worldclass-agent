@@ -259,7 +259,16 @@ def _load_project_plan(project_id: str) -> dict[str, Any]:
 
 
 def build_gap_fill_queries(coverage_path: str, project_id: str) -> dict[str, Any]:
-    cov = json.loads(Path(coverage_path).read_text())
+    if project_id:
+        try:
+            from tools.research_progress import step as progress_step
+            progress_step(project_id, "Planning focus queries")
+        except Exception:
+            pass
+    p = Path(coverage_path)
+    if not p.exists():
+        return {"queries": []}
+    cov = json.loads(p.read_text())
     uncovered = cov.get("uncovered_topics", [])
     plan = _load_project_plan(project_id)
     perspectives = plan.get("perspectives") or ["AI researcher", "framework developer", "enterprise user"]

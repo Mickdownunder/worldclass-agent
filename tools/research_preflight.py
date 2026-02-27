@@ -14,8 +14,8 @@ from pathlib import Path
 
 # Required: bs4 (reader), openai (reasoning/verify/synthesize)
 REQUIRED_MODULES = ["bs4", "openai"]
-# Optional; if missing, reader falls back to bs4-only
-OPTIONAL_MODULES = ["readability", "pypdf", "tenacity"]
+# Optional; if missing, reader falls back to bs4-only. weasyprint = PDF reports.
+OPTIONAL_MODULES = ["readability", "pypdf", "tenacity", "weasyprint"]
 
 
 def check_import(module: str) -> tuple[bool, str | None]:
@@ -31,6 +31,8 @@ def check_import(module: str) -> tuple[bool, str | None]:
             __import__("openai")
         elif module == "tenacity":
             __import__("tenacity")
+        elif module == "weasyprint":
+            __import__("weasyprint")
         else:
             __import__(module)
         return True, None
@@ -70,12 +72,15 @@ def run_preflight() -> dict:
             "missing_optional": missing_optional,
             "message": message,
         }
+    message = "Preflight OK"
+    if "weasyprint" in missing_optional:
+        message += " (weasyprint missing — PDF reports disabled; pip install weasyprint to enable)"
     return {
         "ok": True,
         "fail_code": None,
         "missing": [],
         "missing_optional": missing_optional,
-        "message": "Preflight OK",
+        "message": message,
     }
 
 
