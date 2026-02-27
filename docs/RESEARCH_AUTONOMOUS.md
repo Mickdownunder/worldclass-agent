@@ -90,6 +90,18 @@ export RESEARCH_MAX_FOLLOWUPS=3
 
 ---
 
+## Proxy / Umgebung
+
+Wenn in der Umgebung **HTTP_PROXY/HTTPS_PROXY** gesetzt ist (z. B. Cursor/IDE), können OpenAI-Calls mit **403 Forbidden** fehlschlagen. Das Workflow-Skript **research-cycle.sh** setzt daher zu Beginn **NO_PROXY** für `api.openai.com` und `generativelanguage.googleapis.com`, sodass LLM-Traffic nicht über den Proxy läuft. Bei weiterhin 403: Proxy-Anbieter prüfen oder NO_PROXY vor dem Start setzen.
+
+## Bekannte Laufzeit-Themen
+
+- **HTTP 429 (Rate Limit):** Semantic Scholar und arXiv können in der Explore-Phase 429 zurückgeben. Das Skript loggt WARN und fährt fort; ggf. weniger parallele Jobs oder Backoff.
+- **Job-Timeout (z. B. 300s):** Synthesize-Phase kann bei langen Reports den Job-Timeout treffen. Timeout beim Start des Jobs erhöhen (z. B. `op run … --timeout 900`) oder Report-Umfang begrenzen.
+- **Focus ohne Coverage:** Wenn Explore in einem anderen Job lief und keine Coverage-Datei im Projekt liegt, nutzt Focus leere Queries und macht nur Lese-Schritte; kein Abbruch mehr.
+
+---
+
 ## Kurz
 
 | Ziel | Vorgehen |

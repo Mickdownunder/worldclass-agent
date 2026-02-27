@@ -31,18 +31,20 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 **Formular „Neues Research-Projekt“:**
 
 - **Frage:** Was willst du erforschen? (Pflicht)
-- **Playbook:** Allgemein, Marktanalyse, Literatur-Review, Patent-Landscape, Due Diligence (wird mitgeschickt; Backend nutzt aktuell nur die Frage für `research-init`).
-- **Aktion:** „Forschung starten“ → `POST /api/research/projects` mit `{ question, playbook_id }`.
+- **Playbook:** Allgemein, Marktanalyse, Literatur-Review, Patent-Landscape, Due Diligence (wird mitgeschickt).
+- **Research-Modus:** Standard oder Frontier (beeinflusst Suchstrategie).
+- **Aktion:** „Forschung starten“ → `POST /api/research/projects` mit `{ question, playbook_id, research_mode }`.
 
-**Was passiert technisch:**
+**Was passiert technisch (Standard = „bis Report fertig“):**
 
-1. UI sendet `POST /api/research/projects` mit Frage (und Playbook).
-2. Backend ruft `runWorkflow("research-init", question)` auf.
-3. `runWorkflow` erstellt einen Job: `op job new --workflow research-init --request "<question>"`, dann startet `op run <job_dir>` **im Hintergrund** (detached). Die UI wartet nicht auf das Ende des Jobs.
-4. Antwort: „Research-Projekt wird erstellt (Job läuft).“ + `jobId`.
-5. Beim nächsten Laden der Seite erscheint das neue Projekt in der Liste (sobald `research/proj-…/project.json` existiert).
+1. UI sendet `POST /api/research/projects` mit Frage, Playbook, `research_mode` (standard/frontier). Default: `run_until_done === true`.
+2. Backend ruft **`runResearchInitAndCycleUntilDone(question, researchMode)`** auf: erstellt Job `research-init`, wartet auf Abschluss, liest `project_id` aus Artifacts, startet dann **`run-research-cycle-until-done.sh`** im Hintergrund (alle Phasen bis done).
+3. Antwort: „Projekt angelegt. Alle Phasen laufen automatisch – Report erscheint, wenn fertig.“ + `jobId`, `projectId`.
+4. Beim nächsten Laden erscheint das Projekt in der Liste; Phasen laufen ohne weiteres Klicken bis Report fertig.
 
-**So verstehst du es:** Ein Klick auf „Forschung starten“ = **ein research-init-Job wird gestartet**. Die UI startet nur den Job; sie pollt nicht auf Fertigstellung. Du siehst das neue Projekt, sobald der Init-Job das Projektverzeichnis angelegt hat und die Liste wieder geladen wird (z.B. durch Refresh oder Navigation).
+**Ohne „bis fertig“** (nur Init): Request mit `run_until_done: false` → Backend nutzt nur `runWorkflow("research-init", …)`; dann musst du „Nächste Phase starten“ manuell nutzen.
+
+**So verstehst du es:** Standard = **ein Klick startet Init + alle Cycles bis done**. Die UI startet den Init-Job, wartet auf Projekt-ID, dann läuft `run-research-cycle-until-done.sh` detached. Du siehst Fortschritt durch Refresh/Navigation.
 
 ---
 
@@ -60,12 +62,23 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 4. Antwort: „Nächste Phase wird gestartet (Job läuft).“
 5. Nach Refresh siehst du ggf. neue Phase, mehr Findings, neuen Report.
 
-**Tabs: Report | Findings | Sources | Verlauf**
+**Tabs: Report | Findings | Sources | History | Audit**
 
-- **Report:** Neuester Report als Markdown (aus `research/proj-…/reports/*.md`). Download als .md möglich.
+- **Report:** Neuester Report als Markdown (aus `research/proj-…/reports/*.md`). Download als .md möglich. Wenn ein Report existiert, aber keine PDF: Button **„Generate PDF“** (erzeugt PDF nachträglich per `research_pdf_report.py`, z. B. wenn WeasyPrint im Job fehlte). Wenn PDF vorhanden: **„Download PDF“**.
 - **Findings:** Liste aus `GET /api/research/projects/[id]/findings` (findings/*.json). Pro Finding: Feedback-Buttons (Excellent, Irrelevant, Falsch, Tiefer graben) → `POST /api/research/feedback`.
 - **Sources:** Liste aus `GET /api/research/projects/[id]/sources` (sources).
-- **Verlauf:** Liste aller Reports (Dateinamen + Inhalt) aus `GET /api/research/projects/[id]/reports`.
+- **History:** Liste aller Reports (Dateinamen + Inhalt) aus `GET /api/research/projects/[id]/reports`.
+- **Audit:** Verifizierte Claims und Beweislage aus `GET /api/research/projects/[id]/audit` (für Qualitätsprüfung).
+
+**Live Activity & Runtime-Status („Läuft es oder hängt es?“):**
+
+- Die UI pollt `GET /api/research/projects/[id]/progress`. Der Endpoint liefert einen **berechneten Laufzeit-Status** (nicht nur „Running/Idle“):
+  - **RUNNING:** Heartbeat frisch (< 30s), Step wird ausgeführt.
+  - **IDLE:** Kein laufender Prozess, wartet auf Trigger.
+  - **STUCK:** Kein Fortschritt seit 5 Min (gleicher Step), Prozess hängt.
+  - **ERROR_LOOP:** Gleicher Fehlercode mehrfach in 5 Min (z. B. Proxy/OpenAI-Fehler).
+  - **FAILED / DONE:** Projekt-Status fehlgeschlagen bzw. abgeschlossen.
+- Zusätzlich: **Phase**, **aktueller Step**, **letzte Aktivität**, **letzter Fehler** (Code + Meldung), **Ereignis-Timeline** (events.jsonl). So erkennst du zuverlässig, ob gearbeitet wird, ein Fehler-Loop läuft oder du (z. B. mit „Nächste Phase starten“ oder Abbrechen) reagieren solltest.
 
 **So verstehst du es:** Die Detailseite ist die **Steuerung und Anzeige** eines einzelnen Forschungsprojekts. Du siehst Phase und Fortschritt, startest manuell den nächsten Cycle, liest den Report und gibst Feedback. Die UI liest alles aus dem Dateisystem des Operators (`research/proj-…/`); die API-Routen sind dünne Wrapper darüber.
 
@@ -77,23 +90,25 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 |------------------------|---------------|----------|
 | Login | Session-Cookie | — |
 | Command Center laden | — | Liest Health, listet `research/proj-*/project.json` |
-| „Forschung starten“ | POST /api/research/projects | runWorkflow("research-init", question) → op job new + op run |
+| „Forschung starten“ | POST /api/research/projects | Default: runResearchInitAndCycleUntilDone → init + run-research-cycle-until-done.sh; optional run_until_done: false → nur research-init |
 | „Nächste Phase starten“ | POST /api/research/projects/[id]/cycle | runWorkflow("research-cycle", id) → op job new + op run |
 | Projekt-Detail | GET project, report, findings, sources, reports | Liest research/proj-…/project.json, findings/, reports/, etc. |
+| Live-Fortschritt / Status | GET /api/research/projects/[id]/progress | Liest progress.json + events.jsonl, berechnet state (RUNNING/IDLE/STUCK/ERROR_LOOP/FAILED/DONE) |
+| Brain-Status (läuft/hängt) | GET /api/health (op healthcheck) | `brain.cycle` / `brain.reflect`: Anzahl, max_elapsed_sec; **stuck** wenn Cycle >10 min oder Reflect >5 min. Zeile im Command Center + Infobox auf Brain & Memory. System gilt als unhealthy wenn stuck. |
 | Feedback zu Finding | POST /api/research/feedback | research_feedback.py (Frage/Redirect/Type) |
 
-**Wichtig:** Die UI **startet** Jobs (research-init, research-cycle), sie **wartet nicht** auf deren Ende. Jobs laufen auf dem Server; Fortschritt siehst du durch erneutes Laden oder Refresh.
+**Wichtig:** Beim normalen „Forschung starten“ wartet die UI auf Abschluss von research-init (für project_id), dann läuft der Cycle-until-done im Hintergrund. Einzelne „Nächste Phase starten“-Jobs laufen ebenfalls detached. Fortschritt siehst du durch erneutes Laden oder Refresh.
 
 ---
 
 ## 4. Rest der Nav (kurz)
 
-- **Insights** (`/research/insights`): Cross-Domain-Insights (Findings über Projekte hinweg, Similarity).
-- **Agents** (`/agents`): Konfigurierte Agents/Clients.
-- **Jobs** (`/jobs`): Job-Liste, Detail, Retry.
-- **Packs** (`/packs`): Packs-Liste und -Detail.
-- **Brain & Memory** (`/memory`): Episoden, Reflexionen, Playbooks.
-- **Clients** (`/clients`): Client-Konfiguration.
+- **Memory & Graph** (`/memory`): Episoden, Reflexionen, Principles, Credibility, Decisions, Entities (Brain-Tabs).
+- **Audit Logs** (`/jobs`): Job-Liste, Detail, Retry.
+- **Settings & Playbooks** (`/packs`): Packs-Liste und -Detail, Playbooks.
+- **Agents** (`/agents`): Konfigurierte Agents/Workflows.
+- **Clients** (`/clients`): Client-Konfiguration (factory/clients).
+- **Insights** (`/research/insights`): Cross-Domain-Insights (Findings über Projekte hinweg).
 
 Alles liest bzw. triggert gegen den gleichen Operator (Dateisystem + `op`).
 

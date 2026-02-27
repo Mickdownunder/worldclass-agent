@@ -20,7 +20,10 @@ cd /root/operator
 - `"healthy": true`
 - `disk_ok: true` (Disk < 90 %)
 - `load_ok: true`
+- `brain.cycle.stuck` und `brain.reflect.stuck` beide `false` (sonst unhealthy)
 - `recent_failures`: leer oder wenige Einträge
+
+**Brain:** `op healthcheck` listet laufende `brain cycle`- und `brain reflect`-Prozesse. **Stuck** = Cycle >10 Min oder Reflect >5 Min (typisch: LLM blockiert). UI: Command Center + Brain & Memory zeigen „Hängend“ und Hinweis `pkill -f 'bin/brain'`. Reflect hat jetzt 90s-Timeout; optional: `BRAIN_REFLECT_AFTER_JOB=0` (Reflect nach Job deaktivieren), `BRAIN_REFLECT_MAX_CONCURRENT=3` (max. parallele Reflects).
 
 **Wenn `healthy: false` oder viele `recent_failures`:** Disk/Load prüfen, fehlgeschlagene Jobs unter **Jobs** ansehen, Logs (`jobs/*/*/log.txt`) prüfen.
 
@@ -39,6 +42,10 @@ cd /root/operator
 
 **Erfolg:** Projekt wird angelegt, Phasen laufen automatisch, Report erscheint.  
 **Schrott:** Init schlägt fehl, Phase bleibt hängen, kein Report, viele Fehler in `jobs/*/log.txt`.
+
+**PDF-Reports:** Die Pipeline erzeugt nach dem Report eine PDF (WeasyPrint). Wenn WeasyPrint fehlt, steht im Job-Log „PDF generation failed (install weasyprint? …)“ und es wird keine PDF geschrieben. Dann: `pip install weasyprint` (oder `pip install -r requirements-research.txt`). Anschließend im Report-Tab **„Generate PDF“** klicken, um die PDF nachträglich zu erzeugen.
+
+**AEM (Full AEM):** Nach Verify (Evidence Gate bestanden) läuft optional das AEM-Settlement (`research_aem_settlement.py`). Artefakte liegen unter `research/proj-*/claims/`, `attacks/`, `questions/`, `market/`, `portfolio/`, `policy/`. Fehler im AEM-Block blockieren Synthese nur bei `AEM_ENFORCEMENT_MODE=strict`.
 
 ---
 
