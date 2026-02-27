@@ -32,6 +32,7 @@ export GEMINI_API_KEY="${GEMINI_API_KEY:-}"
 export RESEARCH_SYNTHESIS_MODEL="${RESEARCH_SYNTHESIS_MODEL:-gemini-3.1-pro-preview}"
 export RESEARCH_CRITIQUE_MODEL="${RESEARCH_CRITIQUE_MODEL:-gpt-5.2}"
 export RESEARCH_VERIFY_MODEL="${RESEARCH_VERIFY_MODEL:-gemini-3.1-pro-preview}"
+export RESEARCH_HYPOTHESIS_MODEL="${RESEARCH_HYPOTHESIS_MODEL:-gemini-3.1-pro-preview}"
 
 # Don't send LLM API traffic through HTTP_PROXY (prevents 403 from proxy)
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}api.openai.com,openai.com,generativelanguage.googleapis.com"
@@ -346,6 +347,21 @@ with Memory() as mem:
             to_node_id=episode_id,
             project_id=project_id,
         )
+    question = str(project.get("question") or "")
+    read_urls_list = []
+    for sf in (proj_dir / "sources").glob("*.json"):
+        if sf.name.endswith("_content.json"):
+            continue
+        if not (proj_dir / "sources" / (sf.stem + "_content.json")).exists():
+            continue
+        try:
+            u = (json.loads(sf.read_text()).get("url") or "").strip()
+            if u and "://" in u:
+                read_urls_list.append(u)
+        except Exception:
+            pass
+    if read_urls_list:
+        mem.record_read_urls(question, read_urls_list)
 MEMORY_V2_EPISODE
 }
 
@@ -447,68 +463,81 @@ for f in (proj_dir / "sources").glob("*.json"):
 ranked.sort()
 (art / "read_order_round1.txt").write_text("\n".join(path for _, _, path in ranked))
 SMART_RANK
+    python3 - "$PROJ_DIR" "$ART" "$OPERATOR_ROOT" "$QUESTION" <<FILTER_READ_URLS 2>> "$PWD/log.txt" || true
+import json, sys
+from pathlib import Path
+proj_dir, art, op_root, question = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
+sys.path.insert(0, str(op_root))
+order_file = art / "read_order_round1.txt"
+if not order_file.exists():
+    sys.exit(0)
+paths = [ln.strip() for ln in order_file.read_text().splitlines() if ln.strip()]
+try:
+    from lib.memory import Memory
+    with Memory() as mem:
+        skip_urls = mem.get_read_urls_for_question(question or "")
+except Exception:
+    skip_urls = set()
+if not skip_urls:
+    sys.exit(0)
+filtered = []
+for p in paths:
+    path = Path(p)
+    if not path.exists():
+        continue
+    try:
+        u = (json.loads(path.read_text()).get("url") or "").strip()
+        if u and u not in skip_urls:
+            filtered.append(p)
+    except Exception:
+        filtered.append(p)
+order_file.write_text("\n".join(filtered))
+FILTER_READ_URLS
 
+    READ_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/read_order_round1.txt" --read-limit "$READ_LIMIT" --workers 4 2>> "$PWD/log.txt" | tail -1)
     read_attempts=0
     read_successes=0
-    while IFS= read -r f; do
-      [ -f "$f" ] || continue
-      [ $read_attempts -ge "$READ_LIMIT" ] && break
-      url=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('url',''), end='')")
-      [ -n "$url" ] || continue
-      read_attempts=$((read_attempts+1))
-      domain=$(echo "$url" | awk -F/ '{print $3}' | sed 's/^www\.//')
-      progress_step "Reading source $read_attempts/$READ_LIMIT: $domain" "$read_attempts" "$READ_LIMIT"
-      python3 "$TOOLS/research_web_reader.py" "$url" > "$ART/read_result.json" 2>> "$PWD/log.txt" || true
-      if [ -f "$ART/read_result.json" ]; then
-        if python3 -c "import json; d=json.load(open('$ART/read_result.json')); t=(d.get('text') or d.get('abstract') or '').strip(); e=(d.get('error') or '').strip(); exit(0 if t and not e else 1)" 2>/dev/null; then
-          read_successes=$((read_successes+1))
-        fi
-      fi
-      python3 - "$PROJ_DIR" "$ART" "$url" "$QUESTION" "$OPERATOR_ROOT" <<'SAVE_READ'
-import json, sys, hashlib
-import os
-from pathlib import Path
-proj_dir, art, url, question, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
-p = art / "read_result.json"
-if not p.exists():
-  sys.exit(0)
-data = json.loads(p.read_text())
-sid = hashlib.sha256(url.encode()).hexdigest()[:12]
-text = (data.get("text") or data.get("abstract") or "")[:8000]
-title = data.get("title", "")
-# Relevance gate: only keep sources that are actually relevant
-relevant = True
-rel_score = 10
-rel_threshold = float(os.environ.get("RESEARCH_MEMORY_RELEVANCE_THRESHOLD", "0.50"))
-if text and question:
-  try:
-    sys.path.insert(0, op_root)
-    from tools.research_relevance_gate import check_relevance
-    gate = check_relevance(question, title, text, project_id="")
-    relevant = gate.get("relevant", True)
-    rel_score = gate.get("score", 10)
-    reason = gate.get("reason", "")
-    if not relevant:
-      print(f"FILTERED (score={rel_score}): {url[:80]} — {reason}", file=sys.stderr)
-  except Exception as e:
-    print(f"WARN: relevance gate error: {e}", file=sys.stderr)
-if relevant:
-  if rel_score < rel_threshold:
-    relevant = False
-    print(f"FILTERED (below threshold={rel_threshold:.2f}, score={rel_score}): {url[:80]}", file=sys.stderr)
-if relevant:
-  (proj_dir / "sources" / f"{sid}_content.json").write_text(json.dumps(data))
-  if text:
-    confidence = min(0.9, 0.4 + rel_score * 0.05)
-    fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
-    (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": title, "excerpt": text[:4000], "source": "read", "confidence": confidence, "relevance_score": rel_score}))
-SAVE_READ
-    done < "$ART/read_order_round1.txt"
+    [ -n "$READ_STATS" ] && read -r read_attempts read_successes <<< "$(echo "$READ_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null)" 2>/dev/null || true
 
     progress_step "Assessing source coverage"
     python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round1.json"
     cp "$ART/coverage_round1.json" "$PROJ_DIR/coverage_round1.json"
     COVERAGE_PASS=$(python3 -c "import json; print(json.load(open('$ART/coverage_round1.json')).get('pass', False), end='')" 2>/dev/null || echo "False")
+
+    progress_step "Planner Round 2: precision queries"
+    python3 "$TOOLS/research_planner.py" --refinement-queries "$ART/coverage_round1.json" "$PROJECT_ID" > "$ART/refinement_queries.json" 2>> "$PWD/log.txt" || true
+    REFINEMENT_COUNT=$(python3 -c "import json; d=json.load(open('$ART/refinement_queries.json')) if __import__('pathlib').Path('$ART/refinement_queries.json').exists() else {}; print(len(d.get('queries', [])), end='')" 2>/dev/null || echo "0")
+    if [ "$REFINEMENT_COUNT" -gt 0 ]; then
+      python3 "$TOOLS/research_web_search.py" --queries-file "$ART/refinement_queries.json" --max-per-query 5 > "$ART/refinement_search.json" 2>> "$PWD/log.txt" || true
+      python3 - "$PROJ_DIR" "$ART/refinement_search.json" <<'SAVE_REFINEMENT'
+import json, sys, hashlib
+from pathlib import Path
+proj_dir, in_path = Path(sys.argv[1]), Path(sys.argv[2])
+data = json.loads(in_path.read_text()) if in_path.exists() else []
+for item in (data if isinstance(data, list) else []):
+    u = (item.get("url") or "").strip()
+    if not u: continue
+    sid = hashlib.sha256(u.encode()).hexdigest()[:12]
+    (proj_dir / "sources" / f"{sid}.json").write_text(json.dumps(item))
+SAVE_REFINEMENT
+      python3 -c "
+import json
+from pathlib import Path
+p = Path('$ART/refinement_search.json')
+urls = []
+if p.exists():
+    data = json.loads(p.read_text())
+    for item in (data if isinstance(data, list) else []):
+        u = (item.get('url') or '').strip()
+        if u and u not in urls:
+            urls.append(u)
+Path('$ART/refinement_urls_to_read.txt').write_text('\n'.join(urls[:10]))
+"
+      if [ -s "$ART/refinement_urls_to_read.txt" ]; then
+        progress_step "Reading refinement sources"
+        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/refinement_urls_to_read.txt" --read-limit 10 --workers 4 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
+      fi
+    fi
 
     if [ "$COVERAGE_PASS" != "True" ]; then
       progress_step "Filling coverage gaps (Round 2)"
@@ -525,6 +554,23 @@ for item in (data if isinstance(data, list) else []):
     sid = hashlib.sha256(u.encode()).hexdigest()[:12]
     (proj_dir / "sources" / f"{sid}.json").write_text(json.dumps(item))
 SAVE_GAP
+      python3 -c "
+import json
+from pathlib import Path
+p = Path('$ART/gap_search_round2.json')
+urls = []
+if p.exists():
+    data = json.loads(p.read_text())
+    for item in (data if isinstance(data, list) else []):
+        u = (item.get('url') or '').strip()
+        if u and u not in urls:
+            urls.append(u)
+Path('$ART/gap_urls_to_read.txt').write_text('\n'.join(urls[:10]))
+"
+      if [ -s "$ART/gap_urls_to_read.txt" ]; then
+        progress_step "Reading gap-fill sources"
+        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/gap_urls_to_read.txt" --read-limit 10 --workers 4 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
+      fi
       python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round2.json"
       cp "$ART/coverage_round2.json" "$PROJ_DIR/coverage_round2.json"
     fi
@@ -546,6 +592,23 @@ for item in (data if isinstance(data, list) else []):
     sid = hashlib.sha256(u.encode()).hexdigest()[:12]
     (proj_dir / "sources" / f"{sid}.json").write_text(json.dumps(item))
 SAVE_DEPTH
+      python3 -c "
+import json
+from pathlib import Path
+p = Path('$ART/depth_search_round3.json')
+urls = []
+if p.exists():
+    data = json.loads(p.read_text())
+    for item in (data if isinstance(data, list) else []):
+        u = (item.get('url') or '').strip()
+        if u and u not in urls:
+            urls.append(u)
+Path('$ART/depth_urls_to_read.txt').write_text('\n'.join(urls[:8]))
+"
+      if [ -s "$ART/depth_urls_to_read.txt" ]; then
+        progress_step "Reading depth sources"
+        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/depth_urls_to_read.txt" --read-limit 8 --workers 4 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
+      fi
       python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round3.json"
       cp "$ART/coverage_round3.json" "$PROJ_DIR/coverage_round3.json"
     fi
@@ -638,59 +701,10 @@ for f in (proj_dir / "sources").glob("*.json"):
 ranked.sort()
 (art / "focus_read_order.txt").write_text("\n".join(path for _, path in ranked))
 RANK_FOCUS
+    FOCUS_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" focus --input-file "$ART/focus_read_order.txt" --read-limit 15 --workers 4 2>> "$PWD/log.txt" | tail -1)
     focus_read_attempts=0
     focus_read_successes=0
-    while IFS= read -r f; do
-      [ -f "$f" ] || continue
-      [ $focus_read_attempts -ge 15 ] && break
-      url=$(python3 -c "import json; d=json.load(open('$f')); print(d.get('url',''), end='')")
-      [ -n "$url" ] || continue
-      focus_read_attempts=$((focus_read_attempts+1))
-      domain=$(echo "$url" | awk -F/ '{print $3}' | sed 's/^www\.//')
-      progress_step "Deep-reading: $domain" "$focus_read_attempts" 15
-      python3 "$TOOLS/research_web_reader.py" "$url" > "$ART/read_result.json" 2>> "$PWD/log.txt" || true
-      if [ -f "$ART/read_result.json" ]; then
-        if python3 -c "import json; d=json.load(open('$ART/read_result.json')); t=(d.get('text') or d.get('abstract') or '').strip(); e=(d.get('error') or '').strip(); exit(0 if t and not e else 1)" 2>/dev/null; then
-          focus_read_successes=$((focus_read_successes+1))
-        fi
-      fi
-      python3 - "$PROJ_DIR" "$ART" "$url" "$QUESTION" "$OPERATOR_ROOT" <<'FOCUS_READ'
-import json, sys, hashlib
-import os
-from pathlib import Path
-proj_dir, art, url, question, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
-if not (art / "read_result.json").exists():
-  sys.exit(0)
-data = json.loads((art / "read_result.json").read_text())
-sid = hashlib.sha256(url.encode()).hexdigest()[:12]
-text = (data.get("text") or data.get("abstract") or "")[:8000]
-title = data.get("title", "")
-relevant = True
-rel_score = 10
-rel_threshold = float(os.environ.get("RESEARCH_MEMORY_RELEVANCE_THRESHOLD", "0.50"))
-if text and question:
-  try:
-    sys.path.insert(0, op_root)
-    from tools.research_relevance_gate import check_relevance
-    gate = check_relevance(question, title, text, project_id="")
-    relevant = gate.get("relevant", True)
-    rel_score = gate.get("score", 10)
-    if not relevant:
-      print(f"FILTERED (score={rel_score}): {url[:80]} — {gate.get('reason','')}", file=sys.stderr)
-  except Exception as e:
-    print(f"WARN: relevance gate error: {e}", file=sys.stderr)
-if relevant:
-  if rel_score < rel_threshold:
-    relevant = False
-    print(f"FILTERED (below threshold={rel_threshold:.2f}, score={rel_score}): {url[:80]}", file=sys.stderr)
-if relevant:
-  (proj_dir / "sources" / f"{sid}_content.json").write_text(json.dumps(data))
-  if text:
-    confidence = min(0.9, 0.4 + rel_score * 0.05)
-    fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
-    (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": title, "excerpt": text[:4000], "source": "read", "confidence": confidence, "relevance_score": rel_score}))
-FOCUS_READ
-    done < "$ART/focus_read_order.txt"
+    [ -n "$FOCUS_STATS" ] && read -r focus_read_attempts focus_read_successes <<< "$(echo "$FOCUS_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null)" 2>/dev/null || true
     log "Focus reads: $focus_read_attempts attempted, $focus_read_successes succeeded"
     progress_step "Extracting focused findings"
     python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
@@ -783,46 +797,7 @@ for i in range(6):
 (art / "counter_urls_to_read.txt").write_text("\n".join(urls_to_read[:9]))
 COUNTER_EVIDENCE
     if [ -f "$ART/counter_urls_to_read.txt" ] && [ -s "$ART/counter_urls_to_read.txt" ]; then
-      while IFS= read -r curl; do
-        [ -z "$curl" ] && continue
-        python3 "$TOOLS/research_web_reader.py" "$curl" > "$ART/read_result.json" 2>> "$PWD/log.txt" || true
-        python3 - "$PROJ_DIR" "$ART" "$curl" "$QUESTION" "$OPERATOR_ROOT" <<'COUNTER_READ'
-import json, sys, hashlib
-import os
-from pathlib import Path
-proj_dir, art, url, question, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
-if not (art / "read_result.json").exists():
-  sys.exit(0)
-data = json.loads((art / "read_result.json").read_text())
-key = hashlib.sha256(url.encode()).hexdigest()[:12]
-text = (data.get("text") or "")[:8000]
-title = data.get("title", "")
-relevant = True
-rel_score = 10
-rel_threshold = float(os.environ.get("RESEARCH_MEMORY_RELEVANCE_THRESHOLD", "0.50"))
-if text and question:
-  try:
-    sys.path.insert(0, op_root)
-    from tools.research_relevance_gate import check_relevance
-    gate = check_relevance(question, title, text, project_id="")
-    relevant = gate.get("relevant", True)
-    rel_score = gate.get("score", 10)
-    if not relevant:
-      print(f"COUNTER FILTERED (score={rel_score}): {url[:80]}", file=sys.stderr)
-  except Exception as e:
-    print(f"WARN: relevance gate error: {e}", file=sys.stderr)
-if relevant:
-  if rel_score < rel_threshold:
-    relevant = False
-    print(f"COUNTER FILTERED (below threshold={rel_threshold:.2f}, score={rel_score}): {url[:80]}", file=sys.stderr)
-if relevant:
-  (proj_dir / "sources" / f"{key}_content.json").write_text(json.dumps(data))
-  if text:
-    confidence = min(0.8, 0.3 + rel_score * 0.05)
-    fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
-    (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": title, "excerpt": text[:4000], "source": "counter_read", "confidence": confidence, "relevance_score": rel_score}))
-COUNTER_READ
-      done < "$ART/counter_urls_to_read.txt"
+      python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" counter --input-file "$ART/counter_urls_to_read.txt" --read-limit 9 --workers 4 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
       python3 "$TOOLS/research_reason.py" "$PROJECT_ID" contradiction_detection > "$PROJ_DIR/contradictions.json" 2>> "$PWD/log.txt" || true
     fi
     # Evidence Gate: must pass before synthesize
@@ -869,66 +844,10 @@ for f in (proj_dir / "sources").glob("*.json"):
 ranked.sort()
 (art / "recovery_read_order.txt").write_text("\n".join(path for _, path in ranked))
 RANK_RECOVERY
+        RECOVERY_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" recovery --input-file "$ART/recovery_read_order.txt" --read-limit 10 --workers 4 2>> "$PWD/log.txt" | tail -1)
         recovery_reads=0
         recovery_successes=0
-        while IFS= read -r rf; do
-          [ -f "$rf" ] || continue
-          [ $recovery_reads -ge 10 ] && break
-          rurl=$(python3 -c "import json; d=json.load(open('$rf')); print(d.get('url',''), end='')")
-          [ -n "$rurl" ] || continue
-          recovery_reads=$((recovery_reads+1))
-          python3 "$TOOLS/research_web_reader.py" "$rurl" > "$ART/read_result.json" 2>> "$PWD/log.txt" || true
-          if [ -f "$ART/read_result.json" ]; then
-            if python3 -c "
-import json
-try:
-  d = json.load(open('$ART/read_result.json'))
-  text = (d.get('text') or '').strip()
-  err = (d.get('error') or '').strip()
-  exit(0 if text and not err else 1)
-except Exception:
-  exit(1)
-" 2>/dev/null; then
-              recovery_successes=$((recovery_successes+1))
-            fi
-          fi
-          python3 - "$PROJ_DIR" "$ART" "$rurl" "$QUESTION" "$OPERATOR_ROOT" <<'INNER_RECOVERY'
-import json, sys, hashlib
-import os
-from pathlib import Path
-proj_dir, art, url, question, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
-if not (art / "read_result.json").exists():
-  sys.exit(0)
-data = json.loads((art / "read_result.json").read_text())
-key = hashlib.sha256(url.encode()).hexdigest()[:12]
-text = (data.get("text") or data.get("abstract") or "")[:8000]
-title = data.get("title", "")
-relevant = True
-rel_score = 10
-rel_threshold = float(os.environ.get("RESEARCH_MEMORY_RELEVANCE_THRESHOLD", "0.50"))
-if text and question:
-  try:
-    sys.path.insert(0, op_root)
-    from tools.research_relevance_gate import check_relevance
-    gate = check_relevance(question, title, text, project_id="")
-    relevant = gate.get("relevant", True)
-    rel_score = gate.get("score", 10)
-    if not relevant:
-      print(f"RECOVERY FILTERED (score={rel_score}): {url[:80]}", file=sys.stderr)
-  except Exception as e:
-    print(f"WARN: relevance gate error: {e}", file=sys.stderr)
-if relevant:
-  if rel_score < rel_threshold:
-    relevant = False
-    print(f"RECOVERY FILTERED (below threshold={rel_threshold:.2f}, score={rel_score}): {url[:80]}", file=sys.stderr)
-if relevant:
-  (proj_dir / "sources" / f"{key}_content.json").write_text(json.dumps(data))
-  if text:
-    confidence = min(0.9, 0.4 + rel_score * 0.05)
-    fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
-    (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": title, "excerpt": text[:4000], "source": "read", "confidence": confidence, "relevance_score": rel_score}))
-INNER_RECOVERY
-        done < "$ART/recovery_read_order.txt"
+        [ -n "$RECOVERY_STATS" ] && read -r recovery_reads recovery_successes <<< "$(echo "$RECOVERY_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null)" 2>/dev/null || true
         log "Recovery reads: $recovery_reads attempted, $recovery_successes succeeded"
         if [ "$recovery_successes" -gt 0 ]; then
           # Re-run claim verification and ledger with new findings

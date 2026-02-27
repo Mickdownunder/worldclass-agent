@@ -688,6 +688,53 @@ def build_gap_fill_queries(coverage_path: str, project_id: str) -> dict[str, Any
     return {"queries": out_queries[:40]}
 
 
+def build_refinement_plan(coverage_path: str, project_id: str) -> dict[str, Any]:
+    """After explore reads: re-plan with findings summary to generate 5-10 precision queries for gaps."""
+    if project_id:
+        try:
+            from tools.research_progress import step as progress_step
+            progress_step(project_id, "Planner Round 2: precision queries")
+        except Exception:
+            pass
+    p = Path(coverage_path)
+    if not p.exists():
+        return {"queries": []}
+    cov = json.loads(p.read_text())
+    plan = _load_project_plan(project_id)
+    question = (plan.get("question") or "").strip()
+    if not question:
+        proj_dir = research_root() / project_id
+        try:
+            proj = json.loads((proj_dir / "project.json").read_text())
+            question = (proj.get("question") or "").strip()
+        except Exception:
+            pass
+    covered = [t for t in (cov.get("topics") or []) if (t.get("coverage") or {}).get("is_covered")]
+    uncovered = cov.get("uncovered_topics", [])
+    findings_summary_parts = []
+    for t in covered[:5]:
+        name = str(t.get("name") or "")
+        cnt = (t.get("coverage") or {}).get("sources_count", 0)
+        findings_summary_parts.append(f"- {name}: {cnt} sources")
+    gaps_parts = [str(t.get("name") or t.get("id") or "topic") for t in uncovered[:8]]
+    findings_summary = "\n".join(findings_summary_parts) if findings_summary_parts else "None yet."
+    gaps_summary = "; ".join(gaps_parts) if gaps_parts else "None."
+    system = """You are a research strategist. Given the research question, what was already found, and what is still missing, output 5-10 precise search queries to fill the gaps. Each query should target a specific gap. Return ONLY valid JSON: {"queries": [{"query": "...", "topic_id": "gap-1", "type": "web|academic|medical"}]}. Keep queries under 12 words each."""
+    user = f"""QUESTION: {question}
+
+FOUND (covered): {findings_summary}
+MISSING (gaps): {gaps_summary}
+
+Generate 5-10 precision queries targeting the gaps. Return only JSON with key "queries"."""
+    try:
+        resp = llm_call(PLANNER_MODEL, system, user, project_id=project_id)
+        out = _json_only(resp.text or "{}")
+        queries = out.get("queries") if isinstance(out.get("queries"), list) else []
+        return {"queries": [q for q in queries if isinstance(q, dict) and (q.get("query") or "").strip()][:10]}
+    except Exception:
+        return {"queries": []}
+
+
 def _parse_thin_topics(raw: str) -> list[dict[str, Any]]:
     p = Path(raw)
     if p.exists():
@@ -738,7 +785,7 @@ def build_perspective_rotate_queries(thin_topics_arg: str, project_id: str) -> d
 def main() -> None:
     if len(sys.argv) < 2:
         print(
-            "Usage: research_planner.py <question> [project_id] | --gap-fill <coverage_json> <project_id> | --perspective-rotate <thin_topics_json_or_csv> <project_id>",
+            "Usage: research_planner.py <question> [project_id] | --gap-fill <coverage_json> <project_id> | --refinement-queries <coverage_json> <project_id> | --perspective-rotate <thin_topics_json_or_csv> <project_id>",
             file=sys.stderr,
         )
         sys.exit(2)
@@ -747,6 +794,13 @@ def main() -> None:
         if len(sys.argv) < 4:
             sys.exit(2)
         result = build_gap_fill_queries(sys.argv[2], sys.argv[3])
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+
+    if sys.argv[1] == "--refinement-queries":
+        if len(sys.argv) < 4:
+            sys.exit(2)
+        result = build_refinement_plan(sys.argv[2], sys.argv[3])
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return
 

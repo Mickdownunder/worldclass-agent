@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from urllib.request import Request, urlopen
 from urllib.parse import quote
@@ -158,40 +159,52 @@ def main():
                 max_per_query = max(1, min(20, int(sys.argv[midx])))
 
         queries = _load_queries(qfile)
+        valid_queries = [
+            (i, q)
+            for i, q in enumerate(queries, start=1)
+            if str(q.get("query") or "").strip()
+        ]
+        total = len(valid_queries)
+        max_workers = min(8, max(5, (total + 1) // 2))
         all_results: list[dict] = []
         seen_urls: set[str] = set()
-        total = len(queries)
-        for i, q in enumerate(queries, start=1):
+
+        def run_one(args: tuple) -> tuple[int, str, str, str, str, list[dict]]:
+            i, q = args
             query = str(q.get("query") or "").strip()
-            if not query:
-                continue
             qtype = str(q.get("type") or "web").lower()
             topic_id = str(q.get("topic_id") or "")
             perspective = str(q.get("perspective") or "")
-            _progress_step(f"Search {i}/{total}: {query[:80]}", i, total)
-
             if qtype == "medical":
                 results = _search_medical(query, max_per_query)
             elif qtype == "academic":
                 results = _search_academic(query, max_per_query)
             else:
                 results = _search_web(query, max_per_query, secrets)
+            return (i, query, topic_id, perspective, qtype, results)
 
-            for r in results:
-                url = (r.get("url") or "").strip()
-                if not url or url in seen_urls:
-                    continue
-                seen_urls.add(url)
-                all_results.append(
-                    {
-                        **r,
-                        "query": query,
-                        "topic_id": topic_id,
-                        "perspective": perspective,
-                        "query_type": qtype,
-                    }
-                )
-            time.sleep(0.3)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(run_one, (i, q)): i for i, q in valid_queries}
+            for future in as_completed(futures):
+                try:
+                    i, query, topic_id, perspective, qtype, results = future.result()
+                    _progress_step(f"Search {i}/{total}: {query[:80]}", i, total)
+                    for r in results:
+                        url = (r.get("url") or "").strip()
+                        if not url or url in seen_urls:
+                            continue
+                        seen_urls.add(url)
+                        all_results.append(
+                            {
+                                **r,
+                                "query": query,
+                                "topic_id": topic_id,
+                                "perspective": perspective,
+                                "query_type": qtype,
+                            }
+                        )
+                except Exception as e:
+                    print(f"WARN: search failed: {e}", file=sys.stderr)
         print(json.dumps(all_results, indent=2, ensure_ascii=False))
         return
 

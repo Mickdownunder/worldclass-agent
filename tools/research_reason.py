@@ -22,6 +22,11 @@ def _model():
     return os.environ.get("RESEARCH_EXTRACT_MODEL", "gpt-4.1-mini")
 
 
+def _hypothesis_model():
+    """Model used only for hypothesis_formation; default gemini-3.1-pro-preview for deeper theses."""
+    return os.environ.get("RESEARCH_HYPOTHESIS_MODEL", "gemini-3.1-pro-preview")
+
+
 def _load_findings(proj_path: Path, max_items: int = 40) -> list[dict]:
     findings = []
     for f in (proj_path / "findings").glob("*.json"):
@@ -32,10 +37,10 @@ def _load_findings(proj_path: Path, max_items: int = 40) -> list[dict]:
     return findings[:max_items]
 
 
-def _llm_json(system: str, user: str, project_id: str = "") -> dict | list:
-    """Call LLM with retry and optional budget tracking."""
+def _llm_json(system: str, user: str, project_id: str = "", *, model: str | None = None) -> dict | list:
+    """Call LLM with retry and optional budget tracking. model= overrides default (_model())."""
     import re
-    model = _model()
+    model = model if model is not None else _model()
     result = llm_call(model, system, user, project_id=project_id)
     text = (result.text or "").strip()
     if text.startswith("```"):
@@ -78,7 +83,7 @@ def hypothesis_formation(proj_path: Path, project: dict, project_id: str = "") -
     system = """You are a research analyst. Form 1-3 testable hypotheses that answer the research question based on current findings.
 Return JSON: {"hypotheses": [{"statement": "...", "confidence": 0.0-1.0, "evidence_summary": "..."}]}"""
     user = f"QUESTION: {question}\n\nFINDINGS:\n{items}"
-    out = _llm_json(system, user, project_id=project_id)
+    out = _llm_json(system, user, project_id=project_id, model=_hypothesis_model())
     return out if isinstance(out, dict) else {"hypotheses": out}
 
 

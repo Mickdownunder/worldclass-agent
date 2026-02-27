@@ -434,3 +434,38 @@ class MemoryV2:
         if total <= 0:
             return {}
         return {k: round(v / total, 3) for k, v in c.items()}
+
+    def _question_hash(self, question: str) -> str:
+        """Stable hash for dedup: same question text -> same key across runs."""
+        return hash_id("read_urls:" + (question or "").lower().strip())
+
+    def record_read_urls(self, question: str, urls: list[str]) -> None:
+        """Store read URLs for this question so future runs can skip them."""
+        if not urls:
+            return
+        qh = self._question_hash(question)
+        now = utcnow()
+        for url in urls:
+            u = (url or "").strip()
+            if not u or "://" not in u:
+                continue
+            try:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO read_urls (question_hash, url, created_at) VALUES (?, ?, ?)",
+                    (qh, u[:2048], now),
+                )
+            except Exception:
+                pass
+        self._conn.commit()
+
+    def get_read_urls_for_question(self, question: str) -> set[str]:
+        """Return set of URLs already read for this question (for skip/dedup)."""
+        qh = self._question_hash(question)
+        try:
+            rows = self._conn.execute(
+                "SELECT url FROM read_urls WHERE question_hash = ?",
+                (qh,),
+            ).fetchall()
+            return {str(r["url"] or "").strip() for r in rows if r["url"]}
+        except Exception:
+            return set()

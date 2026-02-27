@@ -117,36 +117,80 @@ def _load_source_metadata(proj_path: Path, max_items: int = 50) -> list[dict]:
     return summaries[:max_items]
 
 
+# Batch size for claim extraction: 15-20 findings per LLM call to avoid truncation/ignored content.
+CLAIM_EXTRACTION_BATCH_SIZE = 18
+
+
+def _claim_verification_batch(
+    findings_batch: list[dict],
+    source_meta: list[dict],
+    question: str,
+    project_id: str,
+    domain: str = "",
+) -> list[dict]:
+    """Run claim extraction for one batch of findings. Returns list of claim dicts."""
+    if not findings_batch:
+        return []
+    items = json.dumps(
+        [{"url": f.get("url"), "title": f.get("title"), "excerpt": (f.get("excerpt") or "")[:800]} for f in findings_batch],
+        indent=2, ensure_ascii=False
+    )
+    meta_text = json.dumps(source_meta[:40], indent=2, ensure_ascii=False)[:6000] if source_meta else "[]"
+    system = f"""You are a research analyst. The research question is:
+"{question}"
+
+From the findings AND source metadata, extract ALL KEY CLAIMS that answer this question.
+Extract at least 3-10 claims from this batch if the material supports it. Each claim should be a specific, verifiable factual statement.
+For each claim, list ALL sources that support it.
+Return JSON: {{"claims": [{{"claim": "...", "supporting_sources": ["url1", "url2"], "confidence": 0.0-1.0, "verified": true/false}}]}}
+verified = true only if at least 2 distinct source URLs support the claim. Be strict but thorough in matching.
+Prefer specific, quantitative claims (e.g. "X achieved Y% response rate in phase Z trial") over vague narrative statements."""
+    principles_block = get_principles_for_research(question, domain=domain, limit=5)
+    if principles_block:
+        system += "\n\n" + principles_block
+    user = f"QUESTION: {question}\n\nFINDINGS (this batch):\n{items}\n\nSOURCE METADATA (search snippets — use as supporting evidence for cross-referencing):\n{meta_text}\n\nExtract claims and verification status. Return only valid JSON."
+    out = _llm_json(system, user, project_id=project_id, model=_verify_model())
+    if isinstance(out, dict) and "claims" in out:
+        return out["claims"]
+    if isinstance(out, list):
+        return out
+    return []
+
+
+def _merge_dedupe_claims(claims_list: list[dict]) -> list[dict]:
+    """Merge claims from multiple batches and deduplicate by normalized claim text."""
+    seen_normalized: set[str] = set()
+    merged: list[dict] = []
+    for c in claims_list:
+        text = (c.get("claim") or "").strip()
+        if not text:
+            continue
+        norm = " ".join(text.lower().split())[:200]
+        if norm in seen_normalized:
+            continue
+        seen_normalized.add(norm)
+        merged.append(c)
+    return merged
+
+
 def claim_verification(proj_path: Path, project: dict, project_id: str = "") -> dict:
-    """Extract key claims from findings and check if >= 2 independent sources support them."""
+    """Extract key claims from findings and check if >= 2 independent sources support them.
+    Findings are batched (15-20 per LLM call) to avoid truncation; claims are merged and deduplicated."""
     ensure_project_layout(proj_path)
     question = project.get("question", "")
     findings = _load_findings(proj_path, question=question)
     source_meta = _load_source_metadata(proj_path)
     if not findings and not source_meta:
         return {"claims": []}
-    items = json.dumps(
-        [{"url": f.get("url"), "title": f.get("title"), "excerpt": (f.get("excerpt") or "")[:800]} for f in findings],
-        indent=2, ensure_ascii=False
-    )[:24000]
-    meta_text = json.dumps(source_meta[:40], indent=2, ensure_ascii=False)[:6000] if source_meta else "[]"
-    system = f"""You are a research analyst. The research question is:
-"{question}"
-
-From the findings AND source metadata, extract ALL KEY CLAIMS that answer this question.
-Extract at least 5-15 claims if the material supports it. Each claim should be a specific, verifiable factual statement.
-For each claim, list ALL sources that support it.
-Return JSON: {{"claims": [{{"claim": "...", "supporting_sources": ["url1", "url2"], "confidence": 0.0-1.0, "verified": true/false}}]}}
-verified = true only if at least 2 distinct source URLs support the claim. Be strict but thorough in matching.
-Prefer specific, quantitative claims (e.g. "X achieved Y% response rate in phase Z trial") over vague narrative statements."""
-    principles_block = get_principles_for_research(question, domain=project.get("domain"), limit=5)
-    if principles_block:
-        system += "\n\n" + principles_block
-    user = f"QUESTION: {question}\n\nFINDINGS (full content):\n{items}\n\nSOURCE METADATA (search snippets — use as supporting evidence for cross-referencing):\n{meta_text}\n\nExtract claims and verification status. Return only valid JSON."
-    out = _llm_json(system, user, project_id=project_id, model=_verify_model())
-    if isinstance(out, dict) and "claims" in out:
-        return out
-    return {"claims": out if isinstance(out, list) else []}
+    batch_size = CLAIM_EXTRACTION_BATCH_SIZE
+    domain = (project.get("domain") or "").strip()
+    all_claims: list[dict] = []
+    for start in range(0, len(findings), batch_size):
+        batch = findings[start : start + batch_size]
+        batch_claims = _claim_verification_batch(batch, source_meta, question, project_id, domain=domain)
+        all_claims.extend(batch_claims)
+    merged = _merge_dedupe_claims(all_claims)
+    return {"claims": merged}
 
 
 _AUTHORITATIVE_DOMAINS = (

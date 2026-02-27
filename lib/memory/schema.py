@@ -252,6 +252,13 @@ SCHEMA_SQL = """
         to_node_id TEXT NOT NULL,
         project_id TEXT
     );
+    CREATE TABLE IF NOT EXISTS read_urls (
+        question_hash TEXT NOT NULL,
+        url TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (question_hash, url)
+    );
+    CREATE INDEX IF NOT EXISTS idx_read_urls_question ON read_urls(question_hash);
     CREATE INDEX IF NOT EXISTS idx_strategic_principles_domain ON strategic_principles(domain);
     CREATE INDEX IF NOT EXISTS idx_strategic_principles_type ON strategic_principles(principle_type);
     CREATE INDEX IF NOT EXISTS idx_run_episodes_domain ON run_episodes(domain);

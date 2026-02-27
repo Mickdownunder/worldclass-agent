@@ -445,6 +445,14 @@ class Memory:
     def summarize_query_type_mix(self, queries: list[dict]) -> dict[str, float]:
         return self._v2.summarize_query_type_mix(queries=queries)
 
+    def record_read_urls(self, question: str, urls: list[str]) -> None:
+        """Store read URLs for this question so future runs can skip them (source dedup)."""
+        self._v2.record_read_urls(question=question, urls=urls)
+
+    def get_read_urls_for_question(self, question: str) -> set[str]:
+        """Return set of URLs already read for this question (for skip/dedup)."""
+        return self._v2.get_read_urls_for_question(question=question)
+
     def list_memory_decisions(self, project_id: str | None = None, limit: int = 50) -> list[dict]:
         return self._v2.list_memory_decisions(project_id=project_id, limit=limit)
 
