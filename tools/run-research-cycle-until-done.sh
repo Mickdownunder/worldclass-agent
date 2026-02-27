@@ -20,18 +20,41 @@ if [ ! -d "$OPERATOR_ROOT/research/$PROJECT_ID" ]; then
 fi
 
 MAX_RUNS=10
+MAX_SAME_PHASE=2
 run=0
+last_phase=""
+same_phase_count=0
 
 while [ $run -lt $MAX_RUNS ]; do
   phase=$(python3 -c "import json; d=json.load(open('$OPERATOR_ROOT/research/$PROJECT_ID/project.json')); print(d.get('phase',''), end='')")
+  status=$(python3 -c "import json; d=json.load(open('$OPERATOR_ROOT/research/$PROJECT_ID/project.json')); print(d.get('status',''), end='')")
+
   if [ "$phase" = "done" ]; then
     echo "Project $PROJECT_ID is done."
     ls -la "$OPERATOR_ROOT/research/$PROJECT_ID/reports/" 2>/dev/null || true
     exit 0
   fi
 
+  case "$status" in
+    failed*|cancelled|error|abandoned|aem_blocked|pending_review)
+      echo "Project $PROJECT_ID reached terminal status: $status (phase: $phase). Stopping."
+      exit 0
+      ;;
+  esac
+
+  if [ "$phase" = "$last_phase" ]; then
+    same_phase_count=$((same_phase_count + 1))
+    if [ "$same_phase_count" -ge "$MAX_SAME_PHASE" ]; then
+      echo "Phase '$phase' stuck after $same_phase_count retries without advancing. Stopping."
+      exit 0
+    fi
+  else
+    same_phase_count=0
+  fi
+  last_phase="$phase"
+
   run=$((run + 1))
-  echo "[Run $run] Phase: $phase — starting cycle job..."
+  echo "[Run $run] Phase: $phase, Status: $status — starting cycle job..."
   job_dir=$($OP job new --workflow research-cycle --request "$PROJECT_ID")
   run_exit=0
   $OP run "$job_dir" --timeout 900 || run_exit=$?

@@ -1,14 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 
 interface PhaseData {
   id: string;
   label: string;
   icon: string;
   color: string;
-  summary?: string;
-  detail?: string;
 }
 
 interface TracePhase {
@@ -66,10 +64,56 @@ function getPhaseText(phaseId: string, tracePhases: TracePhase[], highestIndex: 
   return "Wartet…";
 }
 
+function qualityLabel(q: number): { text: string; color: string } {
+  if (q <= 0) return { text: "—", color: "var(--tron-text-dim)" };
+  if (q >= 0.8) return { text: "Excellent", color: "#22c55e" };
+  if (q >= 0.6) return { text: "Good", color: "#22c55e" };
+  if (q >= 0.4) return { text: "Fair", color: "#f59e0b" };
+  if (q >= 0.2) return { text: "Low", color: "#f43f5e" };
+  return { text: "Critical", color: "#f43f5e" };
+}
+
 export function BrainRiverFlow({ latestTrace, totalCycles, totalReflections, avgQuality }: Props) {
   const [expandedPhase, setExpandedPhase] = useState<string | null>(null);
+  const [animatedIndex, setAnimatedIndex] = useState(-1);
+  const prevIndexRef = useRef(-1);
 
-  const activeIndex = getHighestPhaseIndex(latestTrace);
+  const targetIndex = getHighestPhaseIndex(latestTrace);
+
+  useEffect(() => {
+    if (targetIndex < 0) {
+      setAnimatedIndex(-1);
+      prevIndexRef.current = -1;
+      return;
+    }
+
+    const startFrom = targetIndex > prevIndexRef.current
+      ? Math.max(prevIndexRef.current, -1)
+      : -1;
+
+    if (startFrom < targetIndex) {
+      setAnimatedIndex(startFrom);
+      let current = startFrom;
+      const step = () => {
+        current += 1;
+        setAnimatedIndex(current);
+        if (current < targetIndex) {
+          setTimeout(step, 600);
+        }
+      };
+      const timer = setTimeout(step, 300);
+      prevIndexRef.current = targetIndex;
+      return () => clearTimeout(timer);
+    } else {
+      setAnimatedIndex(targetIndex);
+      prevIndexRef.current = targetIndex;
+    }
+  }, [targetIndex]);
+
+  const activeIndex = animatedIndex;
+  const ql = qualityLabel(avgQuality);
+
+  const RIVER_PATH = "M 60,110 C 150,50 200,170 300,110 C 400,50 450,170 540,110 C 630,50 680,170 760,110 C 840,50 880,170 940,110";
 
   return (
     <div className="relative">
@@ -97,22 +141,27 @@ export function BrainRiverFlow({ latestTrace, totalCycles, totalReflections, avg
           </div>
         </div>
         <div className="flex gap-4 ml-auto">
-          {[
-            { label: "Cycles", value: totalCycles, color: "var(--tron-accent)" },
-            { label: "Reflections", value: totalReflections, color: "#ec4899" },
-            { label: "Avg Quality", value: avgQuality > 0 ? avgQuality.toFixed(2) : "—", color: "var(--tron-success)" },
-          ].map((s) => (
-            <div key={s.label} className="text-center">
-              <div className="text-xl font-bold font-mono" style={{ color: s.color }}>{s.value}</div>
-              <div className="text-[10px] uppercase tracking-wider" style={{ color: "var(--tron-text-dim)" }}>{s.label}</div>
+          <div className="text-center">
+            <div className="text-xl font-bold font-mono" style={{ color: "var(--tron-accent)" }}>{totalCycles}</div>
+            <div className="text-[10px] uppercase tracking-wider" style={{ color: "var(--tron-text-dim)" }}>Cycles</div>
+          </div>
+          <div className="text-center">
+            <div className="text-xl font-bold font-mono" style={{ color: "#ec4899" }}>{totalReflections}</div>
+            <div className="text-[10px] uppercase tracking-wider" style={{ color: "var(--tron-text-dim)" }}>Reflections</div>
+          </div>
+          <div className="text-center">
+            <div className="text-xl font-bold font-mono" style={{ color: ql.color }}>
+              {ql.text}
             </div>
-          ))}
+            <div className="text-[10px] uppercase tracking-wider" style={{ color: "var(--tron-text-dim)" }}>
+              {avgQuality > 0 ? `Quality ${(avgQuality * 100).toFixed(0)}%` : "Quality"}
+            </div>
+          </div>
         </div>
       </div>
 
       {/* River flow */}
       <div className="relative py-4">
-        {/* River SVG path background */}
         <svg
           viewBox="0 0 1000 220"
           className="w-full h-auto"
@@ -151,55 +200,30 @@ export function BrainRiverFlow({ latestTrace, totalCycles, totalReflections, avg
           </defs>
 
           {/* River bed (full path, dim) */}
-          <path
-            d="M 60,110 C 150,50 200,170 300,110 C 400,50 450,170 540,110 C 630,50 680,170 760,110 C 840,50 880,170 940,110"
-            fill="none"
-            stroke="url(#river-gradient)"
-            strokeWidth="36"
-            strokeLinecap="round"
-          />
-          <path
-            d="M 60,110 C 150,50 200,170 300,110 C 400,50 450,170 540,110 C 630,50 680,170 760,110 C 840,50 880,170 940,110"
-            fill="none"
-            stroke="url(#river-gradient)"
-            strokeWidth="18"
-            strokeLinecap="round"
-          />
+          <path d={RIVER_PATH} fill="none" stroke="url(#river-gradient)" strokeWidth="36" strokeLinecap="round" />
+          <path d={RIVER_PATH} fill="none" stroke="url(#river-gradient)" strokeWidth="18" strokeLinecap="round" />
 
-          {/* Active river (filled portion) */}
+          {/* Active river (animated fill) */}
           {activeIndex >= 0 && (
             <>
               <path
-                d="M 60,110 C 150,50 200,170 300,110 C 400,50 450,170 540,110 C 630,50 680,170 760,110 C 840,50 880,170 940,110"
+                d={RIVER_PATH}
                 fill="none"
                 stroke="url(#river-active)"
                 strokeWidth="18"
                 strokeLinecap="round"
                 strokeDasharray={`${((activeIndex + 1) / PHASES.length) * 1000} 1000`}
+                style={{ transition: "stroke-dasharray 0.8s ease-out" }}
               />
               {/* Flowing particles */}
               <circle r="3" fill="url(#river-flow)" opacity="0.8" filter="url(#glow)">
-                <animateMotion
-                  dur="4s"
-                  repeatCount="indefinite"
-                  path="M 60,110 C 150,50 200,170 300,110 C 400,50 450,170 540,110 C 630,50 680,170 760,110 C 840,50 880,170 940,110"
-                />
+                <animateMotion dur="4s" repeatCount="indefinite" path={RIVER_PATH} />
               </circle>
               <circle r="2" fill="url(#river-flow)" opacity="0.5">
-                <animateMotion
-                  dur="4s"
-                  repeatCount="indefinite"
-                  begin="1.3s"
-                  path="M 60,110 C 150,50 200,170 300,110 C 400,50 450,170 540,110 C 630,50 680,170 760,110 C 840,50 880,170 940,110"
-                />
+                <animateMotion dur="4s" repeatCount="indefinite" begin="1.3s" path={RIVER_PATH} />
               </circle>
               <circle r="2.5" fill="url(#river-flow)" opacity="0.6">
-                <animateMotion
-                  dur="4s"
-                  repeatCount="indefinite"
-                  begin="2.6s"
-                  path="M 60,110 C 150,50 200,170 300,110 C 400,50 450,170 540,110 C 630,50 680,170 760,110 C 840,50 880,170 940,110"
-                />
+                <animateMotion dur="4s" repeatCount="indefinite" begin="2.6s" path={RIVER_PATH} />
               </circle>
             </>
           )}
@@ -207,11 +231,9 @@ export function BrainRiverFlow({ latestTrace, totalCycles, totalReflections, avg
           {/* Phase nodes */}
           {PHASES.map((phase, i) => {
             const xs = [60, 300, 540, 760, 940];
-            const ys = [110, 110, 110, 110, 110];
             const cx = xs[i];
-            const cy = ys[i];
-            const highestIdx = getHighestPhaseIndex(latestTrace);
-            const state = getPhaseState(phase.id, latestTrace, highestIdx);
+            const cy = 110;
+            const state = getPhaseState(phase.id, latestTrace, activeIndex);
             const opacity = state === "idle" ? 0.3 : 1;
             const isActive = state === "active";
 
@@ -232,6 +254,7 @@ export function BrainRiverFlow({ latestTrace, totalCycles, totalReflections, avg
                   stroke={phase.color}
                   strokeWidth={state !== "idle" ? 2.5 : 1}
                   opacity={opacity}
+                  style={{ transition: "opacity 0.5s ease, fill-opacity 0.5s ease, stroke-width 0.3s ease" }}
                 />
                 {state === "done" && (
                   <text x={cx} y={cy + 1} textAnchor="middle" dominantBaseline="central" fontSize="12" fill={phase.color}>✓</text>
@@ -241,29 +264,16 @@ export function BrainRiverFlow({ latestTrace, totalCycles, totalReflections, avg
                     <animate attributeName="r" values="3;6;3" dur="1.5s" repeatCount="indefinite" />
                   </circle>
                 )}
-
-                {/* Label */}
                 <text
-                  x={cx}
-                  y={cy + 38}
-                  textAnchor="middle"
-                  fontSize="11"
-                  fontWeight="600"
+                  x={cx} y={cy + 38} textAnchor="middle" fontSize="11" fontWeight="600"
                   fill={state !== "idle" ? phase.color : "var(--tron-text-dim, #666)"}
-                  opacity={opacity}
-                  fontFamily="system-ui, sans-serif"
+                  opacity={opacity} fontFamily="system-ui, sans-serif"
+                  style={{ transition: "opacity 0.5s ease" }}
                 >
                   {phase.label}
                 </text>
-
-                {/* Icon above */}
-                <text
-                  x={cx}
-                  y={cy - 32}
-                  textAnchor="middle"
-                  fontSize="18"
-                  opacity={opacity}
-                >
+                <text x={cx} y={cy - 32} textAnchor="middle" fontSize="18" opacity={opacity}
+                  style={{ transition: "opacity 0.5s ease" }}>
                   {phase.icon}
                 </text>
               </g>
