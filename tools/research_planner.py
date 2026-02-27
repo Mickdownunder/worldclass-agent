@@ -56,6 +56,22 @@ _MEDICAL_KEYWORDS = frozenset({
     "pediatric", "geriatric", "pregnancy", "prenatal", "neonatal",
     "impfstoff", "krebs", "therapie", "krankheit", "medizin",
     "gesundheit", "arzt", "klinisch", "studie", "behandlung",
+    "pdac", "crc", "nsclc", "sclc", "hcc", "rcc", "aml", "cll", "dlbcl",
+    "melanoma", "melanom", "glioblastoma", "glioblastom", "sarcoma", "sarkom",
+    "adenocarcinoma", "adenokarzinom", "carcinoma", "karzinom",
+    "phase-1", "phase-2", "phase-3", "phase 1", "phase 2", "phase 3",
+    "phase-ii", "phase-iii", "clinical trial", "klinische studie",
+    "randomized", "randomisiert", "double-blind", "doppelblind",
+    "recurrence-free", "disease-free", "progression-free", "overall survival",
+    "rfs", "dfs", "pfs", "orr", "objective response",
+    "t-zell", "t cell", "t-cell", "cd8", "cd4", "neoantigen", "neoantigen",
+    "immunotherapy", "immuntherapie", "checkpoint inhibitor",
+    "pd-l1", "pd-1", "atezolizumab", "pembrolizumab", "nivolumab",
+    "cevumeran", "autogene", "bnt122", "ro7198457",
+    "mrna vaccine", "mrna-impfstoff", "cancer vaccine", "krebsimpfstoff",
+    "oncology", "onkologie", "tumor", "tumour", "metastasis", "metastase",
+    "adjuvant", "neoadjuvant", "resected", "reseziert",
+    "asco", "esmo", "aacr", "sabcs",
 })
 
 
@@ -81,8 +97,17 @@ def _extract_entities(question: str) -> list[str]:
     return entities[:20]
 
 
+_TOPIC_STOPWORDS = {
+    "neueste", "neuesten", "neuste", "neusten", "latest", "newest", "recent",
+    "daten", "data", "inklusive", "including", "sowie", "also", "und", "and",
+    "the", "die", "der", "das", "eine", "ein", "aus", "von", "mit", "for",
+    "über", "nach", "zum", "zur", "beim",
+}
+
+
 def _fallback_plan(question: str) -> dict[str, Any]:
     entities = _extract_entities(question)
+    is_medical = _is_medical_topic(question)
     words = [
         w
         for w in re.findall(r"[A-Za-z][A-Za-z0-9\-]{3,}", question)
@@ -91,6 +116,8 @@ def _fallback_plan(question: str) -> dict[str, Any]:
     top_terms = []
     for w in words:
         wl = w.lower()
+        if wl in _TOPIC_STOPWORDS:
+            continue
         if wl not in top_terms:
             top_terms.append(wl)
     top_terms = top_terms[:8]
@@ -122,38 +149,72 @@ def _fallback_plan(question: str) -> dict[str, Any]:
     if not entities:
         entities = [question[:60]]
 
-    perspectives = ["AI researcher", "framework developer", "enterprise user"]
+    if is_medical:
+        perspectives = ["clinical researcher", "medical specialist", "systematic reviewer"]
+    else:
+        perspectives = ["AI researcher", "framework developer", "enterprise user"]
+
     queries: list[dict[str, Any]] = []
     for i, e in enumerate(entities):
         topic_id = topics[i % len(topics)]["id"]
-        queries.append(
-            {
-                "query": f"{e} architecture benchmark paper",
-                "topic_id": topic_id,
-                "type": "academic",
-                "perspective": "AI researcher",
-            }
-        )
-    for i, t in enumerate(topics):
-        for p in perspectives[:2]:
+        if is_medical:
             queries.append(
                 {
-                    "query": f"{t['name']} best practices comparison",
-                    "topic_id": t["id"],
-                    "type": "web" if i % 2 else "academic",
-                    "perspective": p,
+                    "query": f"{e} clinical trial systematic review",
+                    "topic_id": topic_id,
+                    "type": "medical",
+                    "perspective": "clinical researcher",
                 }
             )
+        else:
+            queries.append(
+                {
+                    "query": f"{e} architecture benchmark paper",
+                    "topic_id": topic_id,
+                    "type": "academic",
+                    "perspective": "AI researcher",
+                }
+            )
+    for i, t in enumerate(topics):
+        for p in perspectives[:2]:
+            if is_medical:
+                queries.append(
+                    {
+                        "query": f"{t['name']} clinical data outcomes evidence",
+                        "topic_id": t["id"],
+                        "type": "medical",
+                        "perspective": p,
+                    }
+                )
+            else:
+                queries.append(
+                    {
+                        "query": f"{t['name']} best practices comparison",
+                        "topic_id": t["id"],
+                        "type": "web" if i % 2 else "academic",
+                        "perspective": p,
+                    }
+                )
     while len(queries) < 15:
         t = topics[len(queries) % len(topics)]
-        queries.append(
-            {
-                "query": f"{t['name']} implementation pitfalls benchmarks",
-                "topic_id": t["id"],
-                "type": "web",
-                "perspective": "framework developer",
-            }
-        )
+        if is_medical:
+            queries.append(
+                {
+                    "query": f"{t['name']} randomized controlled trial meta-analysis",
+                    "topic_id": t["id"],
+                    "type": "medical",
+                    "perspective": "systematic reviewer",
+                }
+            )
+        else:
+            queries.append(
+                {
+                    "query": f"{t['name']} implementation pitfalls benchmarks",
+                    "topic_id": t["id"],
+                    "type": "web",
+                    "perspective": "framework developer",
+                }
+            )
 
     return {
         "topics": topics,

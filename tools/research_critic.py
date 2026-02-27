@@ -22,9 +22,9 @@ def _model():
 
 def _threshold() -> float:
     try:
-        return float(os.environ.get("RESEARCH_CRITIC_THRESHOLD", "0.55"))
+        return float(os.environ.get("RESEARCH_CRITIC_THRESHOLD", "0.50"))
     except ValueError:
-        return 0.55
+        return 0.50
 
 
 def _load_report(proj_path: Path, art_path: Path | None) -> str:

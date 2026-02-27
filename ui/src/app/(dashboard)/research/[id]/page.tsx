@@ -385,7 +385,12 @@ function MemoryAppliedPanel({ project }: { project: ResearchProjectDetail }) {
   if (!memory) {
     return null;
   }
-  const confidence = typeof selected?.confidence === "number" ? selected.confidence : 0;
+  const confidence =
+    typeof selected?.confidence === "number"
+      ? selected.confidence
+      : typeof memory?.confidence === "number"
+        ? memory.confidence
+        : 0;
   const confidencePct = Math.max(0, Math.min(100, Math.round(confidence * 100)));
   const policy = selected?.policy || {};
   const preferredTypes = Object.entries(policy.preferred_query_types || {});

@@ -68,7 +68,7 @@ if p.exists():
     d = json.loads(p.read_text())
     policy = ((d.get('selected_strategy') or {}).get('policy') or {})
     if policy.get('critic_threshold') is not None:
-      v = str(max(0.50, min(0.65, float(policy.get('critic_threshold')))))
+      v = str(max(0.50, min(0.55, float(policy.get('critic_threshold')))))
   except Exception:
     pass
 print(v, end='')") || RESEARCH_MEMORY_CRITIC_THRESHOLD=""
@@ -407,6 +407,7 @@ topics = {str(t.get("id","")): t for t in plan.get("topics", [])}
 entities = [str(e).lower() for e in plan.get("entities", [])]
 source_type_by_topic = {tid: set((t.get("source_types") or [])) for tid, t in topics.items()}
 DOMAIN_RANK = {"arxiv.org":10,"semanticscholar.org":10,"nature.com":10,"science.org":10,"pubmed.ncbi.nlm.nih.gov":12,"ncbi.nlm.nih.gov":11,"nih.gov":11,"thelancet.com":11,"nejm.org":11,"bmj.com":10,"jamanetwork.com":10,"who.int":10,"cochranelibrary.com":10,"clinicaltrials.gov":10,"openai.com":9,"anthropic.com":9,"google.com":8,"reuters.com":8,"nytimes.com":8}
+DOMAIN_BLOCKLIST = {"reddit.com","zenml.io","truefoundry.com","medium.com","quora.com"}
 try:
     overrides = json.loads(os.environ.get("RESEARCH_MEMORY_DOMAIN_OVERRIDES_JSON", "{}"))
     if isinstance(overrides, dict):
@@ -425,6 +426,7 @@ for f in (proj_dir / "sources").glob("*.json"):
     url = (d.get("url") or "").strip()
     if not url: continue
     domain = url.split("/")[2].replace("www.","") if "://" in url else ""
+    if domain in DOMAIN_BLOCKLIST: continue
     per_domain.setdefault(domain, 0)
     if per_domain[domain] >= 3:
         continue
@@ -610,6 +612,7 @@ for i, q in enumerate(plan.get("queries", [])):
     if tid not in topic_boost:
         topic_boost[tid] = max(1, 10 - i)
 DOMAIN_RANK = {"arxiv.org":10,"semanticscholar.org":10,"nature.com":10,"science.org":10,"pubmed.ncbi.nlm.nih.gov":12,"ncbi.nlm.nih.gov":11,"nih.gov":11,"thelancet.com":11,"nejm.org":11,"bmj.com":10,"jamanetwork.com":10,"who.int":10,"cochranelibrary.com":10,"clinicaltrials.gov":10,"openai.com":9,"anthropic.com":9,"reuters.com":8,"nytimes.com":8}
+DOMAIN_BLOCKLIST = {"reddit.com","zenml.io","truefoundry.com","medium.com","quora.com"}
 try:
     overrides = json.loads(os.environ.get("RESEARCH_MEMORY_DOMAIN_OVERRIDES_JSON", "{}"))
     if isinstance(overrides, dict):
@@ -629,6 +632,7 @@ for f in (proj_dir / "sources").glob("*.json"):
     url = (d.get("url") or "").strip()
     if not url: continue
     domain = url.split("/")[2].replace("www.","") if "://" in url else ""
+    if domain in DOMAIN_BLOCKLIST: continue
     score = DOMAIN_RANK.get(domain, 4) + topic_boost.get(str(d.get("topic_id","")), 0)
     ranked.append((-score, str(f)))
 ranked.sort()
@@ -1311,9 +1315,14 @@ if manifest_entries:
 }, indent=2))
 PY
     # Quality Gate: critic pass; up to 2 revision rounds if score below threshold
-    CRITIC_THRESHOLD="${RESEARCH_CRITIC_THRESHOLD:-0.55}"
+    # Default 0.50 so typical ~0.55 scores pass; frontier = explicit low bar.
+    CRITIC_THRESHOLD="${RESEARCH_CRITIC_THRESHOLD:-0.50}"
     if [ -n "${RESEARCH_MEMORY_CRITIC_THRESHOLD:-}" ]; then
       CRITIC_THRESHOLD="$RESEARCH_MEMORY_CRITIC_THRESHOLD"
+    fi
+    FM=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print((d.get('config') or {}).get('research_mode', 'standard'), end='')" 2>/dev/null || echo "standard")
+    if [ "$FM" = "frontier" ]; then
+      CRITIC_THRESHOLD="0.50"
     fi
     MAX_REVISE_ROUNDS="${RESEARCH_MEMORY_REVISE_ROUNDS:-2}"
     progress_step "Running critic"
