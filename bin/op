@@ -6,6 +6,7 @@ Usage:
   op job new   --workflow <id> --request <text> [--timeout <secs>]
   op job status [--limit N]
   op job get    <job_id>
+  op job reconcile   mark stale RUNNING jobs as FAILED (no process running)
   op run        <job_dir|job_id> [--timeout <secs>]
   op retry      <job_dir|job_id> [--max-retries N]
   op healthcheck
@@ -199,6 +200,27 @@ def cmd_job_get(args: list[str]):
             for a in sorted(arts):
                 size = a.stat().st_size if a.is_file() else 0
                 print(f"  {a.name} ({size} bytes)")
+
+
+def cmd_job_reconcile(args: list[str]):
+    """Mark all RUNNING jobs without a living process as FAILED."""
+    if not JOBS.exists():
+        print("No jobs directory.")
+        return
+    n = 0
+    for f in JOBS.glob("*/*/job.json"):
+        try:
+            j = json.loads(f.read_text())
+            if j.get("status") != "RUNNING":
+                continue
+            if _job_process_still_running(f.parent):
+                continue
+            _reconcile_stale_running_job(f.parent, j)
+            n += 1
+            print(f"Reconciled {j.get('id', '?')} ({j.get('workflow_id', '?')})")
+        except (json.JSONDecodeError, OSError):
+            pass
+    print(f"Done. {n} stale RUNNING job(s) marked FAILED.")
 
 
 def run_job(d: Path, timeout_override: int | None = None) -> dict:
@@ -396,6 +418,39 @@ def _parse_etime(etime_str: str) -> int:
     return 0
 
 
+def _job_process_still_running(job_dir: Path) -> bool:
+    """True if a process is still running for this job (lock held or cmdline contains job path)."""
+    lock_file = job_dir / ".lock"
+    if lock_file.exists():
+        try:
+            pid = int(lock_file.read_text().strip())
+            os.kill(pid, 0)
+            return True
+        except (ValueError, OSError):
+            pass
+    try:
+        res = subprocess.run(
+            ["ps", "-eo", "args", "--no-headers"],
+            capture_output=True, text=True, timeout=5,
+        )
+        job_path = str(job_dir.resolve())
+        for line in (res.stdout or "").splitlines():
+            if job_path in line:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _reconcile_stale_running_job(job_dir: Path, job: dict):
+    """Set job to FAILED when process is gone (e.g. killed)."""
+    job["status"] = "FAILED"
+    job["finished_at"] = utcnow()
+    job["error"] = job.get("error") or "Process ended without updating status (reconciled)"
+    job["exit_code"] = -9
+    (job_dir / "job.json").write_text(json.dumps(job, indent=2) + "\n")
+
+
 def _brain_process_status() -> dict:
     """Detect running brain cycle/reflect processes and flag stuck (cycle >10min, reflect >5min)."""
     out = {"cycle": {"count": 0, "max_elapsed_sec": 0, "stuck": False}, "reflect": {"count": 0, "max_elapsed_sec": 0, "stuck": False}}
@@ -461,7 +516,12 @@ def cmd_healthcheck():
                     failed += 1
                     recent_failures.append(f"{j['id']} ({j.get('workflow_id', '?')})")
                 elif j.get("status") == "RUNNING":
-                    running += 1
+                    if _job_process_still_running(f.parent):
+                        running += 1
+                    else:
+                        _reconcile_stale_running_job(f.parent, j)
+                        failed += 1
+                        recent_failures.append(f"{j['id']} ({j.get('workflow_id', '?')}) (reconciled)")
             except (json.JSONDecodeError, OSError):
                 pass
 
@@ -520,6 +580,8 @@ def main():
             cmd_job_status(sys.argv[3:])
         elif sub == "get":
             cmd_job_get(sys.argv[3:])
+        elif sub == "reconcile":
+            cmd_job_reconcile(sys.argv[3:])
         else:
             print(f"Unknown subcommand: job {sub}", file=sys.stderr)
             sys.exit(2)

@@ -38,13 +38,27 @@ def _load_sources(proj_path: Path, max_items: int = 50) -> list[dict]:
     return sources[:max_items]
 
 
-def _load_findings(proj_path: Path, max_items: int = 50) -> list[dict]:
+def _relevance_score(finding: dict, question: str) -> float:
+    """Score how relevant a finding is to the research question using keyword overlap."""
+    q_words = set(re.findall(r'\b[a-z]{3,}\b', question.lower()))
+    text = ((finding.get("excerpt") or "") + " " + (finding.get("title") or "")).lower()
+    f_words = set(re.findall(r'\b[a-z]{3,}\b', text))
+    if not q_words or not f_words:
+        return 0.0
+    overlap = len(q_words & f_words)
+    return overlap / len(q_words)
+
+
+def _load_findings(proj_path: Path, max_items: int = 120, question: str = "") -> list[dict]:
+    """Load findings sorted by relevance to the research question."""
     findings = []
-    for f in (proj_path / "findings").glob("*.json"):
+    for f in sorted((proj_path / "findings").glob("*.json")):
         try:
             findings.append(json.loads(f.read_text()))
         except Exception:
             pass
+    if question and findings:
+        findings.sort(key=lambda f: _relevance_score(f, question), reverse=True)
     return findings[:max_items]
 
 
@@ -106,20 +120,25 @@ def _load_source_metadata(proj_path: Path, max_items: int = 50) -> list[dict]:
 def claim_verification(proj_path: Path, project: dict, project_id: str = "") -> dict:
     """Extract key claims from findings and check if >= 2 independent sources support them."""
     ensure_project_layout(proj_path)
-    findings = _load_findings(proj_path)
+    question = project.get("question", "")
+    findings = _load_findings(proj_path, question=question)
     source_meta = _load_source_metadata(proj_path)
     if not findings and not source_meta:
         return {"claims": []}
     items = json.dumps(
-        [{"url": f.get("url"), "title": f.get("title"), "excerpt": (f.get("excerpt") or "")[:600]} for f in findings],
+        [{"url": f.get("url"), "title": f.get("title"), "excerpt": (f.get("excerpt") or "")[:800]} for f in findings],
         indent=2, ensure_ascii=False
-    )[:12000]
-    meta_text = json.dumps(source_meta[:30], indent=2, ensure_ascii=False)[:4000] if source_meta else "[]"
-    question = project.get("question", "")
-    system = """You are a research analyst. From the findings AND source metadata, extract KEY CLAIMS (main factual statements that answer the research question).
-For each claim, list ALL sources that support it — both from full findings AND from search metadata snippets. A search snippet counts as a supporting source if it clearly states or implies the same fact.
-Return JSON: {"claims": [{"claim": "...", "supporting_sources": ["url1", "url2"], "confidence": 0.0-1.0, "verified": true/false}]}
-verified = true only if at least 2 distinct source URLs support the claim. Be strict but thorough in matching."""
+    )[:24000]
+    meta_text = json.dumps(source_meta[:40], indent=2, ensure_ascii=False)[:6000] if source_meta else "[]"
+    system = f"""You are a research analyst. The research question is:
+"{question}"
+
+From the findings AND source metadata, extract ALL KEY CLAIMS that answer this question.
+Extract at least 5-15 claims if the material supports it. Each claim should be a specific, verifiable factual statement.
+For each claim, list ALL sources that support it.
+Return JSON: {{"claims": [{{"claim": "...", "supporting_sources": ["url1", "url2"], "confidence": 0.0-1.0, "verified": true/false}}]}}
+verified = true only if at least 2 distinct source URLs support the claim. Be strict but thorough in matching.
+Prefer specific, quantitative claims (e.g. "X achieved Y% response rate in phase Z trial") over vague narrative statements."""
     principles_block = get_principles_for_research(question, domain=project.get("domain"), limit=5)
     if principles_block:
         system += "\n\n" + principles_block
@@ -261,7 +280,7 @@ def apply_verified_tags_to_report(report: str, claims: list[dict]) -> str:
 def fact_check(proj_path: Path, project: dict, project_id: str = "") -> dict:
     """Identify verifiable facts (numbers, dates, names) and mark verification status."""
     ensure_project_layout(proj_path)
-    findings = _load_findings(proj_path)
+    findings = _load_findings(proj_path, question=project.get("question", ""))
     if not findings:
         return {"facts": []}
     items = json.dumps(

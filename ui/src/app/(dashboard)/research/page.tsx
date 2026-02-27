@@ -29,7 +29,13 @@ function formatDate(iso: string): string {
 export default async function ResearchPage() {
   const projects = await listResearchProjects();
 
-  const active  = projects.filter((p) => p.status !== "done" && p.status !== "failed");
+  const active  = projects.filter(
+    (p) =>
+      p.status !== "done" &&
+      p.status !== "failed" &&
+      p.status !== "cancelled" &&
+      !(typeof p.status === "string" && p.status.startsWith("failed_"))
+  );
   const done    = projects.filter((p) => p.status === "done");
   const failed  = projects.filter((p) => p.status === "failed");
 

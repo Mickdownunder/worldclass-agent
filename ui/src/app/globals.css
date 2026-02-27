@@ -8,8 +8,8 @@
   --tron-accent: #4475f3;
   --tron-accent-dim: rgba(68, 117, 243, 0.12);
   --tron-text: #dce2ef;
-  --tron-text-muted: #7b8aaa;
-  --tron-text-dim: #3d4a65;
+  --tron-text-muted: #8a99b8;
+  --tron-text-dim: #5f7093;
   --tron-success: #22c55e;
   --tron-error: #f43f5e;
   --tron-warning: #f59e0b;
@@ -29,8 +29,8 @@ html[data-theme="light"] {
   --tron-accent: #2563eb;
   --tron-accent-dim: rgba(37, 99, 235, 0.08);
   --tron-text: #0f1629;
-  --tron-text-muted: #4b5873;
-  --tron-text-dim: #94a3b8;
+  --tron-text-muted: #475569;
+  --tron-text-dim: #64748b;
   --tron-success: #16a34a;
   --tron-error: #dc2626;
   --tron-warning: #d97706;

@@ -27,13 +27,25 @@ def _model() -> str:
     return os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gemini-2.0-flash")
 
 
-def _load_findings(proj_path: Path, max_items: int = MAX_FINDINGS) -> list[dict]:
+def _relevance_score(finding: dict, question: str) -> float:
+    """Score finding relevance to research question via keyword overlap."""
+    q_words = set(re.findall(r'\b[a-z]{3,}\b', question.lower()))
+    text = ((finding.get("excerpt") or "") + " " + (finding.get("title") or "")).lower()
+    f_words = set(re.findall(r'\b[a-z]{3,}\b', text))
+    if not q_words or not f_words:
+        return 0.0
+    return len(q_words & f_words) / len(q_words)
+
+
+def _load_findings(proj_path: Path, max_items: int = MAX_FINDINGS, question: str = "") -> list[dict]:
     findings = []
     for f in sorted((proj_path / "findings").glob("*.json")):
         try:
             findings.append(json.loads(f.read_text()))
         except Exception:
             pass
+    if question and findings:
+        findings.sort(key=lambda f: _relevance_score(f, question), reverse=True)
     return findings[:max_items]
 
 
@@ -483,9 +495,8 @@ def run_synthesis(project_id: str) -> str:
     project = load_project(proj_path)
     question = project.get("question", "")
     verify_dir = proj_path / "verify"
-    findings = _load_findings(proj_path)
+    findings = _load_findings(proj_path, question=question)
     sources = _load_sources(proj_path)
-    # Dual-source: AEM claims/ledger.jsonl or fallback verify/claim_ledger.json (Spec §6.1)
     claim_ledger = get_claims_for_synthesis(proj_path)
     contradictions = []
     if (proj_path / "contradictions.json").exists():

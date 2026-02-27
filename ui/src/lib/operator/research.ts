@@ -271,11 +271,14 @@ export async function approveProject(
   };
 }
 
-/** Cancel a running research project: find and kill matching processes, set status=cancelled. */
-export async function cancelResearchProject(projectId: string): Promise<{ killed: number; status: string }> {
+/** Cancel a running research project: kill processes, set status=cancelled, mark related RUNNING jobs as FAILED. */
+export async function cancelResearchProject(projectId: string): Promise<{ killed: number; jobsReconciled: number; status: string }> {
   const projPath = safeProjectPath(projectId);
   const projectJsonPath = path.join(projPath, "project.json");
+  const jobsRoot = path.join(OPERATOR_ROOT, "jobs");
   let killed = 0;
+  let jobsReconciled = 0;
+
   try {
     const pidsOut = execSync(
       `ps aux | grep -E '${projectId}|${path.basename(projPath)}' | grep -v grep | awk '{print $2}'`,
@@ -293,6 +296,35 @@ export async function cancelResearchProject(projectId: string): Promise<{ killed
   } catch {
     // no matching processes
   }
+
+  try {
+    const dayDirs = await readdir(jobsRoot, { withFileTypes: true });
+    for (const day of dayDirs.filter((d) => d.isDirectory()).map((d) => d.name)) {
+      const dayPath = path.join(jobsRoot, day);
+      const entries = await readdir(dayPath, { withFileTypes: true });
+      for (const ent of entries) {
+        if (!ent.isDirectory()) continue;
+        const jobPath = path.join(dayPath, ent.name, "job.json");
+        try {
+          const raw = await readFile(jobPath, "utf8");
+          const job = JSON.parse(raw) as { status?: string; request?: string };
+          if (job.status === "RUNNING" && job.request === projectId) {
+            job.status = "FAILED";
+            job.finished_at = new Date().toISOString();
+            job.error = "Project cancelled by user";
+            job.exit_code = -9;
+            await writeFile(jobPath, JSON.stringify(job, null, 2), "utf8");
+            jobsReconciled += 1;
+          }
+        } catch {
+          // skip invalid/missing
+        }
+      }
+    }
+  } catch {
+    // jobs dir missing or unreadable
+  }
+
   try {
     const raw = await readFile(projectJsonPath, "utf8");
     const data = JSON.parse(raw) as Record<string, unknown>;
@@ -303,7 +335,7 @@ export async function cancelResearchProject(projectId: string): Promise<{ killed
   } catch {
     // project may not exist if already deleted
   }
-  return { killed, status: "cancelled" };
+  return { killed, jobsReconciled, status: "cancelled" };
 }
 
 export async function getLatestReportMarkdown(projectId: string): Promise<string | null> {
