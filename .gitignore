@@ -34,7 +34,9 @@ ui/.env.local
 # Artifacts and temp
 **/artifacts/
 *.log
+log.txt
 .cache/
+plumber/
 ui/playwright-report/
 ui/test-results/
 
