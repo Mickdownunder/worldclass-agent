@@ -22,9 +22,13 @@ import os
 import subprocess
 import time
 import hashlib
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+# Hard timeout for reflect LLM call so stuck API doesn't leave processes running forever
+REFLECT_LLM_TIMEOUT_SEC = 90
 
 from .memory import Memory
 from . import brain_context
@@ -511,8 +515,15 @@ Be honest and specific. A failed job with useful error info is more valuable tha
         user_prompt = f"GOAL: {goal}\n\nACTION RESULT:\n{json.dumps(action_result, indent=2, default=str)}\n\nJOB LOG (tail):\n{job_context[-3000:]}"
 
         try:
-            reflection = self._llm_json(system_prompt, user_prompt)
+            with ThreadPoolExecutor(max_workers=1) as ex:
+                future = ex.submit(self._llm_json, system_prompt, user_prompt)
+                reflection = future.result(timeout=REFLECT_LLM_TIMEOUT_SEC)
+        except (FuturesTimeoutError, TimeoutError):
+            reflection = None
+            e = Exception(f"LLM reflection timed out after {REFLECT_LLM_TIMEOUT_SEC}s")
         except Exception as e:
+            reflection = None
+        if reflection is None:
             status = action_result.get("status", "unknown")
             exit_code = action_result.get("exit_code", -1)
             job_dir = action_result.get("job_dir", "")

@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-26T08:00:52.313104Z",
+  "generated_at": "2026-02-27T11:06:37.935390Z",
   "clients": {
     "demo": {
       "client": {
@@ -122,6 +122,35 @@
           "summary": "RAM costs are substantially impacting HP PC production expenses, indicating pricing pressures and supply chain challenges that could affect product pricing strategies and growth.",
           "evidence": [
             "https://arstechnica.com/gadgets/2026/02/ram-now-represents-35-percent-of-bill-of-materials-for-hp-pcs/"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_c08cbc7e3be6",
+          "title": "Layoffs at Block",
+          "score": 0.7,
+          "topics": [
+            "growth",
+            "competitors"
+          ],
+          "summary": "Recent layoffs at Block may indicate challenges in growth or financial restructuring, offering insights into market pressures or competitor repositioning.",
+          "evidence": [
+            "https://twitter.com/jack/status/2027129697092731343"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_50320af6a55b",
+          "title": "Nano Banana 2: Google's latest AI image generation model",
+          "score": 0.7,
+          "topics": [
+            "competitors",
+            "growth",
+            "marketing"
+          ],
+          "summary": "Google has launched Nano Banana 2, an advanced AI image generation model, demonstrating competitive innovation that could impact marketing and product growth strategies.",
+          "evidence": [
+            "https://blog.google/innovation-and-ai/technology/ai/nano-banana-2/"
           ],
           "source": "auto_discover"
         },
@@ -262,6 +291,35 @@
           "source": "auto_discover"
         },
         {
+          "id": "opp_c08cbc7e3be6",
+          "title": "Layoffs at Block",
+          "score": 0.7,
+          "topics": [
+            "growth",
+            "competitors"
+          ],
+          "summary": "Recent layoffs at Block may indicate challenges in growth or financial restructuring, offering insights into market pressures or competitor repositioning.",
+          "evidence": [
+            "https://twitter.com/jack/status/2027129697092731343"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_50320af6a55b",
+          "title": "Nano Banana 2: Google's latest AI image generation model",
+          "score": 0.7,
+          "topics": [
+            "competitors",
+            "growth",
+            "marketing"
+          ],
+          "summary": "Google has launched Nano Banana 2, an advanced AI image generation model, demonstrating competitive innovation that could impact marketing and product growth strategies.",
+          "evidence": [
+            "https://blog.google/innovation-and-ai/technology/ai/nano-banana-2/"
+          ],
+          "source": "auto_discover"
+        },
+        {
           "id": "opp_002",
           "title": "SaaS complaining about churn in forum thread",
           "score": 0.68,
@@ -286,35 +344,6 @@
           "summary": "Apple is accelerating US-based manufacturing by producing the Mac mini in Houston, potentially impacting supply chain dynamics and competitive growth in hardware markets.",
           "evidence": [
             "https://www.apple.com/newsroom/2026/02/apple-accelerates-us-manufacturing-with-mac-mini-production/"
-          ],
-          "source": "auto_discover"
-        },
-        {
-          "id": "opp_2f1fc01157aa",
-          "title": "Making MCP cheaper via CLI",
-          "score": 0.6,
-          "topics": [
-            "pricing",
-            "churn",
-            "growth"
-          ],
-          "summary": "Reducing costs in MCP (Managed Cloud Platform) through CLI improvements represents a pricing optimization opportunity with potential impact on customer retention and acquisition.",
-          "evidence": [
-            "https://kanyilmaz.me/2026/02/23/cli-vs-mcp.html"
-          ],
-          "source": "auto_discover"
-        },
-        {
-          "id": "opp_a91e90b2bf82",
-          "title": "Large-Scale Online Deanonymization with LLMs",
-          "score": 0.6,
-          "topics": [
-            "churn",
-            "marketing"
-          ],
-          "summary": "Explores how large language models can be used for deanonymization at scale, raising privacy concerns that can affect marketing trust and customer churn.",
-          "evidence": [
-            "https://simonlermen.substack.com/p/large-scale-online-deanonymization"
           ],
           "source": "auto_discover"
         }

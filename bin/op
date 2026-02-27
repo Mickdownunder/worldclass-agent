@@ -135,6 +135,8 @@ def cmd_job_new(args: list[str]):
     timeout = DEFAULT_TIMEOUT
     if "--timeout" in args:
         timeout = int(args[args.index("--timeout") + 1])
+    elif workflow in ("research-cycle", "research-init"):
+        timeout = 900
 
     wf = WFS / f"{workflow}.sh"
     if not wf.exists():
@@ -298,18 +300,37 @@ def run_job(d: Path, timeout_override: int | None = None) -> dict:
         except Exception:
             pass
 
-        # Brain reflection after every job (DONE and FAILED), async so op returns immediately
+        # Brain reflection after every job (DONE and FAILED), async; skip if disabled or too many already running
         try:
+            reflect_off = os.environ.get("BRAIN_REFLECT_AFTER_JOB", "1").strip().lower() in ("0", "false", "no", "off")
+            max_reflect = int(os.environ.get("BRAIN_REFLECT_MAX_CONCURRENT", "3"))
             brain_bin = BASE / "bin" / "brain"
-            if brain_bin.exists():
-                request = job.get("request", "") or "job completed"
-                subprocess.Popen(
-                    [str(brain_bin), "reflect", str(d), "--goal", request[:500]],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    env=dict(os.environ),
-                    start_new_session=True,
-                )
+            if not reflect_off and brain_bin.exists():
+                # Limit concurrent reflect processes so API isn't overloaded
+                reflect_count = 0
+                try:
+                    res = subprocess.run(
+                        ["ps", "-eo", "args", "--no-headers"],
+                        capture_output=True,
+                        text=True,
+                        timeout=3,
+                    )
+                    if res.returncode == 0:
+                        base = str(BASE)
+                        for line in res.stdout.splitlines():
+                            if "bin/brain" in line and base in line and (" brain reflect " in line or "brain reflect " in line):
+                                reflect_count += 1
+                except Exception:
+                    pass
+                if reflect_count < max_reflect:
+                    request = job.get("request", "") or "job completed"
+                    subprocess.Popen(
+                        [str(brain_bin), "reflect", str(d), "--goal", request[:500]],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        env=dict(os.environ),
+                        start_new_session=True,
+                    )
         except Exception:
             pass
 
@@ -356,6 +377,59 @@ def cmd_retry(args: list[str]):
 
     log_event(d, f"RETRY requested (attempt {job.get('attempt', 1)} -> {job.get('attempt', 1) + 1})")
     run_job(d)
+
+
+def _parse_etime(etime_str: str) -> int:
+    """Parse ps etime [[dd-]hh:]mm:ss into seconds."""
+    s = (etime_str or "").strip()
+    if not s:
+        return 0
+    parts = s.replace("-", ":").split(":")
+    if len(parts) == 1:
+        return int(parts[0]) if parts[0].isdigit() else 0
+    if len(parts) == 2:
+        return int(parts[0]) * 60 + int(parts[1]) if all(p.isdigit() for p in parts) else 0
+    if len(parts) == 3:
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2]) if all(p.isdigit() for p in parts) else 0
+    if len(parts) == 4:
+        return int(parts[0]) * 86400 + int(parts[1]) * 3600 + int(parts[2]) * 60 + int(parts[3]) if all(p.isdigit() for p in parts) else 0
+    return 0
+
+
+def _brain_process_status() -> dict:
+    """Detect running brain cycle/reflect processes and flag stuck (cycle >10min, reflect >5min)."""
+    out = {"cycle": {"count": 0, "max_elapsed_sec": 0, "stuck": False}, "reflect": {"count": 0, "max_elapsed_sec": 0, "stuck": False}}
+    cycle_stuck_sec = 600
+    reflect_stuck_sec = 300
+    try:
+        res = subprocess.run(
+            ["ps", "-eo", "pid,etime,args", "--no-headers"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if res.returncode != 0:
+            return out
+        base = str(BASE)
+        for line in res.stdout.splitlines():
+            if "bin/brain" not in line or base not in line:
+                continue
+            parts = line.split(None, 2)
+            if len(parts) < 3:
+                continue
+            etime_sec = _parse_etime(parts[1])
+            args = parts[2]
+            if " brain cycle " in args or args.strip().endswith("brain cycle"):
+                out["cycle"]["count"] += 1
+                out["cycle"]["max_elapsed_sec"] = max(out["cycle"]["max_elapsed_sec"], etime_sec)
+            elif " brain reflect " in args or "brain reflect " in args:
+                out["reflect"]["count"] += 1
+                out["reflect"]["max_elapsed_sec"] = max(out["reflect"]["max_elapsed_sec"], etime_sec)
+        out["cycle"]["stuck"] = out["cycle"]["count"] > 0 and out["cycle"]["max_elapsed_sec"] >= cycle_stuck_sec
+        out["reflect"]["stuck"] = out["reflect"]["count"] > 0 and out["reflect"]["max_elapsed_sec"] >= reflect_stuck_sec
+    except Exception:
+        pass
+    return out
 
 
 def cmd_healthcheck():
@@ -412,7 +486,16 @@ def cmd_healthcheck():
     except Exception:
         checks["memory"] = "unavailable"
 
+    # Brain process status (cycle / reflect) — detect stuck (long-running)
+    checks["brain"] = _brain_process_status()
+
     all_ok = checks["disk_ok"] and checks.get("load_ok", True)
+    # Also unhealthy if brain has stuck processes (cycle >10min or reflect >5min)
+    brain = checks.get("brain") or {}
+    cycle_stuck = (brain.get("cycle") or {}).get("stuck", False)
+    reflect_stuck = (brain.get("reflect") or {}).get("stuck", False)
+    if cycle_stuck or reflect_stuck:
+        all_ok = False
     checks["healthy"] = all_ok
 
     print(json.dumps(checks, indent=2))

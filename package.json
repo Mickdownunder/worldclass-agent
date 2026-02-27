@@ -2,6 +2,7 @@
   "name": "operator",
   "private": true,
   "scripts": {
+    "dev": "npm run dev --prefix ui",
     "test": "npm run test --prefix ui",
     "test:watch": "npm run test:watch --prefix ui"
   }
