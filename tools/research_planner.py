@@ -36,6 +36,33 @@ def _slug(s: str, fallback: str) -> str:
     return out or fallback
 
 
+_MEDICAL_KEYWORDS = frozenset({
+    "medical", "medicine", "clinical", "disease", "therapy", "treatment",
+    "drug", "pharmaceutical", "vaccine", "cancer", "tumor", "oncology",
+    "surgery", "diagnosis", "patient", "health", "hospital", "symptom",
+    "chronic", "acute", "infection", "virus", "bacteria", "antibiotic",
+    "cardiac", "cardiovascular", "diabetes", "insulin", "mrna", "rna",
+    "dna", "gene", "genetic", "genomic", "protein", "biomarker",
+    "trial", "placebo", "efficacy", "mortality", "morbidity",
+    "epidemiology", "pandemic", "pathology", "radiology", "neurology",
+    "psychiatry", "immunology", "allergy", "inflammation", "transplant",
+    "stem cell", "biopsy", "chemotherapy", "radiation", "prognosis",
+    "fda", "ema", "who", "nih", "cdc", "pubmed", "lancet", "nejm",
+    "alzheimer", "parkinson", "dementia", "stroke", "hypertension",
+    "obesity", "cholesterol", "lung", "liver", "kidney", "brain",
+    "mental health", "depression", "anxiety", "adhd", "autism",
+    "pediatric", "geriatric", "pregnancy", "prenatal", "neonatal",
+    "impfstoff", "krebs", "therapie", "krankheit", "medizin",
+    "gesundheit", "arzt", "klinisch", "studie", "behandlung",
+})
+
+
+def _is_medical_topic(text: str) -> bool:
+    text_lower = text.lower()
+    matches = sum(1 for kw in _MEDICAL_KEYWORDS if kw in text_lower)
+    return matches >= 2
+
+
 def _extract_entities(question: str) -> list[str]:
     seen: set[str] = set()
     entities: list[str] = []
@@ -174,7 +201,7 @@ def _sanitize_plan(plan: dict[str, Any], question: str) -> dict[str, Any]:
         if qtopic not in topic_ids:
             qtopic = clean_topics[0]["id"]
         qtype = str(q.get("type") or "web").lower()
-        if qtype not in {"web", "academic"}:
+        if qtype not in {"web", "academic", "medical"}:
             qtype = "web"
         perspective = str(q.get("perspective") or "analyst")
         clean_queries.append(
@@ -211,11 +238,39 @@ def _sanitize_plan(plan: dict[str, Any], question: str) -> dict[str, Any]:
             }
         )
 
+    # Auto-detect medical topics and inject PubMed queries
+    all_text = f"{question} " + " ".join(t["name"] + " " + t.get("description", "") for t in clean_topics)
+    if _is_medical_topic(all_text):
+        medical_queries: list[dict[str, Any]] = []
+        for t in clean_topics[:5]:
+            medical_queries.append({
+                "query": f"{t['name']} clinical trial systematic review",
+                "topic_id": t["id"],
+                "type": "medical",
+                "perspective": "clinical researcher",
+            })
+        for e in entities[:5]:
+            medical_queries.append({
+                "query": f"{e} randomized controlled trial meta-analysis",
+                "topic_id": clean_topics[0]["id"],
+                "type": "medical",
+                "perspective": "medical specialist",
+            })
+        # Upgrade existing academic queries to medical for medical topics
+        for q in clean_queries:
+            if q["type"] == "academic":
+                q["type"] = "medical"
+        clean_queries.extend(medical_queries)
+        if "clinical researcher" not in perspectives:
+            perspectives.append("clinical researcher")
+        if "medical specialist" not in perspectives:
+            perspectives.append("medical specialist")
+
     return {
         "topics": clean_topics,
         "entities": entities[:40],
         "perspectives": perspectives[:8],
-        "queries": clean_queries[:40],
+        "queries": clean_queries[:50],
         "complexity": complexity,
         "estimated_sources_needed": estimated,
     }
@@ -236,6 +291,10 @@ Create a research plan. Return JSON with keys:
    - max 10 words each
    - every entity gets at least one dedicated query
    - each topic gets queries from multiple perspectives
+   - type: "web" | "academic" | "medical"
+   - Use "medical" for health/biomedical/clinical queries (searches PubMed)
+   - Use "academic" for scientific/technical papers (Semantic Scholar + ArXiv)
+   - Use "web" for general information
 5) complexity: simple|moderate|complex
 6) estimated_sources_needed: integer
 

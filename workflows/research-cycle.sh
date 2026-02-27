@@ -168,7 +168,7 @@ proj_dir = Path(sys.argv[1]); plan = json.loads(Path(sys.argv[2]).read_text()); 
 topics = {str(t.get("id","")): t for t in plan.get("topics", [])}
 entities = [str(e).lower() for e in plan.get("entities", [])]
 source_type_by_topic = {tid: set((t.get("source_types") or [])) for tid, t in topics.items()}
-DOMAIN_RANK = {"arxiv.org":10,"semanticscholar.org":10,"nature.com":10,"science.org":10,"openai.com":9,"anthropic.com":9,"google.com":8,"reuters.com":8,"nytimes.com":8}
+DOMAIN_RANK = {"arxiv.org":10,"semanticscholar.org":10,"nature.com":10,"science.org":10,"pubmed.ncbi.nlm.nih.gov":12,"ncbi.nlm.nih.gov":11,"nih.gov":11,"thelancet.com":11,"nejm.org":11,"bmj.com":10,"jamanetwork.com":10,"who.int":10,"cochranelibrary.com":10,"clinicaltrials.gov":10,"openai.com":9,"anthropic.com":9,"google.com":8,"reuters.com":8,"nytimes.com":8}
 per_domain = {}
 ranked = []
 for f in (proj_dir / "sources").glob("*.json"):
@@ -189,7 +189,7 @@ for f in (proj_dir / "sources").glob("*.json"):
     prio_boost = {1: 30, 2: 15, 3: 5}.get(priority, 5)
     stypes = source_type_by_topic.get(tid, set())
     type_boost = 0
-    if "paper" in stypes and ("arxiv" in domain or "semanticscholar" in domain):
+    if "paper" in stypes and ("arxiv" in domain or "semanticscholar" in domain or "pubmed" in domain or "ncbi" in domain):
         type_boost += 15
     text = f"{d.get('title','')} {d.get('description','')} {d.get('abstract','')}".lower()
     entity_boost = sum(3 for e in entities if e and e in text)
@@ -358,7 +358,7 @@ for i, q in enumerate(plan.get("queries", [])):
     tid = str(q.get("topic_id",""))
     if tid not in topic_boost:
         topic_boost[tid] = max(1, 10 - i)
-DOMAIN_RANK = {"arxiv.org":10,"semanticscholar.org":10,"nature.com":10,"science.org":10,"openai.com":9,"anthropic.com":9,"reuters.com":8,"nytimes.com":8}
+DOMAIN_RANK = {"arxiv.org":10,"semanticscholar.org":10,"nature.com":10,"science.org":10,"pubmed.ncbi.nlm.nih.gov":12,"ncbi.nlm.nih.gov":11,"nih.gov":11,"thelancet.com":11,"nejm.org":11,"bmj.com":10,"jamanetwork.com":10,"who.int":10,"cochranelibrary.com":10,"clinicaltrials.gov":10,"openai.com":9,"anthropic.com":9,"reuters.com":8,"nytimes.com":8}
 ranked = []
 for f in (proj_dir / "sources").glob("*.json"):
     if f.name.endswith("_content.json"): continue

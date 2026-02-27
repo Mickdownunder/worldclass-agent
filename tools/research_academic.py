@@ -82,28 +82,64 @@ def arxiv(query: str, max_results: int = 10) -> list[dict]:
         return []
 
 
+def _pubmed_fetch_abstracts(id_list: list[str]) -> dict[str, str]:
+    """Fetch abstracts for PubMed IDs via efetch XML API."""
+    if not id_list:
+        return {}
+    base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+    url = f"{base}/efetch.fcgi?db=pubmed&id={','.join(id_list)}&rettype=abstract&retmode=xml"
+    abstracts: dict[str, str] = {}
+    try:
+        import xml.etree.ElementTree as ET
+        req = Request(url, headers={"User-Agent": "OperatorResearch/1.0"})
+        with urlopen(req, timeout=20) as r:
+            tree = ET.parse(r)
+        for article in tree.findall(".//PubmedArticle"):
+            pmid_el = article.find(".//PMID")
+            if pmid_el is None:
+                continue
+            pmid = pmid_el.text or ""
+            abstract_parts = []
+            for text_el in article.findall(".//AbstractText"):
+                label = text_el.get("Label", "")
+                content = (text_el.text or "").strip()
+                if label and content:
+                    abstract_parts.append(f"{label}: {content}")
+                elif content:
+                    abstract_parts.append(content)
+            if abstract_parts:
+                abstracts[pmid] = " ".join(abstract_parts)[:3000]
+    except Exception as e:
+        print(f"WARN: PubMed efetch: {e}", file=sys.stderr)
+    return abstracts
+
+
 def pubmed(query: str, max_results: int = 10) -> list[dict]:
-    # E-utilities: esearch then esummary
     base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
     try:
-        search_url = f"{base}/esearch.fcgi?db=pubmed&term={quote(query)}&retmax={min(max_results, 50)}&retmode=json"
+        search_url = f"{base}/esearch.fcgi?db=pubmed&term={quote(query)}&retmax={min(max_results, 50)}&retmode=json&sort=relevance"
         search_data = fetch_json(search_url)
         id_list = search_data.get("esearchresult", {}).get("idlist", [])[:max_results]
         if not id_list:
             return []
         summary_url = f"{base}/esummary.fcgi?db=pubmed&id={','.join(id_list)}&retmode=json"
         sum_data = fetch_json(summary_url)
+        abstracts = _pubmed_fetch_abstracts(id_list)
         results = []
         for uid in id_list:
             s = sum_data.get("result", {}).get(uid, {})
+            authors = s.get("authors", [])
+            author_names = [a.get("name", "") if isinstance(a, dict) else str(a) for a in authors]
             results.append({
                 "title": s.get("title", ""),
                 "url": f"https://pubmed.ncbi.nlm.nih.gov/{uid}/",
-                "abstract": "",  # esummary doesn't have abstract; would need efetch
+                "abstract": abstracts.get(uid, ""),
+                "description": abstracts.get(uid, "")[:500],
                 "published": s.get("pubdate", ""),
-                "authors": s.get("authors", []),
+                "authors": author_names,
                 "source": "pubmed",
                 "pmid": uid,
+                "source_quality": "peer_reviewed",
             })
         return results
     except Exception as e:

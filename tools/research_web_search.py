@@ -91,6 +91,20 @@ def _search_academic(query: str, max_results: int = 10) -> list[dict]:
     return out[:max_results]
 
 
+def _search_medical(query: str, max_results: int = 10) -> list[dict]:
+    """PubMed + Semantic Scholar for medical/biomedical queries."""
+    try:
+        from tools.research_academic import pubmed, semantic_scholar
+    except Exception:
+        return []
+    pm_count = max(1, (max_results * 2) // 3)
+    ss_count = max_results - pm_count
+    out = []
+    out.extend(pubmed(query, pm_count))
+    out.extend(semantic_scholar(query, ss_count))
+    return out[:max_results]
+
+
 def _load_queries(path: str) -> list[dict]:
     raw = json.loads(Path(path).read_text())
     if isinstance(raw, dict) and isinstance(raw.get("queries"), list):
@@ -156,7 +170,9 @@ def main():
             perspective = str(q.get("perspective") or "")
             _progress_step(f"Search {i}/{total}: {query[:80]}", i, total)
 
-            if qtype == "academic":
+            if qtype == "medical":
+                results = _search_medical(query, max_per_query)
+            elif qtype == "academic":
                 results = _search_academic(query, max_per_query)
             else:
                 results = _search_web(query, max_per_query, secrets)
