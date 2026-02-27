@@ -24,7 +24,7 @@ SECTION_WORDS_MIN, SECTION_WORDS_MAX = 500, 1500
 
 
 def _model() -> str:
-    return os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gemini-2.0-flash")
+    return os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gemini-3.1-pro-preview")
 
 
 def _relevance_score(finding: dict, question: str) -> float:

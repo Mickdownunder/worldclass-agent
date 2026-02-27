@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.research_common import llm_call, research_root
 
 
-PLANNER_MODEL = os.environ.get("RESEARCH_PLANNER_MODEL", "gemini-2.5-flash")
+PLANNER_MODEL = os.environ.get("RESEARCH_PLANNER_MODEL", "gemini-3.1-pro-preview")
 
 
 def _json_only(text: str) -> dict[str, Any]:
