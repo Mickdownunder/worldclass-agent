@@ -1,0 +1,463 @@
+<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+@page { size: A4; margin: 0; }
+@page content {
+  margin: 2cm 2cm 2.2cm 2cm;
+  @top-left {
+    content: "INTELLIGENCE ARTIFACT";
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 6.5pt; font-weight: 700;
+    letter-spacing: 0.16em; color: #64748B; padding-top: 0.2cm;
+  }
+  @top-right {
+    content: string(proj-label);
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 6.5pt; color: #64748B; padding-top: 0.2cm;
+  }
+  @bottom-center {
+    content: counter(page) " / " counter(pages);
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 7pt; color: #64748B;
+  }
+  @bottom-right {
+    content: "Confidential";
+    font-family: 'Inter', system-ui, sans-serif;
+    font-size: 6pt; font-weight: 700;
+    letter-spacing: 0.1em; text-transform: uppercase; color: #CBD5E1;
+  }
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 9pt; line-height: 1.6; color: #1E293B;
+}
+
+/* ===== COVER ===== */
+.cover { width: 210mm; height: 297mm; position: relative; overflow: hidden; page-break-after: always; }
+.cover-bg { position: absolute; inset: 0; background: linear-gradient(155deg, #0B1437 0%, #162557 45%, #1D4ED8 100%); }
+.cover-dots { position: absolute; inset: 0; opacity: 0.03;
+  background-image: radial-gradient(circle at 20% 30%, white 1px, transparent 1px), radial-gradient(circle at 80% 70%, white 1px, transparent 1px);
+  background-size: 36px 36px; }
+.cover-bar { position: absolute; top: 0; left: 0; width: 5px; height: 100%; background: linear-gradient(180deg, #3B82F6 0%, #818CF8 50%, #A78BFA 100%); }
+.cover-inner { position: relative; z-index: 2; padding: 3cm 2.2cm 1.8cm 2.5cm; color: white; height: 100%; display: flex; flex-direction: column; }
+.cover-tag { display: inline-block; padding: 4px 14px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.18); border-radius: 16px; font-size: 7pt; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.8); margin-bottom: 1.5cm; }
+.cover-title { font-size: 26pt; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; margin-bottom: 0.6cm; max-width: 92%; }
+.cover-question { font-size: 11pt; line-height: 1.5; color: rgba(255,255,255,0.7); max-width: 85%; font-style: italic; margin-bottom: auto; }
+.cover-grid { display: flex; gap: 0.8cm; margin-top: 1cm; padding-top: 0.7cm; border-top: 1px solid rgba(255,255,255,0.1); }
+.cover-cell { flex: 1; }
+.cover-lbl { font-size: 6pt; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.4); margin-bottom: 2px; }
+.cover-val { font-size: 10pt; font-weight: 700; color: rgba(255,255,255,0.9); }
+.cover-foot { margin-top: 0.7cm; padding-top: 0.5cm; border-top: 1px solid rgba(255,255,255,0.07); display: flex; justify-content: space-between; align-items: center; }
+.cover-brand { font-size: 8pt; font-weight: 800; letter-spacing: 0.12em; color: rgba(255,255,255,0.55); }
+.cover-date { font-size: 7.5pt; color: rgba(255,255,255,0.35); }
+
+/* ===== SECTION HEADERS ===== */
+.sh { page: content; font-size: 13pt; font-weight: 800; color: #0B1437; margin: 1.4em 0 0.5em; padding-bottom: 0.25em; border-bottom: 2px solid #3B82F6; display: flex; align-items: center; }
+.sh-n { display: inline-block; width: 24px; height: 24px; background: #0B1437; color: white; font-size: 10pt; font-weight: 800; border-radius: 50%; text-align: center; line-height: 24px; margin-right: 10px; flex-shrink: 0; }
+.sh-sub { page: content; font-size: 9pt; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #64748B; margin: 1.2em 0 0.4em; }
+
+/* ===== OUTCOME LAYER ===== */
+.epi-snap { page: content; display: flex; gap: 10px; margin: 0.8em 0 1em; }
+.epi-card { flex: 1; border-radius: 8px; padding: 12px 14px; text-align: center; border: 1px solid; }
+.epi-card .ev { font-size: 20pt; font-weight: 800; line-height: 1.1; }
+.epi-card .el { font-size: 6.5pt; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #64748B; margin-top: 3px; }
+.epi-stable   { background: #ECFDF5;    border-color: #059669; }
+.epi-stable .ev   { color: #059669; }
+.epi-tentative { background: #FFFBEB; border-color: #D97706; }
+.epi-tentative .ev { color: #D97706; }
+.epi-contested { background: #FFF7ED; border-color: #EA580C; }
+.epi-contested .ev { color: #EA580C; }
+.epi-unresolved { background: #F5F3FF; border-color: #7C3AED; }
+.epi-unresolved .ev { color: #7C3AED; }
+
+.conclusion-card { page: content; background: white; border: 1px solid #E2E8F0; border-left: 4px solid; border-radius: 0 8px 8px 0; padding: 10px 14px; margin: 0.4em 0; page-break-inside: avoid; }
+.cc-row { display: flex; justify-content: space-between; align-items: flex-start; }
+.cc-text { font-size: 9.5pt; font-weight: 600; color: #0B1437; flex: 1; padding-right: 10px; line-height: 1.4; }
+.badge { display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 6.5pt; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
+.b-stable { background: #ECFDF5; color: #059669; border: 1px solid #059669; }
+.b-tentative { background: #FFFBEB; color: #D97706; border: 1px solid #D97706; }
+.b-contested { background: #FFF7ED; color: #EA580C; border: 1px solid #EA580C; }
+.b-decaying { background: #FEF2F2; color: #DC2626; border: 1px solid #DC2626; }
+.b-high { background: #ECFDF5; color: #059669; border: 1px solid #059669; }
+.b-med { background: #FFFBEB; color: #D97706; border: 1px solid #D97706; }
+.b-low { background: #FEF2F2; color: #DC2626; border: 1px solid #DC2626; }
+.b-confirmed { background: #ECFDF5; color: #059669; border: 1px solid #059669; }
+.b-disputed { background: #FEF2F2; color: #DC2626; border: 1px solid #DC2626; }
+.b-missing { background: #F8FAFC; color: #64748B; border: 1px solid #E2E8F0; }
+.cc-rel { font-size: 7.5pt; color: #64748B; margin-top: 4px; font-style: italic; }
+
+/* ===== CLAIM STATE MAP TABLE ===== */
+.csm { page: content; width: 100%; border-collapse: collapse; margin: 0.6em 0 1em; font-size: 8pt; }
+.csm th { background: #0B1437; color: white; font-weight: 700; font-size: 6.5pt; letter-spacing: 0.06em; text-transform: uppercase; padding: 7px 8px; text-align: left; }
+.csm td { padding: 7px 8px; border-bottom: 1px solid #E2E8F0; vertical-align: top; }
+.csm tr:nth-child(even) td { background: #F8FAFC; }
+.csm .claim-col { max-width: 200px; font-weight: 500; }
+.state-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+.conf-bar { display: inline-block; height: 5px; border-radius: 3px; vertical-align: middle; }
+.conf-bg { display: inline-block; width: 50px; height: 5px; background: #E2E8F0; border-radius: 3px; vertical-align: middle; }
+
+/* ===== BELIEF TRAJECTORY ===== */
+.traj-row { page: content; display: flex; gap: 0; margin: 0.5em 0; page-break-inside: avoid; }
+.traj-step { flex: 1; padding: 8px 10px; font-size: 7.5pt; text-align: center; position: relative; }
+.traj-step .ts-label { font-weight: 700; color: #0B1437; margin-bottom: 2px; font-size: 7pt; letter-spacing: 0.06em; text-transform: uppercase; }
+.traj-step .ts-val { font-size: 8pt; color: #1E293B; }
+.traj-arrow { flex: 0 0 20px; display: flex; align-items: center; justify-content: center; font-size: 10pt; color: #64748B; }
+
+/* ===== EVIDENCE CLUSTER ===== */
+.ev-cluster { page: content; border: 1px solid #E2E8F0; border-radius: 8px; padding: 12px 14px; margin: 0.5em 0; page-break-inside: avoid; }
+.ev-cluster-hdr { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.ev-cluster-title { font-size: 9pt; font-weight: 700; color: #0B1437; }
+.ev-cluster-count { font-size: 7.5pt; color: #64748B; }
+.ev-cluster ul { list-style: none; padding: 0; margin: 0; }
+.ev-cluster li { padding: 3px 0 3px 12px; position: relative; font-size: 8pt; color: #1E293B; }
+.ev-cluster li::before { content: ""; position: absolute; left: 0; top: 8px; width: 5px; height: 5px; border-radius: 50%; }
+.cluster-strong { border-left: 4px solid #059669; }
+.cluster-strong li::before { background: #059669; }
+.cluster-moderate { border-left: 4px solid #D97706; }
+.cluster-moderate li::before { background: #D97706; }
+.cluster-sparse { border-left: 4px solid #DC2626; }
+.cluster-sparse li::before { background: #DC2626; }
+
+/* ===== DISAGREEMENT TABLE ===== */
+.dis-table { page: content; width: 100%; border-collapse: collapse; margin: 0.6em 0 1em; font-size: 8pt; }
+.dis-table th { background: #EA580C; color: white; font-weight: 700; font-size: 6.5pt; letter-spacing: 0.06em; text-transform: uppercase; padding: 7px 8px; text-align: left; }
+.dis-table td { padding: 7px 8px; border-bottom: 1px solid #E2E8F0; vertical-align: top; }
+.dis-table tr:nth-child(even) td { background: #FFF7ED; }
+
+/* ===== INSIGHT CARDS ===== */
+.insight-card { page: content; border-radius: 8px; padding: 12px 16px; margin: 0.5em 0; page-break-inside: avoid; }
+.insight-structural { background: linear-gradient(135deg, #EFF6FF 0%, #F8FAFC 100%); border: 1px solid #BFDBFE; border-left: 4px solid #3B82F6; }
+.insight-pattern { background: linear-gradient(135deg, #F5F3FF 0%, #F8FAFC 100%); border: 1px solid #DDD6FE; border-left: 4px solid #7C3AED; }
+.insight-decision { background: linear-gradient(135deg, #ECFDF5 0%, #F8FAFC 100%); border: 1px solid #A7F3D0; border-left: 4px solid #059669; }
+.insight-type { font-size: 6.5pt; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 4px; }
+.insight-structural .insight-type { color: #1D4ED8; }
+.insight-pattern .insight-type { color: #7C3AED; }
+.insight-decision .insight-type { color: #059669; }
+.insight-text { font-size: 9pt; color: #1E293B; line-height: 1.5; }
+
+/* ===== ACTION CARDS ===== */
+.action-card { page: content; background: white; border: 1px solid #E2E8F0; border-radius: 8px; padding: 10px 14px; margin: 0.4em 0; page-break-inside: avoid; display: flex; gap: 10px; align-items: flex-start; }
+.action-icon { flex: 0 0 24px; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 8pt; font-weight: 800; color: white; }
+.action-monitor { background: #7C3AED; }
+.action-retrieve { background: #3B82F6; }
+.action-decide { background: #059669; }
+.action-forecast { background: #EA580C; }
+.action-body { flex: 1; }
+.action-body .ab-type { font-size: 6.5pt; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: #64748B; margin-bottom: 2px; }
+.action-body .ab-text { font-size: 8.5pt; color: #1E293B; line-height: 1.4; }
+
+/* ===== AUDITOR MODE ===== */
+.auditor-div { page: content; margin: 1.8em 0 1em; padding: 12px 18px; background: #0B1437; color: white; border-radius: 8px; text-align: center; }
+.auditor-div h2 { font-size: 10pt; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; margin: 0; border: none; padding: 0; color: white; }
+.auditor-div p { font-size: 7.5pt; color: rgba(255,255,255,0.55); margin: 3px 0 0; }
+
+.report-body { page: content; }
+.report-body h1 { font-size: 14pt; font-weight: 800; color: #0B1437; margin: 1.6em 0 0.4em; border-bottom: 2px solid #3B82F6; padding-bottom: 0.2em; }
+.report-body h2 { font-size: 11pt; font-weight: 700; color: #0B1437; margin: 1.4em 0 0.3em; padding-bottom: 0.15em; border-bottom: 1px solid #E2E8F0; padding-left: 12px; position: relative; }
+.report-body h2::before { content: ""; position: absolute; left: 0; top: 2px; bottom: 3px; width: 3px; border-radius: 2px; background: #3B82F6; }
+.report-body h3 { font-size: 9.5pt; font-weight: 700; color: #1E293B; margin: 1em 0 0.25em; }
+.report-body p { margin: 0.25em 0 0.7em; text-align: justify; hyphens: auto; }
+.report-body ul, .report-body ol { margin: 0.25em 0 0.7em; padding-left: 1.1em; }
+.report-body li { margin: 0.15em 0; }
+.report-body li strong:first-child { color: #0B1437; }
+.report-body a { color: #1D4ED8; text-decoration: none; border-bottom: 1px solid rgba(59,130,246,0.2); }
+.report-body blockquote { border-left: 3px solid #3B82F6; background: #F8FAFC; padding: 6px 12px; margin: 0.5em 0; border-radius: 0 6px 6px 0; font-style: italic; color: #64748B; }
+.report-body em { color: #64748B; }
+.report-body hr { border: none; height: 1px; background: #E2E8F0; margin: 1em 0; }
+.report-body table { width: 100%; border-collapse: collapse; margin: 0.5em 0 0.8em; font-size: 8.5pt; }
+.report-body th { background: #0B1437; color: white; font-weight: 600; font-size: 7pt; letter-spacing: 0.05em; text-transform: uppercase; padding: 6px 8px; text-align: left; }
+.report-body td { padding: 5px 8px; border-bottom: 1px solid #E2E8F0; }
+.report-body tr:nth-child(even) td { background: #F8FAFC; }
+.report-body code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 8pt; background: #F1F5F9; padding: 1px 4px; border-radius: 3px; color: #1D4ED8; }
+.report-body pre { background: #0B1437; color: #E2E8F0; padding: 10px 14px; border-radius: 6px; font-size: 7.5pt; line-height: 1.5; margin: 0.5em 0 0.8em; }
+.report-body pre code { background: none; padding: 0; color: inherit; }
+.verified-tag { display: inline-block; padding: 1px 6px; background: #ECFDF5; border: 1px solid #059669; border-radius: 8px; font-size: 6.5pt; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: #059669; }
+.verified-claim { border-left: 3px solid #059669; background: #F0FDF4; padding: 4px 10px; margin: 0.3em 0; border-radius: 0 5px 5px 0; }
+
+/* ===== REFERENCES ===== */
+.references { page: content; margin-top: 1.2em; }
+.references ol { list-style: none; padding-left: 0; counter-reset: ref; }
+.references li { counter-increment: ref; position: relative; padding: 6px 8px 6px 32px; margin: 0; border-bottom: 1px solid #F1F5F9; font-size: 7.5pt; line-height: 1.4; }
+.references li:nth-child(even) { background: #F8FAFC; }
+.references li::before { content: counter(ref); position: absolute; left: 4px; top: 6px; width: 16px; height: 16px; background: #0B1437; color: white; font-size: 6pt; font-weight: 700; border-radius: 50%; text-align: center; line-height: 16px; }
+.references li a { color: #1D4ED8; text-decoration: none; font-weight: 600; font-size: 8pt; }
+.references .ref-url { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 6.5pt; color: #64748B; word-break: break-all; }
+.no-refs { color: #64748B; font-style: italic; padding: 8px 0; }
+
+.disclaimer { page: content; margin-top: 1.2em; padding: 10px 14px; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; font-size: 6.5pt; color: #64748B; line-height: 1.4; }
+.disclaimer strong { color: #1E293B; }
+.proj-label { string-set: proj-label content(); display: none; }
+.empty-note { color: #64748B; font-style: italic; font-size: 8.5pt; padding: 6px 0; }
+</style></head><body><div class="cover">
+  <div class="cover-bg"></div><div class="cover-dots"></div><div class="cover-bar"></div>
+  <div class="cover-inner">
+    <div class="cover-tag">Intelligence Artifact · AEM</div>
+    <div class="cover-title">Humane AI Pin Commercial Performance: Research Report</div>
+    <div class="cover-question">INVESTIGATE THE HUMANE AI PIN COMMERCIAL PERFORMANCE USING ONLY ENGLISH SOURCES. FOCUS ON HARD NUMBERS: TOTAL UNITS SOLD, DAILY/WEEKLY SALES TREND, RETURN VOLUMES/RATES, REFUNDS, INVENTORY WRITE-DOWNS, SHUTDOWN TIMELINE, AND HP ASSET DEAL TERMS. PRIORITIZE HIGH-CREDIBILITY SOURCES (</div>
+    <div class="cover-grid">
+      <div class="cover-cell"><div class="cover-lbl">Status</div><div class="cover-val">DONE</div></div>
+      <div class="cover-cell"><div class="cover-lbl">Epistemic State</div><div class="cover-val">2 stable · 3 tentative · 0 contested</div></div>
+      <div class="cover-cell"><div class="cover-lbl">Sources</div><div class="cover-val">22</div></div>
+      <div class="cover-cell"><div class="cover-lbl">Duration</div><div class="cover-val">2.6m</div></div>
+      <div class="cover-cell"><div class="cover-lbl">Cost</div><div class="cover-val">$0.01</div></div>
+    </div>
+    <div class="cover-foot">
+      <div class="cover-brand">OPENCLAW OPERATOR</div>
+      <div class="cover-date">2026-02-27 17:34 UTC</div>
+    </div>
+  </div>
+</div>
+<div class="proj-label">proj-20260226-492ac9ec</div><div class="sh"><span class="sh-n">1</span><span>Outcome Layer</span></div><div class="epi-snap">
+  <div class="epi-card epi-stable"><div class="ev">2</div><div class="el">Stable Claims</div></div>
+  <div class="epi-card epi-tentative"><div class="ev">3</div><div class="el">Tentative Claims</div></div>
+  <div class="epi-card epi-contested"><div class="ev">0</div><div class="el">Contested Claims</div></div>
+  <div class="epi-card epi-unresolved"><div class="ev">5</div><div class="el">Unresolved Questions</div></div>
+</div>
+<div class="sh-sub">Research Conclusions</div>
+<div class="conclusion-card" style="border-left-color:#D97706;">
+  <div class="cc-row">
+    <div class="cc-text">Humane AI Pin was sold at a high price ($499-$699), with total units sold being at most around 15,000 before heavy returns reduced active units to about 7,000-8,000.</div>
+    <span class="badge b-tentative">tentative</span>
+  </div>
+  <div class="cc-rel"><span class="badge b-high">high confidence</span> &nbsp; Decision-relevant</div>
+</div><div class="conclusion-card" style="border-left-color:#D97706;">
+  <div class="cc-row">
+    <div class="cc-text">The Humane AI Pin experienced a very high return rate, with returns outpacing new sales between May and August 2024.</div>
+    <span class="badge b-tentative">tentative</span>
+  </div>
+  <div class="cc-rel"><span class="badge b-high">high confidence</span> &nbsp; Decision-relevant</div>
+</div><div class="conclusion-card" style="border-left-color:#059669;">
+  <div class="cc-row">
+    <div class="cc-text">Humane discontinued sales of the AI Pin less than a year after release (launched April 2024, discontinued February 2025), with service for the devices ending on February 28, 2025.</div>
+    <span class="badge b-stable">stable</span>
+  </div>
+  <div class="cc-rel"><span class="badge b-high">high confidence</span> &nbsp; Decision-relevant</div>
+</div><div class="conclusion-card" style="border-left-color:#D97706;">
+  <div class="cc-row">
+    <div class="cc-text">Humane sold most of its assets to HP for $116 million in February 2025, which included technology and patents, marking an effective shutdown of the startup.</div>
+    <span class="badge b-tentative">tentative</span>
+  </div>
+  <div class="cc-rel"><span class="badge b-high">high confidence</span> &nbsp; Decision-relevant</div>
+</div><div class="conclusion-card" style="border-left-color:#059669;">
+  <div class="cc-row">
+    <div class="cc-text">After February 28, 2025, Humane AI Pins will no longer connect to company servers, disabling calling, messaging, AI queries, and cloud access, effectively rendering the devices unusable.</div>
+    <span class="badge b-stable">stable</span>
+  </div>
+  <div class="cc-rel"><span class="badge b-high">high confidence</span> &nbsp; Decision-relevant</div>
+</div>
+<div class="sh-sub">Short Answer</div>
+<div style="page:content;background:#F8FAFC;border:1px solid #E2E8F0;border-left:4px solid #3B82F6;border-radius:0 8px 8px 0;padding:12px 16px;margin:0.8em 0;font-size:9pt;line-height:1.6;">
+<p>Humane Inc.’s AI Pin, launched in April 2024 as an innovative AI-powered wearable priced between $499 and $699, has demonstrated poor commercial performance. Despite initial hype and substantial investment backing (~$230M raised), the device quickly failed to gain market traction. Returns exceeded sales from May to August 2024, leaving approximately 7,000–8,000 units in active customer use by early 2025. Humane ceased sales in early 2025 and announced a shutdown of AI Pin services effective February 28, 2025, rendering the devices mostly inoperative. HP acquired Humane’s assets for $116 million but excluded the physical AI Pin business, leaving customers without ongoing support or refund eligibility beyond a narrow 90-day window.</p>
+</div><div class="sh"><span class="sh-n">2</span><span>Claim State Map</span></div><table class="csm">
+  <tr><th>Claim</th><th>State</th><th>Confidence</th><th>Evidence</th><th>Counter</th><th>Failure Boundary</th></tr>
+  <tr>
+  <td class="claim-col">Humane AI Pin was sold at a high price ($499-$699), with total units sold being at most around 15,000 before heavy returns reduced active units to abo</td>
+  <td><span class="state-dot" style="background:#D97706;"></span>tentative</td>
+  <td><span class="conf-bg"><span class="conf-bar" style="width:90%;background:#059669;"></span></span> 90%</td>
+  <td>2</td>
+  <td>—</td>
+  <td style="font-size:7pt;">Weakens if single source contradicted</td>
+</tr><tr>
+  <td class="claim-col">The Humane AI Pin experienced a very high return rate, with returns outpacing new sales between May and August 2024.</td>
+  <td><span class="state-dot" style="background:#D97706;"></span>tentative</td>
+  <td><span class="conf-bg"><span class="conf-bar" style="width:90%;background:#059669;"></span></span> 90%</td>
+  <td>2</td>
+  <td>—</td>
+  <td style="font-size:7pt;">Weakens if single source contradicted</td>
+</tr><tr>
+  <td class="claim-col">Humane discontinued sales of the AI Pin less than a year after release (launched April 2024, discontinued February 2025), with service for the devices</td>
+  <td><span class="state-dot" style="background:#059669;"></span>stable</td>
+  <td><span class="conf-bg"><span class="conf-bar" style="width:100%;background:#059669;"></span></span> 100%</td>
+  <td>3</td>
+  <td>—</td>
+  <td style="font-size:7pt;">Stable unless primary sources retracted</td>
+</tr><tr>
+  <td class="claim-col">Humane sold most of its assets to HP for $116 million in February 2025, which included technology and patents, marking an effective shutdown of the st</td>
+  <td><span class="state-dot" style="background:#D97706;"></span>tentative</td>
+  <td><span class="conf-bg"><span class="conf-bar" style="width:100%;background:#059669;"></span></span> 100%</td>
+  <td>3</td>
+  <td>—</td>
+  <td style="font-size:7pt;">Stable unless primary sources retracted</td>
+</tr><tr>
+  <td class="claim-col">After February 28, 2025, Humane AI Pins will no longer connect to company servers, disabling calling, messaging, AI queries, and cloud access, effecti</td>
+  <td><span class="state-dot" style="background:#059669;"></span>stable</td>
+  <td><span class="conf-bg"><span class="conf-bar" style="width:100%;background:#059669;"></span></span> 100%</td>
+  <td>3</td>
+  <td>—</td>
+  <td style="font-size:7pt;">Stable unless primary sources retracted</td>
+</tr>
+</table><div class="sh"><span class="sh-n">3</span><span>Belief Trajectory</span></div><div style="margin:0.6em 0;font-size:7.5pt;font-weight:600;color:#0B1437;">Humane AI Pin was sold at a high price ($499-$699), with total units sold being at most around 15,00...</div>
+<div class="traj-row"><div class="traj-step"><div class="ts-label">Initial</div><div class="ts-val">Hypothesis</div></div><div class="traj-arrow">→</div><div class="traj-step"><div class="ts-label">Evidence</div><div class="ts-val">2 sources found</div></div><div class="traj-arrow">→</div><div class="traj-step"><div class="ts-label">Verification</div><div class="ts-val">Passed</div></div><div class="traj-arrow">→</div><div class="traj-step" style="background:#FFFBEB;border-radius:4px;border:1px solid #D97706;"><div class="ts-label">State</div><div class="ts-val" style="color:#D97706;font-weight:700;">TENTATIVE</div></div></div>
+<div style="margin:0.6em 0;font-size:7.5pt;font-weight:600;color:#0B1437;">The Humane AI Pin experienced a very high return rate, with returns outpacing new sales between May ...</div>
+<div class="traj-row"><div class="traj-step"><div class="ts-label">Initial</div><div class="ts-val">Hypothesis</div></div><div class="traj-arrow">→</div><div class="traj-step"><div class="ts-label">Evidence</div><div class="ts-val">2 sources found</div></div><div class="traj-arrow">→</div><div class="traj-step"><div class="ts-label">Verification</div><div class="ts-val">Passed</div></div><div class="traj-arrow">→</div><div class="traj-step" style="background:#FFFBEB;border-radius:4px;border:1px solid #D97706;"><div class="ts-label">State</div><div class="ts-val" style="color:#D97706;font-weight:700;">TENTATIVE</div></div></div>
+<div style="margin:0.6em 0;font-size:7.5pt;font-weight:600;color:#0B1437;">Humane discontinued sales of the AI Pin less than a year after release (launched April 2024, discont...</div>
+<div class="traj-row"><div class="traj-step"><div class="ts-label">Initial</div><div class="ts-val">Hypothesis</div></div><div class="traj-arrow">→</div><div class="traj-step"><div class="ts-label">Evidence</div><div class="ts-val">3 sources found</div></div><div class="traj-arrow">→</div><div class="traj-step"><div class="ts-label">Verification</div><div class="ts-val">Passed</div></div><div class="traj-arrow">→</div><div class="traj-step" style="background:#ECFDF5;border-radius:4px;border:1px solid #059669;"><div class="ts-label">State</div><div class="ts-val" style="color:#059669;font-weight:700;">STABLE</div></div></div>
+<div style="margin:0.6em 0;font-size:7.5pt;font-weight:600;color:#0B1437;">Humane sold most of its assets to HP for $116 million in February 2025, which included technology an...</div>
+<div class="traj-row"><div class="traj-step"><div class="ts-label">Initial</div><div class="ts-val">Hypothesis</div></div><div class="traj-arrow">→</div><div class="traj-step"><div class="ts-label">Evidence</div><div class="ts-val">3 sources found</div></div><div class="traj-arrow">→</div><div class="traj-step"><div class="ts-label">Verification</div><div class="ts-val">Passed</div></div><div class="traj-arrow">→</div><div class="traj-step" style="background:#FFFBEB;border-radius:4px;border:1px solid #D97706;"><div class="ts-label">State</div><div class="ts-val" style="color:#D97706;font-weight:700;">TENTATIVE</div></div></div><div class="sh"><span class="sh-n">4</span><span>Evidence Landscape</span></div><div class="ev-cluster cluster-strong">
+  <div class="ev-cluster-hdr"><div class="ev-cluster-title">Strong Evidence Cluster (≥80% reliability)</div><div class="ev-cluster-count">14 sources</div></div>
+  <ul><li>arstechnica.com (90%)</li><li>axios.com (90%)</li><li>theverge.com (90%)</li><li>siliconrepublic.com (80%)</li><li>qz.com (80%)</li><li>arstechnica.com (90%)</li><li>techcrunch.com (90%)</li><li>mashable.com (80%)</li></ul>
+</div><div class="ev-cluster cluster-moderate">
+  <div class="ev-cluster-hdr"><div class="ev-cluster-title">Moderate Evidence Cluster (50–79%)</div><div class="ev-cluster-count">6 sources</div></div>
+  <ul><li>dig.watch (70%)</li><li>finance.yahoo.com (70%)</li><li>finance.yahoo.com (70%)</li><li>en.wikipedia.org (60%)</li><li>pymnts.com (70%)</li><li>complexdiscovery.com (50%)</li></ul>
+</div><div class="ev-cluster cluster-sparse">
+  <div class="ev-cluster-hdr"><div class="ev-cluster-title">Sparse / Weak Zone (<50%)</div><div class="ev-cluster-count">2 sources</div></div>
+  <ul><li>x.com (40%)</li><li>spyglass.org (40%)</li></ul>
+</div><div class="sh"><span class="sh-n">5</span><span>Disagreement Layer</span></div><table class="dis-table">
+  <tr><th>Topic</th><th>Position A</th><th>Position B</th><th>Resolution Condition</th></tr>
+  <tr>
+  <td><strong>Exact Total Units Sold vs. Shipped:</strong></td>
+  <td style="font-size:7.5pt;">Data cites “shipped around 10,000 units,” but precise sales numbers vs. shipments are unclear.</td>
+  <td style="font-size:7.5pt;">Insufficient data to establish counter-position</td>
+  <td style="font-size:7.5pt;">Clarification from authoritative source needed</td>
+</tr><tr>
+  <td><strong>Exact Return Rate Percentage:</strong></td>
+  <td style="font-size:7.5pt;">Returns outpaced sales, but the precise return rate (%) of total units sold is unspecified.</td>
+  <td style="font-size:7.5pt;">Insufficient data to establish counter-position</td>
+  <td style="font-size:7.5pt;">Clarification from authoritative source needed</td>
+</tr><tr>
+  <td><strong>Detailed Refund Numbers:</strong></td>
+  <td style="font-size:7.5pt;">Public sources do not disclose how many customers actually applied for or received refunds.</td>
+  <td style="font-size:7.5pt;">Insufficient data to establish counter-position</td>
+  <td style="font-size:7.5pt;">Additional primary sources required</td>
+</tr><tr>
+  <td><strong>Financial Write-down Details:</strong></td>
+  <td style="font-size:7.5pt;">No explicit public financials on inventory write-downs or losses attributable to returned/obsolete hardware.</td>
+  <td style="font-size:7.5pt;">Insufficient data to establish counter-position</td>
+  <td style="font-size:7.5pt;">Additional primary sources required</td>
+</tr><tr>
+  <td><strong>Consumer Impact Quantification:</strong></td>
+  <td style="font-size:7.5pt;">While e-waste and consumer loss are discussed qualitatively, detailed impact quantification is lacking.</td>
+  <td style="font-size:7.5pt;">Insufficient data to establish counter-position</td>
+  <td style="font-size:7.5pt;">Data collection / FOIA / financial disclosure</td>
+</tr>
+</table><div class="sh"><span class="sh-n">6</span><span>Insight Layer</span></div><div class="insight-card insight-structural"><div class="insight-type">Structural Insight</div><div class="insight-text">Humane AI Pin’s commercial performance was markedly poor, with total shipments (~10,000 units) dwarfed by returns that began to exceed sales within months of product launch.</div></div>
+<div class="insight-card insight-pattern"><div class="insight-type">Pattern Insight</div><div class="insight-text">This resulted in only 7,000–8,000 devices remaining in consumer hands before service shutdown.</div></div>
+<div class="insight-card insight-decision"><div class="insight-type">Decision Insight</div><div class="insight-text">Consumers outside a narrow refund eligibility window absorb the financial loss and e-waste consequences.</div></div><div class="sh"><span class="sh-n">7</span><span>Action Layer</span></div><div class="action-card">
+  <div class="action-icon action-monitor">M</div>
+  <div class="action-body"><div class="ab-type">Monitoring Trigger</div><div class="ab-text">Lack of precise breakdown between shipped and actually sold units.</div></div>
+</div>
+<div class="action-card">
+  <div class="action-icon action-monitor">M</div>
+  <div class="action-body"><div class="ab-type">Monitoring Trigger</div><div class="ab-text">No exact return rate percentage provided, only qualitative indication that returns surpassed sales.</div></div>
+</div>
+<div class="action-card">
+  <div class="action-icon action-retrieve">R</div>
+  <div class="action-body"><div class="ab-type">Next Retrieval</div><div class="ab-text">Acquire or reference direct financial statements or official company disclosures to clarify total sales vs. shipments and detailed inventory write-down amounts.</div></div>
+</div>
+<div class="action-card">
+  <div class="action-icon action-retrieve">R</div>
+  <div class="action-body"><div class="ab-type">Next Retrieval</div><div class="ab-text">Obtain specific return rate percentages and refund fulfillment metrics from high-credibility sources or consumer protection agencies.</div></div>
+</div>
+<div class="action-card">
+  <div class="action-icon action-decide">D</div>
+  <div class="action-body"><div class="ab-type">Decision Implication</div><div class="ab-text">Market Analysis of Failures:: Conduct deeper consumer feedback analysis to identify specific product shortcomings and market misalignment.</div></div>
+</div>
+<div class="action-card">
+  <div class="action-icon action-decide">D</div>
+  <div class="action-body"><div class="ab-type">Decision Implication</div><div class="ab-text">Financial Impact Assessment:: Seek detailed financial statements or disclosures regarding inventory write-downs and total losses to investors and stakeholders.</div></div>
+</div>
+<div class="action-card">
+  <div class="action-icon action-forecast">F</div>
+  <div class="action-body"><div class="ab-type">Forecast Item</div><div class="ab-text">Consumer Refund Follow-up:: Track refund application and fulfillment rates to assess adequacy of Humane’s consumer protection measures post-shutdown.</div></div>
+</div>
+<div class="action-card">
+  <div class="action-icon action-forecast">F</div>
+  <div class="action-body"><div class="ab-type">Forecast Item</div><div class="ab-text">HP Integration Outcomes:: Monitor HP IQ division for usage of Humane’s technology IP and personnel to assess if the acquired assets deliver value.</div></div>
+</div><div class="auditor-div"><h2>Full Report — Auditor Mode</h2><p>Complete narrative</p></div><div class="report-body"><h1>Humane AI Pin Commercial Performance: Research Report</h1>
+<hr />
+<h2 id="1-executive-summary">1. Executive Summary</h2>
+<p>Humane Inc.’s AI Pin, launched in April 2024 as an innovative AI-powered wearable priced between $499 and $699, has demonstrated poor commercial performance. Despite initial hype and substantial investment backing (~$230M raised), the device quickly failed to gain market traction. Returns exceeded sales from May to August 2024, leaving approximately 7,000–8,000 units in active customer use by early 2025. Humane ceased sales in early 2025 and announced a shutdown of AI Pin services effective February 28, 2025, rendering the devices mostly inoperative. HP acquired Humane’s assets for $116 million but excluded the physical AI Pin business, leaving customers without ongoing support or refund eligibility beyond a narrow 90-day window.</p>
+<hr />
+<h2 id="2-key-findings">2. Key Findings</h2>
+<ul>
+<li>
+<p><strong>Total Units Sold:</strong><br />
+  Humane shipped around 10,000 AI Pins to date, far short of their 100,000 units first-year sales expectation.<br />
+<em>Source: Mashable, The Verge report via Mashable (2025)</em></p>
+</li>
+<li>
+<p><strong>Sales and Returns Trend:</strong><br />
+  Returns surpassed new unit sales from May to August 2024, indicating poor customer retention and satisfaction. Only ~7,000 to 8,000 units remain in use now.<br />
+<em>Source: Mashable (2025)</em></p>
+</li>
+<li>
+<p><strong>Return Volumes/Rates and Refund Policy:</strong><br />
+  Returns outpaced sales over several months. Refunds are only offered to customers who purchased AI Pins within 90 days of the shutdown announcement, with an application deadline of Feb 27, 2025. Earlier buyers are not eligible for refunds.<br />
+<em>Sources: Consumer Reports (2025), TechCrunch (2025), Mashable (2025)</em></p>
+</li>
+<li>
+<p><strong>Refund Process and Impact:</strong><br />
+  Due to technical limitations (notably ties to T-Mobile’s service), returned devices cannot be refurbished and are effectively written off, which translates to greater financial loss and e-waste.<br />
+<em>Source: Mashable (2025)</em></p>
+</li>
+<li>
+<p><strong>Inventory Write-downs:</strong><br />
+  Specific figures unavailable, but the large-scale returns and device obsolescence imply significant inventory and asset write-downs against the AI Pin hardware business, which HP explicitly did not acquire.<br />
+<em>Inferred from: Mashable (2025), TechCrunch (2025)</em></p>
+</li>
+<li>
+<p><strong>Shutdown Timeline:</strong>  </p>
+</li>
+<li>AI Pin shipments ended immediately upon HP acquisition deal announcement (Feb 2025).  </li>
+<li>AI Pin devices will cease connection to Humane servers and lose cloud functionality by 12 p.m. PST, Feb 28, 2025.  </li>
+<li>
+<p>Customer support for AI Pin ends on the same date.<br />
+<em>Sources: TechCrunch (2025), Mashable (2025), Digital Watch (2025)</em></p>
+</li>
+<li>
+<p><strong>HP Acquisition Deal Terms:</strong><br />
+  HP acquired Humane’s software platform (CosmOS), over 300 patents, and the majority of Humane’s technical staff for $116 million. Physical AI Pin hardware business and consumer obligations were excluded. HP plans to integrate the acquired IP and staff into a new AI innovation division, HP IQ.<br />
+<em>Sources: TechCrunch (2025), Wikipedia (2025), Digital Watch (2025)</em></p>
+</li>
+</ul>
+<hr />
+<h2 id="3-contradictions--gaps">3. Contradictions / Gaps</h2>
+<ul>
+<li>
+<p><strong>Exact Total Units Sold vs. Shipped:</strong><br />
+  Data cites “shipped around 10,000 units,” but precise sales numbers vs. shipments are unclear.</p>
+</li>
+<li>
+<p><strong>Exact Return Rate Percentage:</strong><br />
+  Returns outpaced sales, but the precise return rate (%) of total units sold is unspecified.</p>
+</li>
+<li>
+<p><strong>Detailed Refund Numbers:</strong><br />
+  Public sources do not disclose how many customers actually applied for or received refunds.</p>
+</li>
+<li>
+<p><strong>Financial Write-down Details:</strong><br />
+  No explicit public financials on inventory write-downs or losses attributable to returned/obsolete hardware.</p>
+</li>
+<li>
+<p><strong>Consumer Impact Quantification:</strong><br />
+  While e-waste and consumer loss are discussed qualitatively, detailed impact quantification is lacking.</p>
+</li>
+</ul>
+<hr />
+<h2 id="4-conclusion--thesis">4. Conclusion / Thesis</h2>
+<p>Humane AI Pin’s commercial performance was markedly poor, with total shipments (~10,000 units) dwarfed by returns that began to exceed sales within months of product launch. This resulted in only 7,000–8,000 devices remaining in consumer hands before service shutdown. The company’s decision to discontinue the AI Pin and sell off technology assets to HP at a fraction of the startup’s earlier valuations reflects a failed hardware endeavor. HP’s acquisition focused solely on software, patents, and talent, excluding the hardware and consumer service obligations, thereby abandoning a costly and short-lived product. Consumers outside a narrow refund eligibility window absorb the financial loss and e-waste consequences.</p>
+<hr />
+<h2 id="5-suggested-next-steps">5. Suggested Next Steps</h2>
+<ul>
+<li>
+<p><strong>Market Analysis of Failures:</strong><br />
+  Conduct deeper consumer feedback analysis to identify specific product shortcomings and market misalignment.</p>
+</li>
+<li>
+<p><strong>Financial Impact Assessment:</strong><br />
+  Seek detailed financial statements or disclosures regarding inventory write-downs and total losses to investors and stakeholders.</p>
+</li>
+<li>
+<p><strong>Consumer Refund Follow-up:</strong><br />
+  Track refund application and fulfillment rates to assess adequacy of Humane’s consumer protection measures post-shutdown.</p>
+</li>
+<li>
+<p><strong>HP Integration Outcomes:</strong><br />
+  Monitor HP IQ division for usage of Humane’s technology IP and personnel to assess if the acquired assets deliver value.</p>
+</li>
+<li>
+<p><strong>Broader Industry Implications:</strong><br />
+  Analyze Humane’s AI Pin case as a cautionary example for startups shipping connected AI hardware without robust software, ecosystem, or customer support models.</p>
+</li>
+</ul>
+<hr /></div><div class="sh"><span class="sh-n">8</span><span>References</span></div><div class="references"><ol><li><a href="https://mashable.com/article/humane-ai-pin-returns">Humane AI Pins are being returned at a ridiculous pace | Mashable</a><br/><span class="ref-url">https://mashable.com/article/humane-ai-pin-returns</span></li><li><a href="https://dig.watch/updates/humane-ends-ai-pin-sales-hp-buys-companys-assets">Humane ends AI pin sales, HP buys company’s assets | Digital Watch Observatory</a><br/><span class="ref-url">https://dig.watch/updates/humane-ends-ai-pin-sales-hp-buys-companys-assets</span></li><li><a href="https://mashable.com/article/humane-ai-pin-discontinued-killed">Humane has killed its Ai Pin less than a year after its release | Mashable</a><br/><span class="ref-url">https://mashable.com/article/humane-ai-pin-discontinued-killed</span></li><li><a href="https://techcrunch.com/2025/02/18/humanes-ai-pin-is-dead-as-hp-buys-startups-assets-for-116m/">Humane's AI Pin is dead, as HP buys startup's assets for $116M | TechCrunch</a><br/><span class="ref-url">https://techcrunch.com/2025/02/18/humanes-ai-pin-is-dead-as-hp-buys-startups-assets-for-116m/</span></li><li><a href="https://spyglass.org/humane-ai-pin-strategy/">Oh, the Humane-ity</a><br/><span class="ref-url">https://spyglass.org/humane-ai-pin-strategy/</span></li><li><a href="https://innovation.consumerreports.org/should-humanes-asset-sale-orphan-an-iot-device/">Should Humane’s Asset Sale Orphan an IoT Device? - Innovation at Consumer Reports</a><br/><span class="ref-url">https://innovation.consumerreports.org/should-humanes-asset-sale-orphan-an-iot-device/</span></li></ol></div></body></html>
