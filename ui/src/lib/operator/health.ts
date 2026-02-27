@@ -6,6 +6,17 @@ import { OPERATOR_ROOT } from "./config";
 const exec = promisify(execFile);
 const OP_BIN = path.join(OPERATOR_ROOT, "bin", "op");
 
+export interface BrainProcessGroup {
+  count: number;
+  max_elapsed_sec?: number;
+  stuck?: boolean;
+}
+
+export interface BrainStatus {
+  cycle?: BrainProcessGroup;
+  reflect?: BrainProcessGroup;
+}
+
 export interface HealthResult {
   disk_used_pct?: number;
   disk_ok?: boolean;
@@ -19,6 +30,7 @@ export interface HealthResult {
   policy?: string;
   memory?: { episodes?: number; decisions?: number; reflections?: number; avg_quality?: number };
   avg_quality?: number;
+  brain?: BrainStatus;
   healthy?: boolean;
 }
 

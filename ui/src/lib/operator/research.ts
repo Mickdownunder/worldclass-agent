@@ -1,6 +1,6 @@
 import { readdir, readFile, rm, writeFile } from "fs/promises";
 import path from "path";
-import { execSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import { OPERATOR_ROOT } from "./config";
 
 export interface CalibratedThresholds {
@@ -25,7 +25,7 @@ export async function getCalibratedThresholds(): Promise<CalibratedThresholds | 
       "except Exception:",
       "  print('{}')",
     ].join("\n");
-    const out = execSync("python3 -c " + JSON.stringify(script), {
+    const out = execFileSync("python3", ["-c", script], {
       cwd: OPERATOR_ROOT,
       encoding: "utf8",
       timeout: 10000,

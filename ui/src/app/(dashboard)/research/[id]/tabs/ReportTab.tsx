@@ -23,6 +23,7 @@ export function ReportTab({
   loading,
 }: ReportTabProps) {
   const [pdfMessage, setPdfMessage] = useState<string | null>(null);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
   if (loading) return <LoadingSpinner />;
   if (!initialMarkdown) {
     return (
@@ -83,6 +84,48 @@ export function ReportTab({
             <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M6 1v8M2 7l4 4 4-4M1 13h10" /></svg>
             Download .md
           </button>
+          {!hasPdf && (
+            <button
+              type="button"
+              disabled={pdfGenerating}
+              onClick={async () => {
+                setPdfGenerating(true);
+                setPdfMessage(null);
+                try {
+                  const res = await fetch(`/api/research/projects/${projectId}/report/pdf`, { method: "POST" });
+                  const data = res.ok ? null : await res.json().catch(() => ({}));
+                  if (!res.ok) {
+                    setPdfMessage(data?.error ?? "PDF generation failed.");
+                    setTimeout(() => setPdfMessage(null), 5000);
+                    return;
+                  }
+                  const pdfRes = await fetch(`/api/research/projects/${projectId}/report/pdf`);
+                  if (!pdfRes.ok) {
+                    setPdfMessage("PDF created but download failed.");
+                    setTimeout(() => setPdfMessage(null), 3000);
+                    return;
+                  }
+                  const blob = await pdfRes.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `report-${projectId}.pdf`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                  setPdfMessage("PDF downloaded.");
+                  setTimeout(() => setPdfMessage(null), 2000);
+                } finally {
+                  setPdfGenerating(false);
+                }
+              }}
+              className="shrink-0 flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-60"
+              style={{ border: "1px solid var(--tron-border)", color: "var(--tron-text-muted)", background: "transparent" }}
+              onMouseEnter={(e) => { if (!pdfGenerating) { e.currentTarget.style.borderColor = "var(--tron-accent)"; e.currentTarget.style.color = "var(--tron-accent)"; } }}
+              onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--tron-border)"; e.currentTarget.style.color = "var(--tron-text-muted)"; }}
+            >
+              {pdfGenerating ? "Generating…" : "Generate PDF"}
+            </button>
+          )}
           {hasPdf && (
             <button
               type="button"

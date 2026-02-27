@@ -147,6 +147,29 @@ export default async function CommandCenterPage() {
           </>
         )}
 
+        {health.brain && (health.brain.cycle?.count ?? 0) + (health.brain.reflect?.count ?? 0) > 0 && (
+          <>
+            <div className="h-4 w-px" style={{ background: "var(--tron-border)" }} />
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="metric-label">Brain</span>
+              <span className="font-mono text-[11px]" style={{ color: "var(--tron-text)" }}>
+                {health.brain.cycle?.count ? `${health.brain.cycle.count} cycle` : ""}
+                {health.brain.cycle?.count && health.brain.reflect?.count ? ", " : ""}
+                {health.brain.reflect?.count ? `${health.brain.reflect.count} reflect` : ""}
+              </span>
+              {(health.brain.cycle?.stuck || health.brain.reflect?.stuck) && (
+                <span
+                  className="font-semibold text-[11px]"
+                  style={{ color: "var(--tron-warning, #f59e0b)" }}
+                  title="Cycle &gt;10min oder Reflect &gt;5min — wirken hängend"
+                >
+                  (hängend)
+                </span>
+              )}
+            </div>
+          </>
+        )}
+
         <div className="ml-auto font-mono text-[10px]" style={{ color: "var(--tron-text-dim)" }}>
           {new Date().toUTCString().slice(0, 25)}
         </div>
