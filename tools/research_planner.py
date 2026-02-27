@@ -75,10 +75,23 @@ _MEDICAL_KEYWORDS = frozenset({
 })
 
 
+_NON_CLINICAL_MARKERS = {
+    "manufacturing", "skalierung", "scaling", "yield", "purity",
+    "cost-reduction", "cost reduction", "formulation", "formulierung",
+    "supply chain", "lieferkette", "production", "produktion",
+    "factory", "fabrik", "gmp", "fill-finish", "lyophilization",
+    "thermostabil", "thermostable", "cold chain", "shelf life",
+    "upstream", "downstream", "bioreactor", "fermentation",
+}
+
+
 def _is_medical_topic(text: str) -> bool:
     text_lower = text.lower()
+    non_clinical = sum(1 for kw in _NON_CLINICAL_MARKERS if kw in text_lower)
+    if non_clinical >= 2:
+        return False
     matches = sum(1 for kw in _MEDICAL_KEYWORDS if kw in text_lower)
-    return matches >= 2
+    return matches >= 3
 
 
 def _extract_entities(question: str) -> list[str]:
@@ -92,6 +105,9 @@ def _extract_entities(question: str) -> list[str]:
         key = cand.lower()
         if key in seen:
             continue
+        words = key.split()
+        if all(w in _TOPIC_STOPWORDS for w in words):
+            continue
         seen.add(key)
         entities.append(cand)
     return entities[:20]
@@ -102,6 +118,14 @@ _TOPIC_STOPWORDS = {
     "daten", "data", "inklusive", "including", "sowie", "also", "und", "and",
     "the", "die", "der", "das", "eine", "ein", "aus", "von", "mit", "for",
     "über", "nach", "zum", "zur", "beim",
+    "welche", "welcher", "welches", "which", "what",
+    "fortschritte", "fortschritt", "progress", "advances",
+    "gemacht", "macht", "made", "makes",
+    "gibt", "gibt's", "there", "have", "has", "been",
+    "how", "wie", "warum", "why", "wann", "when",
+    "kann", "können", "could", "should", "would",
+    "sehr", "mehr", "most", "some", "many", "alle", "all",
+    "neue", "neuer", "neues", "new",
 }
 
 
@@ -158,11 +182,12 @@ def _fallback_plan(question: str) -> dict[str, Any]:
     for i, e in enumerate(entities):
         topic_id = topics[i % len(topics)]["id"]
         if is_medical:
+            qtype = "medical" if i % 3 != 2 else "web"
             queries.append(
                 {
-                    "query": f"{e} clinical trial systematic review",
+                    "query": f"{e} clinical trial systematic review" if qtype == "medical" else f"{e} latest results evidence",
                     "topic_id": topic_id,
-                    "type": "medical",
+                    "type": qtype,
                     "perspective": "clinical researcher",
                 }
             )
@@ -176,13 +201,14 @@ def _fallback_plan(question: str) -> dict[str, Any]:
                 }
             )
     for i, t in enumerate(topics):
-        for p in perspectives[:2]:
+        for j, p in enumerate(perspectives[:2]):
             if is_medical:
+                qtype = "medical" if (i + j) % 3 != 2 else "web"
                 queries.append(
                     {
-                        "query": f"{t['name']} clinical data outcomes evidence",
+                        "query": f"{t['name']} clinical data outcomes evidence" if qtype == "medical" else f"{t['name']} latest research findings",
                         "topic_id": t["id"],
-                        "type": "medical",
+                        "type": qtype,
                         "perspective": p,
                     }
                 )
@@ -198,11 +224,12 @@ def _fallback_plan(question: str) -> dict[str, Any]:
     while len(queries) < 15:
         t = topics[len(queries) % len(topics)]
         if is_medical:
+            qtype = "medical" if len(queries) % 3 != 2 else "web"
             queries.append(
                 {
-                    "query": f"{t['name']} randomized controlled trial meta-analysis",
+                    "query": f"{t['name']} randomized controlled trial meta-analysis" if qtype == "medical" else f"{t['name']} latest news update",
                     "topic_id": t["id"],
-                    "type": "medical",
+                    "type": qtype,
                     "perspective": "systematic reviewer",
                 }
             )
