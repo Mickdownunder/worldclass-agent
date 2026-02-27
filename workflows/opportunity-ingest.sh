@@ -47,7 +47,7 @@ except (json.JSONDecodeError, ValueError) as e:
 if not isinstance(data, list):
     data = [data] if isinstance(data, dict) else []
 
-ts=datetime.datetime.utcnow().isoformat()
+ts=datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 lines=[]
 for o in data:

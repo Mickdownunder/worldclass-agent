@@ -26,7 +26,7 @@ PROCS=$(ps aux --sort=-%cpu | head -6)
 
 cat > "$ART/signals.json" <<EOF
 {
-  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ")",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "disk_root_use": "$DISK",
   "load": "$LOAD",
   "top_processes": "$(echo "$PROCS" | tail -5 | awk '{print $11}' | tr '\n' ', ')"

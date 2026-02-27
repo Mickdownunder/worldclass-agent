@@ -26,6 +26,8 @@ PROJ_DIR="$RESEARCH/$PROJECT_ID"
 export RESEARCH_PROJECT_ID="$PROJECT_ID"
 SECRETS="$OPERATOR_ROOT/conf/secrets.env"
 [ -f "$SECRETS" ] && set -a && source "$SECRETS" && set +a
+POLICY="$OPERATOR_ROOT/conf/policy.env"
+[ -f "$POLICY" ] && set -a && source "$POLICY" && set +a
 export GEMINI_API_KEY="${GEMINI_API_KEY:-}"
 export RESEARCH_SYNTHESIS_MODEL="${RESEARCH_SYNTHESIS_MODEL:-gpt-5.2}"
 export RESEARCH_CRITIQUE_MODEL="${RESEARCH_CRITIQUE_MODEL:-gpt-5.2}"
@@ -492,7 +494,7 @@ COUNTER_READ
     fi
     # Evidence Gate: must pass before synthesize
     GATE_RESULT=$(python3 "$TOOLS/research_quality_gate.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || echo '{"pass":false}')
-    GATE_PASS=$(echo "$GATE_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('pass') else 0, end='')" 2>/dev/null) || echo "0"
+    if ! GATE_PASS=$(echo "$GATE_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('pass') else 0, end='')" 2>/dev/null); then GATE_PASS=0; fi
     if [ "$GATE_PASS" != "1" ]; then
       # Smart recovery: if unread sources remain and recovery not yet attempted, read more and re-gate
       UNREAD_COUNT=$(python3 -c "
@@ -601,7 +603,7 @@ INNER_RECOVERY
           [ -f "$ART/claim_ledger.json" ] && cp "$ART/claim_ledger.json" "$PROJ_DIR/verify/" 2>/dev/null || true
           # Re-check evidence gate
           GATE_RESULT=$(python3 "$TOOLS/research_quality_gate.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || echo '{"pass":false}')
-          GATE_PASS=$(echo "$GATE_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('pass') else 0, end='')" 2>/dev/null) || echo "0"
+          if ! GATE_PASS=$(echo "$GATE_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('pass') else 0, end='')" 2>/dev/null); then GATE_PASS=0; fi
           log "Recovery gate result: GATE_PASS=$GATE_PASS"
         fi
       fi
@@ -1119,6 +1121,7 @@ except Exception as e:
 BRAIN_REFLECT
     python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
     python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    fi
     ;;
   done)
     log "Project already done."

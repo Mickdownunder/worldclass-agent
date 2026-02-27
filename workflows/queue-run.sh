@@ -58,7 +58,7 @@ for j in selected:
         **run_job(j["job_dir"])
     })
 
-ts=datetime.datetime.utcnow().isoformat()+"Z"
+ts=datetime.datetime.now(datetime.timezone.utc).isoformat()+"Z"
 
 out_json={"ts":ts,"source_queue":q,"mode":mode,"index":idx or None,"results":results}
 open(os.path.join(os.environ["PWD"],"artifacts","ran.json"),"w").write(json.dumps(out_json, indent=2))

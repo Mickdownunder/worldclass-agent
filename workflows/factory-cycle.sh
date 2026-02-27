@@ -28,7 +28,6 @@ if [ -f "$SECRETS" ]; then
   set -a
   source "$SECRETS"
   set +a
-fi
 
 NEW_OPPS="$ART/discovered.jsonl"
 if python3 "$TOOLS/opportunity_discover.py" "$CLIENTS_DIR" --max-items 20 > "$NEW_OPPS" 2>> "$PWD/log.txt"; then
@@ -163,3 +162,4 @@ echo "Delivered: $DELIVERED packs" >> "$RESULT"
   echo ""
   head -n 30 "$RESULT"
 } > "$ART/telegram.txt"
+    fi

@@ -85,7 +85,7 @@ for it in items:
     jobs.append({"type":t,"name":name,"workflow":wf,"job_dir":job_dir})
 
 with open(out_json,"w",encoding="utf-8") as f:
-    json.dump({"source":sel_path,"created_at":datetime.datetime.utcnow().isoformat()+"Z","jobs":jobs}, f, indent=2)
+    json.dump({"source":sel_path,"created_at":datetime.datetime.now(datetime.timezone.utc).isoformat()+"Z","jobs":jobs}, f, indent=2)
 
 with open(out_md,"a",encoding="utf-8") as f:
     f.write("\n\n## Created Jobs\n")
