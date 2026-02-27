@@ -121,6 +121,59 @@ progress_start() { python3 "$TOOLS/research_progress.py" start "$PROJECT_ID" "$1
 progress_step() { python3 "$TOOLS/research_progress.py" step "$PROJECT_ID" "$1" "${2:-}" "${3:-}" 2>/dev/null || true; }
 progress_done() { python3 "$TOOLS/research_progress.py" done "$PROJECT_ID" 2>/dev/null || true; }
 
+log_v2_mode_for_cycle() {
+  python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" "$PHASE" <<'MEMORY_V2_MODE' 2>> "$PWD/log.txt" || true
+import json, os, sys
+from pathlib import Path
+proj_dir, op_root, project_id, phase = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4]
+sys.path.insert(0, str(op_root))
+mode = "v2_disabled"
+reason = "flag_off"
+confidence = 1.0
+details = {"mode": mode, "fallback_reason": reason}
+if os.environ.get("RESEARCH_MEMORY_V2_ENABLED", "0").strip() == "1":
+    ms = proj_dir / "memory_strategy.json"
+    if not ms.exists():
+        mode = "v2_fallback"
+        reason = "no_strategy"
+        confidence = 0.3
+        details = {"mode": mode, "fallback_reason": reason}
+    else:
+        try:
+            data = json.loads(ms.read_text())
+            mode = str(data.get("mode") or "v2_applied")
+            reason = data.get("fallback_reason")
+            confidence = float(((data.get("selected_strategy") or {}).get("confidence")) or data.get("confidence") or 0.5)
+            details = {
+                "mode": mode,
+                "fallback_reason": reason,
+                "strategy_profile_id": ((data.get("selected_strategy") or {}).get("id")),
+                "strategy_name": ((data.get("selected_strategy") or {}).get("name")),
+                "confidence": confidence,
+                "confidence_drivers": data.get("confidence_drivers") or {},
+                "similar_episode_count": data.get("similar_episode_count", 0),
+            }
+        except Exception:
+            mode = "v2_fallback"
+            reason = "exception"
+            confidence = 0.2
+            details = {"mode": mode, "fallback_reason": reason}
+try:
+    from lib.memory import Memory
+    with Memory() as mem:
+        mem.record_memory_decision(
+            decision_type="v2_mode",
+            details=details,
+            project_id=project_id,
+            phase=phase,
+            strategy_profile_id=details.get("strategy_profile_id"),
+            confidence=max(0.0, min(1.0, confidence)),
+        )
+except Exception:
+    pass
+MEMORY_V2_MODE
+}
+
 # Pause-on-Rate-Limit: if project was paused, check if enough time passed (30 min cooldown)
 if [ "$PHASE" != "done" ]; then
   PROJ_STATUS=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('status',''), end='')")
@@ -171,6 +224,9 @@ p.write_text(json.dumps(d, indent=2))"
     exit 0
   fi
 fi
+
+# Memory v2 mode observability: exactly one mode decision per cycle run.
+log_v2_mode_for_cycle
 
 advance_phase() {
   local next_phase="$1"

@@ -96,6 +96,16 @@ export interface PriorKnowledgeInfo {
 }
 
 export interface MemoryAppliedInfo {
+  mode?: "v2_applied" | "v2_fallback" | "v2_disabled" | string;
+  fallback_reason?: string | null;
+  min_confidence?: number;
+  confidence_drivers?: {
+    strategy_score?: number;
+    query_overlap?: number;
+    similar_episode_count?: number;
+    similar_recency_weight?: number;
+  };
+  similar_episode_count?: number;
   selected_strategy?: {
     id?: string;
     name?: string;

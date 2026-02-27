@@ -80,3 +80,32 @@ def test_memory_v2_strategy_score_updates(tmp_path):
 
     assert after_success > before
     assert after_fail < after_success
+
+
+def test_memory_v2_select_strategy_includes_confidence_drivers(tmp_path):
+    db_path = tmp_path / "memory" / "operator.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    mem = Memory(db_path=str(db_path))
+    sid = mem.upsert_strategy_profile(
+        name="finance-precision",
+        domain="finance",
+        policy={"preferred_query_types": {"academic": 0.7, "web": 0.3}},
+        score=0.66,
+        confidence=0.4,
+    )
+    mem.record_run_episode(
+        project_id="proj-f1",
+        question="equity valuation multiples in private markets",
+        domain="finance",
+        status="done",
+        strategy_profile_id=sid,
+    )
+    selected = mem.select_strategy("private market equity valuation multiples", domain="finance")
+    mem.close()
+
+    assert selected is not None
+    assert selected["id"] == sid
+    assert selected.get("similar_episode_count", 0) >= 1
+    drivers = selected.get("confidence_drivers") or {}
+    assert "strategy_score" in drivers
+    assert "query_overlap" in drivers

@@ -155,6 +155,19 @@ if latest:
     print('strategy:', (d.get('selected_strategy') or {}).get('name'))
 "
 # Erwartung bei aktivem Flag: memory_strategy_found: True und ein Strategy-Name
+
+# 6. Memory v2 mode/fallback Logging vorhanden?
+python3 -c "
+from lib.memory import Memory
+with Memory() as m:
+  rows = m.list_memory_decisions(limit=20)
+v2 = [r for r in rows if r.get('decision_type') == 'v2_mode']
+print('v2_mode_entries:', len(v2))
+if v2:
+  d = v2[0].get('details') or {}
+  print('last_mode:', d.get('mode'), 'fallback_reason:', d.get('fallback_reason'))
+"
+# Erwartung: mindestens ein v2_mode-Eintrag nach einem research-cycle-Run; mode ist v2_applied|v2_fallback|v2_disabled
 ```
 
 Wenn alle vier durchlaufen ohne Fehler und mit sinnvollen Werten: **Funktion (a) gegeben.** Qualität (b) beurteilst du an Hand der obigen Tabellen (Reports, Findings, Avg quality, Learnings, Playbooks).

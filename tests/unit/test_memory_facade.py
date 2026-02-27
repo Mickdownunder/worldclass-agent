@@ -70,3 +70,20 @@ def test_retrieve_with_utility_candidate_without_id_skipped(memory_db_path):
     assert len(results) <= 1
     if results:
         assert results[0].get("description") == "no id field"
+
+
+def test_list_memory_decisions_v2(memory_db_path):
+    """Memory facade exposes memory v2 decision log rows with parsed details."""
+    mem = Memory(db_path=str(memory_db_path))
+    mem.record_memory_decision(
+        decision_type="v2_mode",
+        details={"mode": "v2_disabled", "fallback_reason": "flag_off"},
+        project_id="proj-1",
+        phase="planner",
+        confidence=1.0,
+    )
+    rows = mem.list_memory_decisions(project_id="proj-1", limit=5)
+    mem.close()
+    assert rows
+    assert rows[0]["decision_type"] == "v2_mode"
+    assert rows[0]["details"]["mode"] == "v2_disabled"

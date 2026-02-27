@@ -74,6 +74,7 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 
 - Wenn `RESEARCH_MEMORY_V2_ENABLED=1` aktiv ist und eine Strategy gewählt wurde, zeigt die Detailseite zusätzlich ein Panel **„Memory Applied“**.
 - Sichtbar: gewählte Strategy, Confidence, aktive Regeln (`relevance_threshold`, `critic_threshold`, `revise_rounds`), Query-Type-Mix und Domain-Overrides.
+- Zusätzlich sichtbar: **Mode Badge** (`v2_applied | v2_fallback | v2_disabled`), Fallback-Grund und Confidence-Drivers (warum diese Strategy gewählt wurde).
 - Quelle: `research/proj-*/memory_strategy.json` (wird beim Planning geschrieben).
 
 **Live Activity & Runtime-Status („Läuft es oder hängt es?“):**

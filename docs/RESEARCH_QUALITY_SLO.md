@@ -45,6 +45,19 @@ Projects with these statuses do not reach `done`; they remain in a failed state 
 - AEM (v1): `oracle_integrity_rate >= 0.80` for PASS_STABLE; `tentative_convergence_rate >= 0.60` within TTL; `deadlock_rate <= 0.05`. Enforced in `tools/research_aem_settlement.py` (strict mode: block_synthesize when any threshold violated). Scripts: `tools/research_claim_outcome_schema.py`, `tools/research_episode_metrics.py`, `tools/research_aem_settlement.py`, `tools/research_market_scoring.py`, `tools/research_falsification_gate.py`.
 - Memory v2 strategy guards (if enabled): `relevance_threshold` and `critic_threshold` are bounded to `0.50..0.65`; `revise_rounds` bounded to `1..4` (`workflows/research-cycle.sh`).
 
+## Memory v2 canary rollout gates
+
+- Enable canary with `RESEARCH_MEMORY_V2_ENABLED=1` for a small subset first.
+- Gate 1 (stability): no increase in hard fails (`failed_quality_gate`, `failed_insufficient_evidence`) over last 20 canary runs.
+- Gate 2 (quality): critic-pass and claim-support-rate must be >= control baseline for 20 canary runs.
+- Gate 3 (cost): average revision rounds and spend per successful run must not regress by >10%.
+
+Automatic fallback criteria:
+
+- Strategy mode becomes fallback when no strategy is found, confidence is too low, or strategy loading fails.
+- Fallback reasons tracked in decision logs: `no_strategy`, `low_confidence`, `db_error`, `import_error`, `exception`.
+- Even with v2 enabled, static bounded defaults remain active when fallback is selected.
+
 ## V3 SLO targets (start values)
 
 - `unsupported_claim_rate` ≤ 0.15

@@ -381,12 +381,21 @@ function GateMetricsInline({
 function MemoryAppliedPanel({ project }: { project: ResearchProjectDetail }) {
   const memory = project.memory_applied;
   const selected = memory?.selected_strategy;
-  if (!selected || !selected.id) {
+  const mode = memory?.mode ?? "v2_disabled";
+  if (!memory) {
     return null;
   }
-  const policy = selected.policy || {};
+  const confidence = typeof selected?.confidence === "number" ? selected.confidence : 0;
+  const confidencePct = Math.max(0, Math.min(100, Math.round(confidence * 100)));
+  const policy = selected?.policy || {};
   const preferredTypes = Object.entries(policy.preferred_query_types || {});
   const preferredDomains = Object.entries(policy.domain_rank_overrides || {}).slice(0, 5);
+  const modeColor =
+    mode === "v2_applied"
+      ? "var(--tron-success)"
+      : mode === "v2_fallback"
+      ? "var(--tron-amber, #f59e0b)"
+      : "var(--tron-text-dim)";
   return (
     <div
       className="rounded-lg"
@@ -398,27 +407,50 @@ function MemoryAppliedPanel({ project }: { project: ResearchProjectDetail }) {
         </span>
         <span className="rounded px-1.5 py-0.5 font-mono text-[10px] font-bold"
           style={{ border: "1px solid var(--tron-border)", color: "var(--tron-accent)" }}>
-          {selected.name || "Strategy"}
+          {selected?.name || "Strategy"}
+        </span>
+        <span className="rounded px-1.5 py-0.5 font-mono text-[10px] font-bold"
+          style={{ border: "1px solid var(--tron-border)", color: modeColor }}>
+          {mode.toUpperCase()}
         </span>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-0">
         <div className="px-5 py-3" style={{ borderRight: "1px solid var(--tron-border)" }}>
           <div className="metric-label mb-1">Strategy Confidence</div>
           <div className="font-mono text-sm font-semibold" style={{ color: "var(--tron-text)" }}>
-            {typeof selected.confidence === "number" ? `${Math.round(selected.confidence * 100)}%` : "—"}
+            {selected?.id ? `${confidencePct}%` : "—"}
+          </div>
+          <div className="mt-2 h-1.5 rounded" style={{ background: "var(--tron-bg)" }}>
+            <div
+              className="h-1.5 rounded"
+              style={{ width: `${selected?.id ? confidencePct : 0}%`, background: modeColor }}
+            />
           </div>
           <div className="mt-2 text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
             Expected benefit: {memory?.expected_benefit || "better pass-rate on similar runs"}
           </div>
+          {memory?.fallback_reason && (
+            <div className="mt-1 text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
+              Fallback reason: {memory.fallback_reason}
+            </div>
+          )}
         </div>
         <div className="px-5 py-3" style={{ borderRight: "1px solid var(--tron-border)" }}>
           <div className="metric-label mb-1">Active Rules</div>
           <div className="text-[11px] font-mono" style={{ color: "var(--tron-text)" }}>
             relevance {policy.relevance_threshold ?? "—"} | critic {policy.critic_threshold ?? "—"} | revise {policy.revise_rounds ?? "—"}
           </div>
+          <div className="mt-2 text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
+            Similar episodes: {memory?.similar_episode_count ?? memory?.confidence_drivers?.similar_episode_count ?? 0}
+          </div>
           {preferredTypes.length > 0 && (
             <div className="mt-2 text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
               Query mix: {preferredTypes.map(([k, v]) => `${k}:${v}`).join(" · ")}
+            </div>
+          )}
+          {memory?.confidence_drivers && (
+            <div className="mt-2 text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
+              Why: score {memory.confidence_drivers.strategy_score ?? "—"} · overlap {memory.confidence_drivers.query_overlap ?? "—"} · recency {memory.confidence_drivers.similar_recency_weight ?? "—"}
             </div>
           )}
         </div>

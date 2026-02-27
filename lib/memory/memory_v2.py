@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
 from collections import Counter
+from datetime import datetime, timezone
 
 from .common import hash_id, utcnow
 
@@ -154,17 +156,72 @@ class MemoryV2:
             p_tokens = _tokenize(policy_text)
             overlap = len(q_tokens & p_tokens)
             lexical = overlap / max(1, len(q_tokens))
-            combined = 0.75 * float(c.get("score") or 0.5) + 0.25 * lexical
+            similar_count, similar_recency = self._similar_episode_signals(question, domain)
+            similar_norm = min(1.0, similar_count / 10.0)
+            combined = (
+                0.55 * float(c.get("score") or 0.5)
+                + 0.20 * lexical
+                + 0.15 * similar_norm
+                + 0.10 * similar_recency
+            )
             if c.get("domain") == domain:
                 combined += 0.05
             if combined > best_score:
                 best_score = combined
                 best = c
+                best["confidence_drivers"] = {
+                    "strategy_score": round(float(c.get("score") or 0.5), 3),
+                    "query_overlap": round(lexical, 3),
+                    "similar_episode_count": similar_count,
+                    "similar_recency_weight": round(similar_recency, 3),
+                }
         if not best:
             return None
         confidence = _clamp(best_score, 0.0, 1.0)
         best["selection_confidence"] = confidence
+        best["similar_episode_count"] = int((best.get("confidence_drivers") or {}).get("similar_episode_count", 0))
         return best
+
+    def _similar_episode_signals(self, question: str, domain: str | None) -> tuple[int, float]:
+        try:
+            if domain:
+                rows = self._conn.execute(
+                    """SELECT question, created_at FROM run_episodes
+                       WHERE domain=? ORDER BY created_at DESC LIMIT 40""",
+                    (domain,),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT question, created_at FROM run_episodes ORDER BY created_at DESC LIMIT 40"
+                ).fetchall()
+        except Exception:
+            return 0, 0.0
+        q_tokens = _tokenize(question)
+        if not q_tokens:
+            return 0, 0.0
+        similar_count = 0
+        weighted = 0.0
+        for r in rows:
+            other = _tokenize(r["question"] or "")
+            if not other:
+                continue
+            overlap = len(q_tokens & other) / max(1, len(q_tokens | other))
+            if overlap < 0.12:
+                continue
+            similar_count += 1
+            ts = str(r["created_at"] or "")
+            age_days = 30.0
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                age_days = max(0.0, (datetime.now(timezone.utc) - dt).total_seconds() / 86400.0)
+            except Exception:
+                pass
+            weighted += math.exp(-age_days / 30.0)
+        if similar_count <= 0:
+            return 0, 0.0
+        return similar_count, _clamp(weighted / similar_count, 0.0, 1.0)
 
     def record_strategy_application_event(
         self,
@@ -223,6 +280,29 @@ class MemoryV2:
         )
         self._conn.commit()
         return did
+
+    def list_memory_decisions(self, project_id: str | None = None, limit: int = 50) -> list[dict]:
+        if project_id:
+            rows = self._conn.execute(
+                """SELECT * FROM memory_decision_log
+                   WHERE project_id=?
+                   ORDER BY ts DESC LIMIT ?""",
+                (project_id, limit),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM memory_decision_log ORDER BY ts DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        out = []
+        for row in rows:
+            d = dict(row)
+            try:
+                d["details"] = json.loads(d.get("details_json") or "{}")
+            except Exception:
+                d["details"] = {}
+            out.append(d)
+        return out
 
     def record_graph_edge(
         self,

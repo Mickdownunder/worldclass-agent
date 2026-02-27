@@ -445,6 +445,9 @@ class Memory:
     def summarize_query_type_mix(self, queries: list[dict]) -> dict[str, float]:
         return self._v2.summarize_query_type_mix(queries=queries)
 
+    def list_memory_decisions(self, project_id: str | None = None, limit: int = 50) -> list[dict]:
+        return self._v2.list_memory_decisions(project_id=project_id, limit=limit)
+
     # ------------------------------------------------------------------
     # State summary
     # ------------------------------------------------------------------
