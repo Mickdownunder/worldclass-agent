@@ -254,6 +254,45 @@ Write the section markdown (no title repeated; start with body). Every sentence 
         return f"*Section synthesis failed: {e}*"
 
 
+def _synthesize_research_situation_map(question: str, claim_ledger: list[dict], findings: list[dict], project_id: str) -> str:
+    """Research Situation Map: what is known, partially known, and missing."""
+    system = """You are a research intelligence analyst. Given a research question, claims with their verification status, and findings, produce a Research Situation Map.
+
+Format (markdown, no heading):
+- **Strong evidence:** areas where claims are verified/authoritative
+- **Partial evidence:** areas with findings but unverified claims
+- **Missing evidence:** areas the question asks about but no findings exist
+- **Key uncertainty driver:** the single biggest reason for remaining uncertainty
+
+Be specific to the actual topic. 4-8 lines total. No filler."""
+    claims_text = json.dumps([{"text": c.get("text", "")[:120], "tier": c.get("verification_tier", "UNVERIFIED")} for c in claim_ledger[:20]], ensure_ascii=False)
+    findings_text = json.dumps([{"excerpt": (f.get("excerpt") or "")[:200]} for f in findings[:15]], ensure_ascii=False)[:4000]
+    user = f"QUESTION: {question}\nCLAIMS:\n{claims_text}\nFINDINGS:\n{findings_text}\n\nWrite the Research Situation Map (no heading, just content)."
+    try:
+        result = llm_call(_model(), system, user, project_id=project_id)
+        return (result.text or "").strip()
+    except Exception:
+        return ""
+
+
+def _synthesize_tipping_conditions(question: str, claim_ledger: list[dict], project_id: str) -> str:
+    """What new evidence would change the conclusions?"""
+    system = """You are a research intelligence analyst. Given unverified/contested claims, identify 3-5 specific findings that would change the conclusion.
+
+Return a markdown table (no heading):
+| Finding needed | Effect on conclusion |
+| --- | --- |
+
+Each row: specific evidence that could be found, and what it would resolve. Be concrete, not generic."""
+    claims_text = json.dumps([{"text": c.get("text", "")[:150], "tier": c.get("verification_tier", "UNVERIFIED"), "reason": c.get("verification_reason", "")} for c in claim_ledger[:20]], ensure_ascii=False)
+    user = f"QUESTION: {question}\nCLAIMS:\n{claims_text}\n\nWrite the tipping conditions table (no heading)."
+    try:
+        result = llm_call(_model(), system, user, project_id=project_id)
+        return (result.text or "").strip()
+    except Exception:
+        return ""
+
+
 def _synthesize_exec_summary(full_report_body: str, question: str, project_id: str) -> str:
     """Generate executive summary last (300–500 words)."""
     system = """You are a research analyst. Write an Executive Summary (300–500 words) that stands alone and answers the research question.
@@ -637,8 +676,13 @@ def run_synthesis(project_id: str) -> str:
     for i, c in enumerate(claim_ledger[:25], 1):
         text = (c.get("text") or "")[:80].replace("|", " ")
         fstatus = (c.get("falsification_status") or "").strip()
+        tier = c.get("verification_tier", "")
         if fstatus == "PASS_TENTATIVE":
             status = "TENTATIVE"
+        elif tier == "VERIFIED":
+            status = "VERIFIED"
+        elif tier == "AUTHORITATIVE":
+            status = "AUTHORITATIVE"
         elif c.get("is_verified"):
             status = "VERIFIED"
         else:
@@ -646,6 +690,30 @@ def run_synthesis(project_id: str) -> str:
         n_src = len(c.get("supporting_source_ids") or [])
         parts.append(f"| {i} | {text}... | {status} | {n_src} |\n")
     parts.append("\n")
+
+    # Research Situation Map
+    try:
+        from tools.research_progress import step as progress_step
+        progress_step(project_id, "Generating Research Situation Map")
+    except Exception:
+        pass
+    situation_map = _synthesize_research_situation_map(question, claim_ledger, findings, project_id)
+    if situation_map:
+        parts.append("## Research Situation Map\n\n")
+        parts.append(situation_map)
+        parts.append("\n\n")
+
+    # Tipping Conditions
+    try:
+        from tools.research_progress import step as progress_step
+        progress_step(project_id, "Generating Tipping Conditions")
+    except Exception:
+        pass
+    tipping = _synthesize_tipping_conditions(question, claim_ledger, project_id)
+    if tipping:
+        parts.append("## Tipping Conditions\n\n")
+        parts.append(tipping)
+        parts.append("\n\n")
 
     # Conclusions & Next Steps
     concl, next_steps = _synthesize_conclusions_next_steps(thesis, contradictions, question, project_id)
