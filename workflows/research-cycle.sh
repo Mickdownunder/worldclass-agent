@@ -141,7 +141,7 @@ for item in (results if isinstance(results, list) else []):
     title_desc = f"{item.get('title','')} {item.get('description','')} {item.get('abstract','')}".lower()
     has_topic = str(item.get("topic_id","")) in topic_ids if topic_ids else False
     overlap = sum(1 for w in q_terms if w and w in title_desc)
-    if not has_topic and overlap < 1:
+    if not has_topic and overlap < 2:
         continue
     fid = hashlib.sha256(url.encode()).hexdigest()[:12]
     out = dict(item)
@@ -208,20 +208,38 @@ SMART_RANK
           read_successes=$((read_successes+1))
         fi
       fi
-      python3 - "$PROJ_DIR" "$ART" "$url" <<'SAVE_READ'
+      python3 - "$PROJ_DIR" "$ART" "$url" "$QUESTION" "$OPERATOR_ROOT" <<'SAVE_READ'
 import json, sys, hashlib
 from pathlib import Path
-proj_dir, art, url = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+proj_dir, art, url, question, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 p = art / "read_result.json"
 if not p.exists():
   sys.exit(0)
 data = json.loads(p.read_text())
 sid = hashlib.sha256(url.encode()).hexdigest()[:12]
-(proj_dir / "sources" / f"{sid}_content.json").write_text(json.dumps(data))
 text = (data.get("text") or data.get("abstract") or "")[:8000]
-if text:
-  fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
-  (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:4000], "source": "read", "confidence": 0.6}))
+title = data.get("title", "")
+# Relevance gate: only keep sources that are actually relevant
+relevant = True
+rel_score = 10
+if text and question:
+  try:
+    sys.path.insert(0, op_root)
+    from tools.research_relevance_gate import check_relevance
+    gate = check_relevance(question, title, text, project_id="")
+    relevant = gate.get("relevant", True)
+    rel_score = gate.get("score", 10)
+    reason = gate.get("reason", "")
+    if not relevant:
+      print(f"FILTERED (score={rel_score}): {url[:80]} — {reason}", file=sys.stderr)
+  except Exception as e:
+    print(f"WARN: relevance gate error: {e}", file=sys.stderr)
+if relevant:
+  (proj_dir / "sources" / f"{sid}_content.json").write_text(json.dumps(data))
+  if text:
+    confidence = min(0.9, 0.4 + rel_score * 0.05)
+    fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
+    (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": title, "excerpt": text[:4000], "source": "read", "confidence": confidence, "relevance_score": rel_score}))
 SAVE_READ
     done < "$ART/read_order_round1.txt"
 
@@ -365,19 +383,35 @@ RANK_FOCUS
           focus_read_successes=$((focus_read_successes+1))
         fi
       fi
-      python3 - "$PROJ_DIR" "$ART" "$url" <<'FOCUS_READ'
+      python3 - "$PROJ_DIR" "$ART" "$url" "$QUESTION" "$OPERATOR_ROOT" <<'FOCUS_READ'
 import json, sys, hashlib
 from pathlib import Path
-proj_dir, art, url = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+proj_dir, art, url, question, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 if not (art / "read_result.json").exists():
   sys.exit(0)
 data = json.loads((art / "read_result.json").read_text())
 sid = hashlib.sha256(url.encode()).hexdigest()[:12]
-(proj_dir / "sources" / f"{sid}_content.json").write_text(json.dumps(data))
 text = (data.get("text") or data.get("abstract") or "")[:8000]
-if text:
-  fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
-  (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:4000], "source": "read", "confidence": 0.6}))
+title = data.get("title", "")
+relevant = True
+rel_score = 10
+if text and question:
+  try:
+    sys.path.insert(0, op_root)
+    from tools.research_relevance_gate import check_relevance
+    gate = check_relevance(question, title, text, project_id="")
+    relevant = gate.get("relevant", True)
+    rel_score = gate.get("score", 10)
+    if not relevant:
+      print(f"FILTERED (score={rel_score}): {url[:80]} — {gate.get('reason','')}", file=sys.stderr)
+  except Exception as e:
+    print(f"WARN: relevance gate error: {e}", file=sys.stderr)
+if relevant:
+  (proj_dir / "sources" / f"{sid}_content.json").write_text(json.dumps(data))
+  if text:
+    confidence = min(0.9, 0.4 + rel_score * 0.05)
+    fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
+    (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": title, "excerpt": text[:4000], "source": "read", "confidence": confidence, "relevance_score": rel_score}))
 FOCUS_READ
     done < "$ART/focus_read_order.txt"
     log "Focus reads: $focus_read_attempts attempted, $focus_read_successes succeeded"
@@ -475,19 +509,35 @@ COUNTER_EVIDENCE
       while IFS= read -r curl; do
         [ -z "$curl" ] && continue
         python3 "$TOOLS/research_web_reader.py" "$curl" > "$ART/read_result.json" 2>> "$PWD/log.txt" || true
-        python3 - "$PROJ_DIR" "$ART" "$curl" <<'COUNTER_READ'
+        python3 - "$PROJ_DIR" "$ART" "$curl" "$QUESTION" "$OPERATOR_ROOT" <<'COUNTER_READ'
 import json, sys, hashlib
 from pathlib import Path
-proj_dir, art, url = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+proj_dir, art, url, question, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 if not (art / "read_result.json").exists():
   sys.exit(0)
 data = json.loads((art / "read_result.json").read_text())
 key = hashlib.sha256(url.encode()).hexdigest()[:12]
-(proj_dir / "sources" / f"{key}_content.json").write_text(json.dumps(data))
 text = (data.get("text") or "")[:8000]
-if text:
-  fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
-  (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:4000], "source": "counter_read", "confidence": 0.5}))
+title = data.get("title", "")
+relevant = True
+rel_score = 10
+if text and question:
+  try:
+    sys.path.insert(0, op_root)
+    from tools.research_relevance_gate import check_relevance
+    gate = check_relevance(question, title, text, project_id="")
+    relevant = gate.get("relevant", True)
+    rel_score = gate.get("score", 10)
+    if not relevant:
+      print(f"COUNTER FILTERED (score={rel_score}): {url[:80]}", file=sys.stderr)
+  except Exception as e:
+    print(f"WARN: relevance gate error: {e}", file=sys.stderr)
+if relevant:
+  (proj_dir / "sources" / f"{key}_content.json").write_text(json.dumps(data))
+  if text:
+    confidence = min(0.8, 0.3 + rel_score * 0.05)
+    fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
+    (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": title, "excerpt": text[:4000], "source": "counter_read", "confidence": confidence, "relevance_score": rel_score}))
 COUNTER_READ
       done < "$ART/counter_urls_to_read.txt"
       python3 "$TOOLS/research_reason.py" "$PROJECT_ID" contradiction_detection > "$PROJ_DIR/contradictions.json" 2>> "$PWD/log.txt" || true
@@ -559,39 +609,35 @@ except Exception:
               recovery_successes=$((recovery_successes+1))
             fi
           fi
-          python3 - "$PROJ_DIR" "$ART" "$rurl" <<'INNER_RECOVERY'
-import json, sys, hashlib, re
+          python3 - "$PROJ_DIR" "$ART" "$rurl" "$QUESTION" "$OPERATOR_ROOT" <<'INNER_RECOVERY'
+import json, sys, hashlib
 from pathlib import Path
-proj_dir, art, url = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+proj_dir, art, url, question, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 if not (art / "read_result.json").exists():
   sys.exit(0)
 data = json.loads((art / "read_result.json").read_text())
 key = hashlib.sha256(url.encode()).hexdigest()[:12]
-(proj_dir / "sources" / f"{key}_content.json").write_text(json.dumps(data))
 text = (data.get("text") or data.get("abstract") or "")[:8000]
-if text:
-  import re as _re
-  question = ""
+title = data.get("title", "")
+relevant = True
+rel_score = 10
+if text and question:
   try:
-    question = json.loads((proj_dir / "project.json").read_text()).get("question", "")
-  except Exception:
-    pass
-  if question:
-    q_lower = question.lower()
-    t_lower = text[:4000].lower()
-    STOP = {"what","when","where","which","about","their","these","those","from","with","that","this","have","been","were","will","into","only","also","more","than","each","using","focus","sources","investigate","research","every","clearly","label","prioritize","hard","extract","numeric","english","publication","date","cross","check","should","does","could","would"}
-    q_words = set()
-    for raw_w in q_lower.split():
-      for part in _re.split(r'[/,]', raw_w):
-        clean = _re.sub(r'[^a-z0-9]', '', part)
-        if len(clean) >= 4 and clean not in STOP:
-          q_words.add(clean)
-    matches = sum(1 for w in q_words if w in t_lower)
-    threshold = max(2, min(4, int(len(q_words) * 0.12)))
-    if matches < threshold:
-      sys.exit(0)
-  fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
-  (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": data.get("title",""), "excerpt": text[:4000], "source": "read", "confidence": 0.6}))
+    sys.path.insert(0, op_root)
+    from tools.research_relevance_gate import check_relevance
+    gate = check_relevance(question, title, text, project_id="")
+    relevant = gate.get("relevant", True)
+    rel_score = gate.get("score", 10)
+    if not relevant:
+      print(f"RECOVERY FILTERED (score={rel_score}): {url[:80]}", file=sys.stderr)
+  except Exception as e:
+    print(f"WARN: relevance gate error: {e}", file=sys.stderr)
+if relevant:
+  (proj_dir / "sources" / f"{key}_content.json").write_text(json.dumps(data))
+  if text:
+    confidence = min(0.9, 0.4 + rel_score * 0.05)
+    fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
+    (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({"url": url, "title": title, "excerpt": text[:4000], "source": "read", "confidence": confidence, "relevance_score": rel_score}))
 INNER_RECOVERY
         done < "$ART/recovery_read_order.txt"
         log "Recovery reads: $recovery_reads attempted, $recovery_successes succeeded"

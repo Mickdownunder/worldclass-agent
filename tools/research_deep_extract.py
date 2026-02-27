@@ -48,6 +48,8 @@ def run(project_id: str) -> int:
     proj_path = project_dir(project_id)
     if not proj_path.exists():
         raise FileNotFoundError(f"Project not found: {project_id}")
+    proj = load_project(proj_path)
+    question = proj.get("question", "")
     sources_dir = proj_path / "sources"
     findings_dir = proj_path / "findings"
     findings_dir.mkdir(parents=True, exist_ok=True)
@@ -55,6 +57,7 @@ def run(project_id: str) -> int:
     total_sources = len(content_files)
     _progress_step(project_id, "KI: Extracting key facts from sources", 0, max(1, total_sources))
     added = 0
+    skipped = 0
     for idx, f in enumerate(content_files, start=1):
         try:
             d = json.loads(f.read_text())
@@ -63,7 +66,6 @@ def run(project_id: str) -> int:
             continue
         if len(text) < MIN_CONTENT_LEN:
             continue
-        _progress_step(project_id, "KI: Extracting key facts from sources", idx, max(1, total_sources))
         base_id = f.stem.replace("_content", "")
         url = ""
         title = ""
@@ -75,8 +77,24 @@ def run(project_id: str) -> int:
                 title = (m.get("title") or "").strip()
             except Exception:
                 pass
-        system = """Extract 2-5 key facts or claims from the text. Return JSON: {"facts": ["fact one", "fact two", ...]}.
-Each fact should be a single sentence or short paragraph. Be specific (numbers, dates, names)."""
+        # Check if any existing finding for this source already has a relevance score
+        existing_relevant = True
+        for ef in findings_dir.glob("*.json"):
+            try:
+                ed = json.loads(ef.read_text())
+                if ed.get("url") == url and "relevance_score" in ed:
+                    if ed["relevance_score"] < 7:
+                        existing_relevant = False
+                    break
+            except Exception:
+                continue
+        if not existing_relevant:
+            skipped += 1
+            continue
+        _progress_step(project_id, "KI: Extracting key facts from sources", idx - skipped, max(1, total_sources - skipped))
+        q_context = f"\n\nResearch question for context: {question}" if question else ""
+        system = f"""Extract 2-5 key facts or claims from the text that are RELEVANT to the research question. Return JSON: {{"facts": ["fact one", "fact two", ...]}}.
+Each fact should be a single sentence or short paragraph. Be specific (numbers, dates, names). Only extract facts that help answer the research question.{q_context}"""
         user = f"TEXT:\n{text[:8000]}\n\nReturn only valid JSON with key 'facts'."
         facts = _llm_json(system, user, project_id=project_id)
         for i, fact in enumerate(facts):
