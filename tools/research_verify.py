@@ -149,27 +149,35 @@ Prefer specific, quantitative claims (e.g. "X achieved Y% response rate in phase
     return {"claims": out if isinstance(out, list) else []}
 
 
+_AUTHORITATIVE_DOMAINS = (
+    "arxiv.org", "doi.org", "scholar.google",
+    "docs.", "documentation", "github.com", "gitlab.com",
+    "openreview.net", "acm.org", "ieee.org", "springer.com",
+    "nature.com", "science.org", "sciencedirect.com",
+    "pmc.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov", "pubmed.ncbi",
+    "nih.gov", "who.int", "fda.gov", "ema.europa.eu",
+    "clinicaltrials.gov", "thelancet.com", "nejm.org", "bmj.com",
+    "jamanetwork.com", "cochranelibrary.com",
+    "sec.gov", "sec.gov/archives",
+    "investors.biontech.de", "biontechse.gcs-web.com",
+    "pubs.acs.org", "wiley.com", "cell.com",
+    "europa.eu", "gov.uk", "bfarm.de",
+)
+
+
 def _is_authoritative_source(url: str) -> bool:
-    """True if URL is from an authoritative primary source (arxiv, official docs, conference)."""
+    """True if URL is from an authoritative primary source."""
     u = (url or "").lower()
     if not u:
         return False
-    if "arxiv.org" in u:
-        return True
-    if "doi.org" in u or "scholar.google" in u:
-        return True
-    # Official docs / primary
-    for d in ("docs.", "documentation", "github.com", "gitlab.com", "arxiv.org", "openreview.net", "acm.org", "ieee.org", "springer.com", "nature.com", "science.org"):
-        if d in u:
-            return True
-    return False
+    return any(d in u for d in _AUTHORITATIVE_DOMAINS)
 
 
 def build_claim_ledger(proj_path: Path, project: dict) -> dict:
     """
     Deterministic claim ledger from claim_verification + source_reliability.
     verification_tier: VERIFIED (>=2 independent reliable), AUTHORITATIVE (1 authoritative source), UNVERIFIED.
-    is_verified: True only for VERIFIED (backward compat for standard gate).
+    is_verified: True for VERIFIED; also True for AUTHORITATIVE in frontier mode.
     Output: { "claims": [ { "claim_id", "text", "supporting_source_ids", "is_verified", "verification_tier", "verification_reason" } ] }
     """
     ensure_project_layout(proj_path)
@@ -219,7 +227,8 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
             verification_reason = "disputed"
         elif distinct_reliable == 1 and authoritative_sources and not dispute:
             verification_tier = "AUTHORITATIVE"
-            is_verified = False  # gate in standard mode does not count as verified
+            research_mode = ((project.get("config") or {}).get("research_mode") or "standard").lower()
+            is_verified = research_mode == "frontier"
             verification_reason = "single authoritative source (primary)"
         elif distinct_reliable < 2:
             total_distinct = len(set(supporting_source_ids))
