@@ -125,8 +125,14 @@ export default async function ResearchProjectPage({
               label: "Phase",
               value: (
                 <span className="font-mono text-sm font-semibold uppercase"
-                  style={{ color: "var(--tron-accent)" }}>
+                  style={{ color: project.status.startsWith("failed") ? "var(--tron-error, #ef4444)" : "var(--tron-accent)" }}>
                   {project.phase}
+                  {project.status.startsWith("failed") && (
+                    <span className="ml-1.5 text-[9px] font-bold px-1 py-0.5 rounded"
+                      style={{ background: "rgba(239,68,68,0.15)", color: "rgb(248,113,113)" }}>
+                      FAILED
+                    </span>
+                  )}
                 </span>
               ),
             },
@@ -227,7 +233,7 @@ export default async function ResearchProjectPage({
             Execution Pipeline
           </span>
           <span className="font-mono text-[10px]" style={{ color: "var(--tron-text-dim)" }}>
-            {project.status === "done" ? "COMPLETED" : isActive ? "RUNNING" : "STOPPED"}
+            {project.status === "done" ? "COMPLETED" : isActive ? "RUNNING" : project.status.startsWith("failed") ? "FAILED" : "STOPPED"}
           </span>
         </div>
         <ExecutionTree

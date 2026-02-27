@@ -42,6 +42,15 @@ QUESTION=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json'));
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$PROJ_DIR/log.txt" 2>/dev/null; echo "$*" >&2; }
 
+# ── Terminal status guard: if project is dead, don't run ──
+_STATUS=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('status',''), end='')" 2>/dev/null || echo "")
+case "$_STATUS" in
+  failed*|cancelled|abandoned)
+    log "Project $PROJECT_ID has terminal status '$_STATUS' — skipping cycle"
+    exit 0
+    ;;
+esac
+
 progress_start() { python3 "$TOOLS/research_progress.py" start "$PROJECT_ID" "$1" 2>/dev/null || true; }
 progress_step() { python3 "$TOOLS/research_progress.py" step "$PROJECT_ID" "$1" "${2:-}" "${3:-}" 2>/dev/null || true; }
 progress_done() { python3 "$TOOLS/research_progress.py" done "$PROJECT_ID" 2>/dev/null || true; }
@@ -724,6 +733,7 @@ except Exception:
   gate = {"fail_code": "failed_insufficient_evidence", "decision": "fail", "metrics": {}, "reasons": []}
 d = json.loads((proj_dir / "project.json").read_text())
 d["status"] = gate.get("fail_code") or "failed_insufficient_evidence"
+d["phase"] = "failed"
 d.setdefault("quality_gate", {})["evidence_gate"] = {
   "status": "failed",
   "decision": gate.get("decision", "fail"),
@@ -1051,6 +1061,7 @@ from datetime import datetime, timezone
 proj_dir, art, score = Path(sys.argv[1]), Path(sys.argv[2]), float(sys.argv[3])
 d = json.loads((proj_dir / "project.json").read_text())
 d["status"] = "failed_quality_gate"
+d["phase"] = "failed"
 d.setdefault("quality_gate", {})["critic_score"] = score
 d["quality_gate"]["quality_gate_status"] = "failed"
 d["quality_gate"]["fail_code"] = "failed_quality_gate"

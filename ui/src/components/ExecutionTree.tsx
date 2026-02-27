@@ -18,19 +18,22 @@ const PHASES = [
   { id: "synthesize",label: "Synthesize",desc: "Report generation" },
 ];
 
-type PhaseStatus = "done" | "active" | "pending";
+type PhaseStatus = "done" | "active" | "pending" | "failed";
+
+function isTerminalStatus(status: string): boolean {
+  return status === "done" || status === "cancelled" || status === "abandoned" || status.startsWith("failed");
+}
 
 function getPhaseStatus(phaseId: string, currentPhase: string, projectStatus: string): PhaseStatus {
   if (projectStatus === "done") return "done";
-  if (projectStatus === "failed") {
-    const currentIdx = PHASES.findIndex((p) => p.id === currentPhase);
-    const phaseIdx = PHASES.findIndex((p) => p.id === phaseId);
-    if (phaseIdx < currentIdx) return "done";
-    if (phaseIdx === currentIdx) return "done";
-    return "pending";
-  }
+  const isFailed = isTerminalStatus(projectStatus) && projectStatus !== "done";
   const currentIdx = PHASES.findIndex((p) => p.id === currentPhase);
   const phaseIdx = PHASES.findIndex((p) => p.id === phaseId);
+  if (isFailed) {
+    if (phaseIdx < currentIdx) return "done";
+    if (phaseIdx === currentIdx) return "failed";
+    return "pending";
+  }
   if (phaseIdx < currentIdx) return "done";
   if (phaseIdx === currentIdx) return "active";
   return "pending";
@@ -39,6 +42,7 @@ function getPhaseStatus(phaseId: string, currentPhase: string, projectStatus: st
 const phaseColors: Record<PhaseStatus, { node: string; text: string; connector: string }> = {
   done:    { node: "bg-emerald-500/20 border-emerald-500/50 text-emerald-400",    text: "text-emerald-400",    connector: "bg-emerald-500/40" },
   active:  { node: "bg-blue-500/20 border-blue-500/70 text-blue-300",             text: "text-blue-300",       connector: "bg-[var(--tron-border)]" },
+  failed:  { node: "bg-red-500/20 border-red-500/50 text-red-400",                text: "text-red-400",        connector: "bg-red-500/30" },
   pending: { node: "bg-[var(--tron-panel-hover)] border-[var(--tron-border)] text-[var(--tron-text-dim)]", text: "text-[var(--tron-text-dim)]", connector: "bg-[var(--tron-border)]" },
 };
 
@@ -68,6 +72,11 @@ export function ExecutionTree({
                     <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="2,6 5,9 10,3" />
                     </svg>
+                  ) : phaseStatus === "failed" ? (
+                    <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <line x1="3" y1="3" x2="9" y2="9" />
+                      <line x1="9" y1="3" x2="3" y2="9" />
+                    </svg>
                   ) : phaseStatus === "active" ? (
                     <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
                   ) : (
@@ -94,6 +103,12 @@ export function ExecutionTree({
                     <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded"
                       style={{ background: "rgba(68,117,243,0.15)", color: "var(--tron-accent)" }}>
                       ACTIVE
+                    </span>
+                  )}
+                  {phaseStatus === "failed" && (
+                    <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded"
+                      style={{ background: "rgba(239,68,68,0.15)", color: "rgb(248,113,113)" }}>
+                      FAILED
                     </span>
                   )}
                 </div>

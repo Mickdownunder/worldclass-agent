@@ -11,6 +11,12 @@ from datetime import datetime, timezone
 def advance(proj_dir: Path, new_phase: str) -> None:
     p = proj_dir / "project.json"
     d = json.loads(p.read_text())
+
+    # Never advance a project with a terminal status
+    status = d.get("status", "")
+    if status.startswith("failed") or status in ("cancelled", "abandoned"):
+        return
+
     now = datetime.now(timezone.utc)
     now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
