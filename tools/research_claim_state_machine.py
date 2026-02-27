@@ -96,6 +96,11 @@ def upgrade_claim_to_ledger_entry(c: dict, version: int = 1) -> dict:
     state = (c.get("state") or "").strip().lower()
     if state not in VALID_STATES:
         state = "evidenced" if c.get("is_verified") else "proposed"
+    vtier = (c.get("verification_tier") or "UNVERIFIED").strip().upper()
+    tier_confidence_map = {"TIER1": 0.9, "TIER2": 0.7, "TIER3": 0.5}
+    settlement_confidence = c.get("settlement_confidence") or tier_confidence_map.get(vtier, 0.5)
+    p_true = c.get("p_true") or c.get("confidence") or tier_confidence_map.get(vtier, 0.5)
+
     out = {
         "claim_id": claim_id,
         "claim_version": version,
@@ -103,9 +108,16 @@ def upgrade_claim_to_ledger_entry(c: dict, version: int = 1) -> dict:
         "text": (c.get("text") or c.get("claim") or "").strip(),
         "supporting_source_ids": c.get("supporting_source_ids", []),
         "is_verified": bool(c.get("is_verified")),
-        "verification_tier": (c.get("verification_tier") or "UNVERIFIED").strip(),
+        "verification_tier": vtier,
         "verification_reason": (c.get("verification_reason") or "").strip(),
         "state": state,
+        "outcome_type": c.get("outcome_type", "binary"),
+        "claim_type": c.get("claim_type") or c.get("outcome_type", "binary"),
+        "resolution_authority": c.get("resolution_authority", "internal_auditor"),
+        "resolution_method": c.get("resolution_method", "event"),
+        "settlement_confidence": float(settlement_confidence),
+        "audit_trace_required": c.get("audit_trace_required", False),
+        "p_true": float(p_true),
         "tentative_ttl": c.get("tentative_ttl", 3),
         "tentative_cycles_used": c.get("tentative_cycles_used", 0),
         "retire_reason": c.get("retire_reason"),
@@ -161,7 +173,7 @@ def can_transition(current_state: str, new_state: str, claim: dict) -> tuple[boo
 
     allowed_transitions = {
         "proposed": {"evidenced"},
-        "evidenced": {"attacked", "stable"},
+        "evidenced": {"attacked"},
         "attacked": {"defended", "falsified"},
         "defended": {"stable", "attacked"},
         "stable": {"decaying", "contested"},

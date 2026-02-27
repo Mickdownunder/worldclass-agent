@@ -30,7 +30,21 @@ def run_portfolio_scoring(project_id: str) -> dict:
     if claims:
         evidence_density = min(1.0, round(total_sources / (len(claims) * 5), 4))  # cap at 5 sources/claim
     flood_penalty = max(0, evidence_density - 0.8) * 0.2  # penalty if > 80% density
-    duplicate_penalty = 0.0  # TODO: semantic duplicate detection
+    duplicate_penalty = 0.0
+    if len(claims) >= 2:
+        scopes = [json.dumps(c.get("claim_scope") or {}, sort_keys=True) for c in claims]
+        texts = [(c.get("text") or "").lower().split() for c in claims]
+        dup_pairs = 0
+        for i in range(len(claims)):
+            for j in range(i + 1, len(claims)):
+                if scopes[i] == scopes[j] and scopes[i] != "{}":
+                    words_i, words_j = set(texts[i]), set(texts[j])
+                    if words_i and words_j:
+                        overlap = len(words_i & words_j) / max(len(words_i | words_j), 1)
+                        if overlap >= 0.5:
+                            dup_pairs += 1
+        if dup_pairs > 0:
+            duplicate_penalty = min(0.3, dup_pairs * 0.05)
     score = max(0, 1.0 - flood_penalty - duplicate_penalty)
     state = {
         "evidence_density": evidence_density,

@@ -195,10 +195,8 @@ def append_episode_metrics(project_id: str, record: dict | None = None, **kwargs
     if record is None:
         record = compute_episode_metrics(project_id, **kwargs)
     line = json.dumps(record, ensure_ascii=False) + "\n"
-    if path.exists():
-        path.write_text(path.read_text(encoding="utf-8") + line, encoding="utf-8")
-    else:
-        path.write_text(line, encoding="utf-8")
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(line)
     audit_log(proj_path, "aem_episode_metrics_append", {"ig": record.get("ig"), "ig_per_token": record.get("ig_per_token")})
     return record
 

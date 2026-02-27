@@ -27,7 +27,8 @@ from . import search as search_module
 from . import outcomes as outcomes_module
 from . import source_credibility as source_credibility_module
 
-DB_PATH = Path.home() / "operator" / "memory" / "operator.db"
+import os as _os
+DB_PATH = Path(_os.environ.get("OPERATOR_ROOT", str(Path.home() / "operator"))) / "memory" / "operator.db"
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIM = 1536
 

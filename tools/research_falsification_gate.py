@@ -123,6 +123,15 @@ def run_falsification_gate(project_id: str) -> dict:
         c["failure_boundary"] = failure_boundary
         if outcome == "PASS_TENTATIVE":
             c["tentative_cycles_used"] = tentative_cycles + 1
+            ttl = c.get("tentative_ttl", 3)
+            c["tentative_ttl"] = max(0, ttl - 1)
+            if c["tentative_ttl"] == 0 and outcome != "FAIL":
+                outcome = "FAIL"
+                failure_boundary["reason"] = "tentative_ttl_expired"
+                failure_boundary["threshold_exceeded"] = True
+                c["falsification_status"] = outcome
+                stats["PASS_TENTATIVE"] = stats.get("PASS_TENTATIVE", 0) - 1
+                stats["FAIL"] = stats.get("FAIL", 0) + 1
         c["last_updated"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         updated.append(c)
     if updated:
