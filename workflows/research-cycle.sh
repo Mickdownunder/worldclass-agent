@@ -31,7 +31,7 @@ POLICY="$OPERATOR_ROOT/conf/policy.env"
 export GEMINI_API_KEY="${GEMINI_API_KEY:-}"
 export RESEARCH_SYNTHESIS_MODEL="${RESEARCH_SYNTHESIS_MODEL:-gemini-3.1-pro-preview}"
 export RESEARCH_CRITIQUE_MODEL="${RESEARCH_CRITIQUE_MODEL:-gpt-5.2}"
-export RESEARCH_VERIFY_MODEL="${RESEARCH_VERIFY_MODEL:-gpt-5.2}"
+export RESEARCH_VERIFY_MODEL="${RESEARCH_VERIFY_MODEL:-gemini-3.1-pro-preview}"
 
 # Don't send LLM API traffic through HTTP_PROXY (prevents 403 from proxy)
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}api.openai.com,openai.com,generativelanguage.googleapis.com"
