@@ -89,23 +89,25 @@ body {{
 }}
 
 /* ===== COVER ===== */
-.cover {{ width: 210mm; height: 297mm; position: relative; overflow: hidden; page-break-after: always; }}
-.cover-bg {{ position: absolute; inset: 0; background: linear-gradient(155deg, {_N} 0%, #162557 45%, {_AD} 100%); }}
-.cover-dots {{ position: absolute; inset: 0; opacity: 0.03;
-  background-image: radial-gradient(circle at 20% 30%, white 1px, transparent 1px), radial-gradient(circle at 80% 70%, white 1px, transparent 1px);
-  background-size: 36px 36px; }}
-.cover-bar {{ position: absolute; top: 0; left: 0; width: 5px; height: 100%; background: linear-gradient(180deg, {_A} 0%, #818CF8 50%, #A78BFA 100%); }}
-.cover-inner {{ position: relative; z-index: 2; padding: 3cm 2.2cm 1.8cm 2.5cm; color: white; height: 100%; display: flex; flex-direction: column; }}
-.cover-tag {{ display: inline-block; padding: 4px 14px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.18); border-radius: 16px; font-size: 7pt; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.8); margin-bottom: 1.5cm; }}
-.cover-title {{ font-size: 26pt; font-weight: 800; line-height: 1.1; letter-spacing: -0.02em; margin-bottom: 0.6cm; max-width: 92%; }}
-.cover-question {{ font-size: 11pt; line-height: 1.5; color: rgba(255,255,255,0.7); max-width: 85%; font-style: italic; margin-bottom: auto; }}
-.cover-grid {{ display: flex; gap: 0.8cm; margin-top: 1cm; padding-top: 0.7cm; border-top: 1px solid rgba(255,255,255,0.1); }}
-.cover-cell {{ flex: 1; }}
+.cover {{
+  width: 210mm; height: 297mm;
+  background: linear-gradient(155deg, {_N} 0%, #162557 45%, {_AD} 100%);
+  page-break-after: always;
+  padding: 3cm 2.2cm 1.8cm 2.5cm;
+  color: white;
+  border-left: 5px solid {_A};
+}}
+.cover-tag {{ display: inline-block; padding: 4px 14px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.18); border-radius: 16px; font-size: 7pt; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.8); margin-bottom: 1.2cm; }}
+.cover-title {{ font-size: 22pt; font-weight: 800; line-height: 1.15; letter-spacing: -0.02em; margin-bottom: 0.5cm; }}
+.cover-question {{ font-size: 10pt; line-height: 1.5; color: rgba(255,255,255,0.7); font-style: italic; margin-bottom: 2cm; }}
+.cover-grid {{ margin-top: 0.8cm; padding-top: 0.6cm; border-top: 1px solid rgba(255,255,255,0.12); }}
+.cover-grid table {{ width: 100%; border-collapse: collapse; }}
+.cover-grid td {{ padding: 4px 8px; vertical-align: top; text-align: center; }}
 .cover-lbl {{ font-size: 6pt; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: rgba(255,255,255,0.4); margin-bottom: 2px; }}
 .cover-val {{ font-size: 10pt; font-weight: 700; color: rgba(255,255,255,0.9); }}
-.cover-foot {{ margin-top: 0.7cm; padding-top: 0.5cm; border-top: 1px solid rgba(255,255,255,0.07); display: flex; justify-content: space-between; align-items: center; }}
-.cover-brand {{ font-size: 8pt; font-weight: 800; letter-spacing: 0.12em; color: rgba(255,255,255,0.55); }}
-.cover-date {{ font-size: 7.5pt; color: rgba(255,255,255,0.35); }}
+.cover-foot {{ margin-top: 0.6cm; padding-top: 0.4cm; border-top: 1px solid rgba(255,255,255,0.08); }}
+.cover-brand {{ font-size: 8pt; font-weight: 800; letter-spacing: 0.12em; color: rgba(255,255,255,0.55); display: inline-block; }}
+.cover-date {{ font-size: 7.5pt; color: rgba(255,255,255,0.35); float: right; }}
 
 /* ===== SECTION HEADERS ===== */
 .sh {{ page: content; font-size: 13pt; font-weight: 800; color: {_N}; margin: 1.4em 0 0.5em; padding-bottom: 0.25em; border-bottom: 2px solid {_A}; display: flex; align-items: center; }}
@@ -113,8 +115,9 @@ body {{
 .sh-sub {{ page: content; font-size: 9pt; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: {_TL}; margin: 1.2em 0 0.4em; }}
 
 /* ===== OUTCOME LAYER ===== */
-.epi-snap {{ page: content; display: flex; gap: 10px; margin: 0.8em 0 1em; }}
-.epi-card {{ flex: 1; border-radius: 8px; padding: 12px 14px; text-align: center; border: 1px solid; }}
+.epi-snap {{ page: content; margin: 0.8em 0 1em; }}
+.epi-snap table {{ width: 100%; border-collapse: separate; border-spacing: 8px 0; }}
+.epi-card {{ border-radius: 8px; padding: 10px 12px; text-align: center; border: 1px solid; }}
 .epi-card .ev {{ font-size: 20pt; font-weight: 800; line-height: 1.1; }}
 .epi-card .el {{ font-size: 6.5pt; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: {_TL}; margin-top: 3px; }}
 .epi-stable   {{ background: {STATE_BG[STATE_STABLE]};    border-color: {_G}; }}
@@ -127,8 +130,10 @@ body {{
 .epi-unresolved .ev {{ color: {_P}; }}
 
 .conclusion-card {{ page: content; background: white; border: 1px solid {_BD}; border-left: 4px solid; border-radius: 0 8px 8px 0; padding: 10px 14px; margin: 0.4em 0; page-break-inside: avoid; }}
-.cc-row {{ display: flex; justify-content: space-between; align-items: flex-start; }}
-.cc-text {{ font-size: 9.5pt; font-weight: 600; color: {_N}; flex: 1; padding-right: 10px; line-height: 1.4; }}
+.cc-row {{ width: 100%; }}
+.cc-row table {{ width: 100%; border-collapse: collapse; }}
+.cc-row table td {{ padding: 0; vertical-align: top; }}
+.cc-text {{ font-size: 9pt; font-weight: 600; color: {_N}; padding-right: 10px; line-height: 1.4; }}
 .badge {{ display: inline-block; padding: 2px 9px; border-radius: 10px; font-size: 6.5pt; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }}
 .b-stable {{ background: {STATE_BG[STATE_STABLE]}; color: {_G}; border: 1px solid {_G}; }}
 .b-tentative {{ background: {STATE_BG[STATE_TENTATIVE]}; color: {_Y}; border: 1px solid {_Y}; }}
@@ -143,25 +148,25 @@ body {{
 .cc-rel {{ font-size: 7.5pt; color: {_TL}; margin-top: 4px; font-style: italic; }}
 
 /* ===== CLAIM STATE MAP TABLE ===== */
-.csm {{ page: content; width: 100%; border-collapse: collapse; margin: 0.6em 0 1em; font-size: 8pt; }}
-.csm th {{ background: {_N}; color: white; font-weight: 700; font-size: 6.5pt; letter-spacing: 0.06em; text-transform: uppercase; padding: 7px 8px; text-align: left; }}
-.csm td {{ padding: 7px 8px; border-bottom: 1px solid {_BD}; vertical-align: top; }}
+.csm {{ page: content; width: 100%; border-collapse: collapse; margin: 0.6em 0 1em; font-size: 7.5pt; }}
+.csm th {{ background: {_N}; color: white; font-weight: 700; font-size: 6pt; letter-spacing: 0.06em; text-transform: uppercase; padding: 5px 6px; text-align: left; }}
+.csm td {{ padding: 5px 6px; border-bottom: 1px solid {_BD}; vertical-align: top; word-wrap: break-word; }}
 .csm tr:nth-child(even) td {{ background: {_BG}; }}
-.csm .claim-col {{ max-width: 200px; font-weight: 500; }}
+.csm .claim-col {{ width: 35%; font-weight: 500; font-size: 7pt; line-height: 1.35; }}
 .state-dot {{ display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }}
 .conf-bar {{ display: inline-block; height: 5px; border-radius: 3px; vertical-align: middle; }}
 .conf-bg {{ display: inline-block; width: 50px; height: 5px; background: {_BD}; border-radius: 3px; vertical-align: middle; }}
 
 /* ===== BELIEF TRAJECTORY ===== */
-.traj-row {{ page: content; display: flex; gap: 0; margin: 0.5em 0; page-break-inside: avoid; }}
-.traj-step {{ flex: 1; padding: 8px 10px; font-size: 7.5pt; text-align: center; position: relative; }}
-.traj-step .ts-label {{ font-weight: 700; color: {_N}; margin-bottom: 2px; font-size: 7pt; letter-spacing: 0.06em; text-transform: uppercase; }}
-.traj-step .ts-val {{ font-size: 8pt; color: {_S}; }}
-.traj-arrow {{ flex: 0 0 20px; display: flex; align-items: center; justify-content: center; font-size: 10pt; color: {_TL}; }}
+.traj-wrap {{ page: content; width: 100%; border-collapse: collapse; margin: 0.5em 0 1em; font-size: 7pt; }}
+.traj-wrap th {{ background: {_N}; color: white; font-weight: 700; font-size: 6pt; letter-spacing: 0.06em; text-transform: uppercase; padding: 5px 6px; text-align: left; }}
+.traj-wrap td {{ padding: 5px 6px; border-bottom: 1px solid {_BD}; vertical-align: middle; font-size: 7pt; }}
+.traj-wrap tr:nth-child(even) td {{ background: {_BG}; }}
+.traj-flow {{ font-size: 7pt; color: {_S}; white-space: nowrap; }}
 
 /* ===== EVIDENCE CLUSTER ===== */
 .ev-cluster {{ page: content; border: 1px solid {_BD}; border-radius: 8px; padding: 12px 14px; margin: 0.5em 0; page-break-inside: avoid; }}
-.ev-cluster-hdr {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }}
+.ev-cluster-hdr {{ margin-bottom: 8px; }}
 .ev-cluster-title {{ font-size: 9pt; font-weight: 700; color: {_N}; }}
 .ev-cluster-count {{ font-size: 7.5pt; color: {_TL}; }}
 .ev-cluster ul {{ list-style: none; padding: 0; margin: 0; }}
@@ -192,13 +197,15 @@ body {{
 .insight-text {{ font-size: 9pt; color: {_S}; line-height: 1.5; }}
 
 /* ===== ACTION CARDS ===== */
-.action-card {{ page: content; background: white; border: 1px solid {_BD}; border-radius: 8px; padding: 10px 14px; margin: 0.4em 0; page-break-inside: avoid; display: flex; gap: 10px; align-items: flex-start; }}
-.action-icon {{ flex: 0 0 24px; height: 24px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 8pt; font-weight: 800; color: white; }}
+.action-card {{ page: content; background: white; border: 1px solid {_BD}; border-radius: 8px; padding: 10px 14px; margin: 0.4em 0; page-break-inside: avoid; }}
+.action-card table {{ width: 100%; border-collapse: collapse; }}
+.action-card table td {{ padding: 0; vertical-align: top; }}
+.action-icon {{ width: 24px; height: 24px; border-radius: 6px; font-size: 8pt; font-weight: 800; color: white; text-align: center; line-height: 24px; }}
 .action-monitor {{ background: {_P}; }}
 .action-retrieve {{ background: {_A}; }}
 .action-decide {{ background: {_G}; }}
 .action-forecast {{ background: {_O}; }}
-.action-body {{ flex: 1; }}
+.action-body {{ padding-left: 10px; }}
 .action-body .ab-type {{ font-size: 6.5pt; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: {_TL}; margin-bottom: 2px; }}
 .action-body .ab-text {{ font-size: 8.5pt; color: {_S}; line-height: 1.4; }}
 
@@ -355,7 +362,15 @@ def _extract_exec_summary(md):
 
 
 def _extract_conclusion(md):
-    return _extract_section(md, r"##\s*\d*\.?\s*(?:Conclusion|Thesis).*?\n+(.*?)(?=\n---|\n##|\Z)")
+    for pat in [
+        r"##\s*\d*\.?\s*(?:Conclusion|Thesis|Fazit|Zusammenfassung).*?\n+(.*?)(?=\n---|\n##|\Z)",
+        r"##\s*\d*\.?\s*(?:Key\s+Findings).*?\n+(.*?)(?=\n---|\n##)",
+        r"##\s*\d*\.?\s*(?:Executive\s+Summary).*?\n+(.*?)(?=\n---|\n##)",
+    ]:
+        result = _extract_section(md, pat)
+        if result and len(result) > 50:
+            return result
+    return ""
 
 
 def _extract_bullet_items(md, section_pattern):
@@ -393,24 +408,23 @@ def _sh(n, text):
 
 
 def _build_cover(title, question, status, sources, duration, cost, date, project_id, epi_counts):
-    epi_str = f"{epi_counts.get('stable',0)} stable · {epi_counts.get('tentative',0)} tentative · {epi_counts.get('contested',0)} contested"
+    epi_str = f"{epi_counts.get('stable',0)} stable &middot; {epi_counts.get('tentative',0)} tentative &middot; {epi_counts.get('contested',0)} contested"
     return f"""<div class="cover">
-  <div class="cover-bg"></div><div class="cover-dots"></div><div class="cover-bar"></div>
-  <div class="cover-inner">
-    <div class="cover-tag">Intelligence Artifact · AEM</div>
-    <div class="cover-title">{_esc(title)}</div>
-    <div class="cover-question">{_esc(question)}</div>
-    <div class="cover-grid">
-      <div class="cover-cell"><div class="cover-lbl">Status</div><div class="cover-val">{_esc(status)}</div></div>
-      <div class="cover-cell"><div class="cover-lbl">Epistemic State</div><div class="cover-val">{_esc(epi_str)}</div></div>
-      <div class="cover-cell"><div class="cover-lbl">Sources</div><div class="cover-val">{sources}</div></div>
-      <div class="cover-cell"><div class="cover-lbl">Duration</div><div class="cover-val">{_esc(duration)}</div></div>
-      <div class="cover-cell"><div class="cover-lbl">Cost</div><div class="cover-val">{cost}</div></div>
-    </div>
-    <div class="cover-foot">
-      <div class="cover-brand">OPENCLAW OPERATOR</div>
-      <div class="cover-date">{date}</div>
-    </div>
+  <div class="cover-tag">Intelligence Artifact &middot; AEM</div>
+  <div class="cover-title">{_esc(title)}</div>
+  <div class="cover-question">{_esc(question)}</div>
+  <div class="cover-grid">
+    <table><tr>
+      <td><div class="cover-lbl">Status</div><div class="cover-val">{_esc(status)}</div></td>
+      <td><div class="cover-lbl">Epistemic State</div><div class="cover-val">{epi_str}</div></td>
+      <td><div class="cover-lbl">Sources</div><div class="cover-val">{sources}</div></td>
+      <td><div class="cover-lbl">Duration</div><div class="cover-val">{_esc(duration)}</div></td>
+      <td><div class="cover-lbl">Cost</div><div class="cover-val">{cost}</div></td>
+    </tr></table>
+  </div>
+  <div class="cover-foot">
+    <span class="cover-brand">OPENCLAW OPERATOR</span>
+    <span class="cover-date">{date}</span>
   </div>
 </div>
 <div class="proj-label">{_esc(project_id)}</div>"""
@@ -419,13 +433,13 @@ def _build_cover(title, question, status, sources, duration, cost, date, project
 def _build_outcome_layer(enriched_claims, exec_summary, epi_counts):
     import markdown as _mk
 
-    # Epistemic snapshot cards
-    snap = f"""<div class="epi-snap">
-  <div class="epi-card epi-stable"><div class="ev">{epi_counts.get('stable',0)}</div><div class="el">Stable Claims</div></div>
-  <div class="epi-card epi-tentative"><div class="ev">{epi_counts.get('tentative',0)}</div><div class="el">Tentative Claims</div></div>
-  <div class="epi-card epi-contested"><div class="ev">{epi_counts.get('contested',0)}</div><div class="el">Contested Claims</div></div>
-  <div class="epi-card epi-unresolved"><div class="ev">{epi_counts.get('unresolved',0)}</div><div class="el">Unresolved Questions</div></div>
-</div>"""
+    # Epistemic snapshot cards (table-based for WeasyPrint)
+    snap = f"""<div class="epi-snap"><table><tr>
+  <td><div class="epi-card epi-stable"><div class="ev">{epi_counts.get('stable',0)}</div><div class="el">Stable</div></div></td>
+  <td><div class="epi-card epi-tentative"><div class="ev">{epi_counts.get('tentative',0)}</div><div class="el">Tentative</div></div></td>
+  <td><div class="epi-card epi-contested"><div class="ev">{epi_counts.get('contested',0)}</div><div class="el">Contested</div></div></td>
+  <td><div class="epi-card epi-unresolved"><div class="ev">{epi_counts.get('unresolved',0)}</div><div class="el">Unresolved</div></div></td>
+</tr></table></div>"""
 
     # Top conclusions with confidence
     cards = []
@@ -435,10 +449,10 @@ def _build_outcome_layer(enriched_claims, exec_summary, epi_counts):
         color = STATE_COLORS.get(state, _TL)
         relevance = "Decision-relevant" if ec["confidence"] >= 0.9 else ("Context-relevant" if ec["confidence"] >= 0.7 else "Needs validation")
         cards.append(f"""<div class="conclusion-card" style="border-left-color:{color};">
-  <div class="cc-row">
-    <div class="cc-text">{_esc(ec['text'][:200])}</div>
-    <span class="badge b-{state}">{state}</span>
-  </div>
+  <div class="cc-row"><table><tr>
+    <td class="cc-text">{_esc(ec['text'][:200])}</td>
+    <td style="width:80px;text-align:right;"><span class="badge b-{state}">{state}</span></td>
+  </tr></table></div>
   <div class="cc-rel"><span class="badge {conf_cls}">{conf_lbl} confidence</span> &nbsp; {_esc(relevance)}</div>
 </div>""")
 
@@ -486,35 +500,24 @@ def _build_belief_trajectory(enriched_claims, phase_history):
     if not enriched_claims:
         return '<p class="empty-note">No belief trajectory data.</p>'
 
-    phases_display = {
-        "focus": ("Focus", "Question scoping"),
-        "connect": ("Connect", "Source discovery"),
-        "verify": ("Verify", "Claim testing"),
-        "synthesize": ("Synthesize", "Report generation"),
-        "done": ("Done", "Final state"),
-    }
-
     rows = []
-    for ec in enriched_claims[:4]:
+    for ec in enriched_claims[:5]:
         state = ec["state"]
         color = STATE_COLORS.get(state, _TL)
+        bg = STATE_BG.get(state, _BG)
         n_src = len(ec.get("sources", []))
-        steps = []
-        steps.append(f'<div class="traj-step"><div class="ts-label">Initial</div><div class="ts-val">Hypothesis</div></div>')
-        steps.append(f'<div class="traj-arrow">→</div>')
-        steps.append(f'<div class="traj-step"><div class="ts-label">Evidence</div><div class="ts-val">{n_src} sources found</div></div>')
-        steps.append(f'<div class="traj-arrow">→</div>')
-        if ec.get("counter") and ec["counter"] != "—":
-            steps.append(f'<div class="traj-step" style="background:#FEF2F2;border-radius:4px;"><div class="ts-label">Challenge</div><div class="ts-val">{_esc(ec["counter"][:40])}</div></div>')
-            steps.append(f'<div class="traj-arrow">→</div>')
-        steps.append(f'<div class="traj-step"><div class="ts-label">Verification</div><div class="ts-val">{"Passed" if ec.get("verified") else "Failed"}</div></div>')
-        steps.append(f'<div class="traj-arrow">→</div>')
-        steps.append(f'<div class="traj-step" style="background:{STATE_BG.get(state, _BG)};border-radius:4px;border:1px solid {color};"><div class="ts-label">State</div><div class="ts-val" style="color:{color};font-weight:700;">{state.upper()}</div></div>')
+        ver = "Pass" if ec.get("verified") else "Fail"
+        flow = f'Hypothesis &rarr; {n_src} sources &rarr; {ver} &rarr; <strong style="color:{color};">{state.upper()}</strong>'
+        rows.append(f"""<tr>
+  <td style="width:55%;">{_esc(ec['text'][:100])}</td>
+  <td class="traj-flow">{flow}</td>
+  <td style="text-align:center;"><span class="badge b-{state}">{state}</span></td>
+</tr>""")
 
-        rows.append(f"""<div style="margin:0.6em 0;font-size:7.5pt;font-weight:600;color:{_N};">{_esc(ec['text'][:100])}...</div>
-<div class="traj-row">{"".join(steps)}</div>""")
-
-    return "\n".join(rows)
+    return f"""<table class="traj-wrap">
+  <tr><th>Claim</th><th>Trajectory</th><th>State</th></tr>
+  {"".join(rows)}
+</table>"""
 
 
 def _build_evidence_landscape(source_reliability):
@@ -530,7 +533,7 @@ def _build_evidence_landscape(source_reliability):
             return ""
         lis = "".join(f'<li>{_esc(domain)} ({int(s.get("reliability_score",0)*100)}%)</li>' for s, domain in items[:8])
         return f"""<div class="ev-cluster {cls}">
-  <div class="ev-cluster-hdr"><div class="ev-cluster-title">{label}</div><div class="ev-cluster-count">{len(items)} sources</div></div>
+  <div class="ev-cluster-hdr"><span class="ev-cluster-title">{label}</span> <span class="ev-cluster-count">({len(items)} sources)</span></div>
   <ul>{lis}</ul>
 </div>"""
 
@@ -542,12 +545,11 @@ def _build_evidence_landscape(source_reliability):
     )
 
 
-def _build_disagreement_layer(gaps):
-    if not gaps:
-        return '<p class="empty-note">No disagreements or contradictions identified.</p>'
-
+def _build_disagreement_layer(gaps, enriched_claims=None):
     rows = []
-    for title, desc in gaps:
+
+    # From markdown gaps
+    for title, desc in (gaps or []):
         pos_a = desc if desc else title
         pos_b = "Insufficient data to establish counter-position"
         resolution = "Additional primary sources required"
@@ -556,66 +558,104 @@ def _build_disagreement_layer(gaps):
         elif "unavailable" in desc.lower() or "lacking" in desc.lower():
             resolution = "Data collection / FOIA / financial disclosure"
         rows.append(f"""<tr>
-  <td><strong>{_esc(title)}</strong></td>
-  <td style="font-size:7.5pt;">{_esc(pos_a[:120])}</td>
-  <td style="font-size:7.5pt;">{_esc(pos_b)}</td>
-  <td style="font-size:7.5pt;">{_esc(resolution)}</td>
+  <td><strong>{_esc(title[:80])}</strong></td>
+  <td style="font-size:7pt;">{_esc(pos_a[:100])}</td>
+  <td style="font-size:7pt;">{_esc(pos_b)}</td>
+  <td style="font-size:7pt;">{_esc(resolution)}</td>
 </tr>""")
+
+    # From contested claims (enriched)
+    for ec in (enriched_claims or []):
+        if ec.get("state") != STATE_CONTESTED:
+            continue
+        text_short = ec["text"][:80]
+        rows.append(f"""<tr>
+  <td><strong>{_esc(text_short)}</strong></td>
+  <td style="font-size:7pt;">Claim not verified ({int(ec['confidence']*100)}% conf, {len(ec.get('sources',[]))} source(s))</td>
+  <td style="font-size:7pt;">Requires independent corroboration</td>
+  <td style="font-size:7pt;">{_esc(ec.get('failure_boundary','—'))}</td>
+</tr>""")
+
+    if not rows:
+        return '<p class="empty-note">No disagreements or contradictions identified.</p>'
 
     return f"""<table class="dis-table">
   <tr><th>Topic</th><th>Position A</th><th>Position B</th><th>Resolution Condition</th></tr>
-  {"".join(rows)}
+  {"".join(rows[:6])}
 </table>"""
 
 
 def _build_insight_layer(conclusion, key_findings, weaknesses):
+    def _clean_md(text):
+        """Strip markdown bold/italic syntax for clean display."""
+        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+        text = re.sub(r'\*(.+?)\*', r'\1', text)
+        text = re.sub(r'_(.+?)_', r'\1', text)
+        return text.strip()
+
     structural = ""
-    pattern = ""
+    pattern_ins = ""
     decision = ""
 
-    if conclusion:
-        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', conclusion) if s.strip()]
-        structural = sentences[0] if len(sentences) > 0 else ""
-        pattern = sentences[1] if len(sentences) > 1 else ""
-        decision = sentences[-1] if len(sentences) > 2 else ""
+    # Try key findings first (most structured)
+    if key_findings and len(key_findings) >= 1:
+        kf = key_findings[0]
+        structural = _clean_md(f"{kf[0]}: {kf[1]}" if kf[1] else kf[0])
+    if key_findings and len(key_findings) >= 2:
+        kf = key_findings[1]
+        pattern_ins = _clean_md(f"{kf[0]}: {kf[1]}" if kf[1] else kf[0])
 
-    if not structural and key_findings:
-        structural = key_findings[0][1] if key_findings[0][1] else key_findings[0][0]
-    if not pattern and len(key_findings) > 1:
-        pattern = key_findings[1][1] if key_findings[1][1] else key_findings[1][0]
-    if not decision and weaknesses:
-        decision = f"Key gap: {weaknesses[0]}"
+    # Fallback to conclusion sentences
+    if not structural and conclusion:
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', _clean_md(conclusion)) if s.strip() and len(s) > 20]
+        structural = sentences[0] if len(sentences) > 0 else ""
+        if not pattern_ins:
+            pattern_ins = sentences[1] if len(sentences) > 1 else ""
+
+    # Decision insight from weaknesses
+    if weaknesses:
+        decision = f"Key gap: {_clean_md(weaknesses[0])}"
+    elif conclusion:
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', _clean_md(conclusion)) if s.strip() and len(s) > 20]
+        decision = sentences[-1] if len(sentences) > 2 else ""
 
     cards = []
     if structural:
-        cards.append(f'<div class="insight-card insight-structural"><div class="insight-type">Structural Insight</div><div class="insight-text">{_esc(structural)}</div></div>')
-    if pattern:
-        cards.append(f'<div class="insight-card insight-pattern"><div class="insight-type">Pattern Insight</div><div class="insight-text">{_esc(pattern)}</div></div>')
+        cards.append(f'<div class="insight-card insight-structural"><div class="insight-type">Structural Insight</div><div class="insight-text">{_esc(structural[:300])}</div></div>')
+    if pattern_ins:
+        cards.append(f'<div class="insight-card insight-pattern"><div class="insight-type">Pattern Insight</div><div class="insight-text">{_esc(pattern_ins[:300])}</div></div>')
     if decision:
-        cards.append(f'<div class="insight-card insight-decision"><div class="insight-type">Decision Insight</div><div class="insight-text">{_esc(decision)}</div></div>')
+        cards.append(f'<div class="insight-card insight-decision"><div class="insight-type">Decision Insight</div><div class="insight-text">{_esc(decision[:300])}</div></div>')
 
     return "\n".join(cards) or '<p class="empty-note">No insights derived.</p>'
 
 
 def _build_action_layer(next_steps, suggestions, weaknesses):
+    def _strip_md(t):
+        t = re.sub(r'\*\*(.+?)\*\*', r'\1', t)
+        t = re.sub(r'\*(.+?)\*', r'\1', t)
+        return t.strip()
+
     actions = []
 
     # Monitoring triggers from weaknesses
     for w in weaknesses[:2]:
-        actions.append(("monitor", "Monitoring Trigger", w))
+        actions.append(("monitor", "Monitoring Trigger", _strip_md(w)))
 
     # Next retrieval from suggestions
     for s in suggestions[:2]:
-        actions.append(("retrieve", "Next Retrieval", s))
+        actions.append(("retrieve", "Next Retrieval", _strip_md(s)))
 
     # Decision implications from next_steps
     for title, desc in next_steps[:2]:
-        actions.append(("decide", "Decision Implication", f"{title}: {desc}" if desc else title))
+        text = _strip_md(f"{title}: {desc}" if desc else title)
+        actions.append(("decide", "Decision Implication", text))
 
     # Forecast from remaining
     if len(next_steps) > 2:
         for title, desc in next_steps[2:4]:
-            actions.append(("forecast", "Forecast Item", f"{title}: {desc}" if desc else title))
+            text = _strip_md(f"{title}: {desc}" if desc else title)
+            actions.append(("forecast", "Forecast Item", text))
 
     if not actions:
         return '<p class="empty-note">No actions derived.</p>'
@@ -624,10 +664,10 @@ def _build_action_layer(next_steps, suggestions, weaknesses):
     cards = []
     for kind, label, text in actions:
         icon_letter, icon_cls = icons.get(kind, ("?", "action-monitor"))
-        cards.append(f"""<div class="action-card">
-  <div class="action-icon {icon_cls}">{icon_letter}</div>
-  <div class="action-body"><div class="ab-type">{label}</div><div class="ab-text">{_esc(text)}</div></div>
-</div>""")
+        cards.append(f"""<div class="action-card"><table><tr>
+  <td style="width:30px;"><div class="action-icon {icon_cls}">{icon_letter}</div></td>
+  <td><div class="action-body"><div class="ab-type">{label}</div><div class="ab-text">{_esc(text[:250])}</div></div></td>
+</tr></table></div>""")
 
     return "\n".join(cards)
 
@@ -846,7 +886,7 @@ def main() -> int:
 
 <!-- 5. DISAGREEMENT LAYER -->
 {_sh(5, "Disagreement Layer")}
-{_build_disagreement_layer(gaps)}
+{_build_disagreement_layer(gaps, enriched_claims)}
 
 <!-- 6. INSIGHT LAYER -->
 {_sh(6, "Insight Layer")}
