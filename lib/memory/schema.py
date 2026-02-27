@@ -177,8 +177,93 @@ SCHEMA_SQL = """
         learned_credibility REAL DEFAULT 0.5,
         last_updated TEXT
     );
+    CREATE TABLE IF NOT EXISTS run_episodes (
+        id TEXT PRIMARY KEY,
+        project_id TEXT UNIQUE NOT NULL,
+        question TEXT NOT NULL,
+        domain TEXT,
+        status TEXT NOT NULL,
+        plan_query_mix_json TEXT DEFAULT '{}',
+        source_mix_json TEXT DEFAULT '{}',
+        gate_metrics_json TEXT DEFAULT '{}',
+        critic_score REAL,
+        user_verdict TEXT,
+        fail_codes_json TEXT DEFAULT '[]',
+        what_helped_json TEXT DEFAULT '[]',
+        what_hurt_json TEXT DEFAULT '[]',
+        strategy_profile_id TEXT,
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS strategy_profiles (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        domain TEXT,
+        policy_json TEXT NOT NULL,
+        score REAL DEFAULT 0.5,
+        confidence REAL DEFAULT 0.5,
+        usage_count INTEGER DEFAULT 0,
+        success_count INTEGER DEFAULT 0,
+        fail_count INTEGER DEFAULT 0,
+        status TEXT DEFAULT 'active',
+        version INTEGER DEFAULT 1,
+        metadata_json TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(name, domain, version)
+    );
+    CREATE TABLE IF NOT EXISTS strategy_application_events (
+        id TEXT PRIMARY KEY,
+        ts TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        strategy_profile_id TEXT,
+        phase TEXT NOT NULL,
+        applied_policy_json TEXT DEFAULT '{}',
+        fallback_used INTEGER DEFAULT 0,
+        outcome_hint TEXT DEFAULT '',
+        status TEXT DEFAULT 'ok'
+    );
+    CREATE TABLE IF NOT EXISTS source_domain_stats_v2 (
+        domain TEXT NOT NULL,
+        topic_domain TEXT NOT NULL,
+        times_seen INTEGER DEFAULT 0,
+        verified_hits INTEGER DEFAULT 0,
+        relevant_hits INTEGER DEFAULT 0,
+        fail_hits INTEGER DEFAULT 0,
+        last_updated TEXT NOT NULL,
+        PRIMARY KEY (domain, topic_domain)
+    );
+    CREATE TABLE IF NOT EXISTS memory_decision_log (
+        id TEXT PRIMARY KEY,
+        ts TEXT NOT NULL,
+        project_id TEXT,
+        phase TEXT,
+        decision_type TEXT NOT NULL,
+        strategy_profile_id TEXT,
+        confidence REAL DEFAULT 0.5,
+        details_json TEXT DEFAULT '{}'
+    );
+    CREATE TABLE IF NOT EXISTS memory_graph_edges (
+        id TEXT PRIMARY KEY,
+        ts TEXT NOT NULL,
+        edge_type TEXT NOT NULL,
+        from_node_type TEXT NOT NULL,
+        from_node_id TEXT NOT NULL,
+        to_node_type TEXT NOT NULL,
+        to_node_id TEXT NOT NULL,
+        project_id TEXT
+    );
     CREATE INDEX IF NOT EXISTS idx_strategic_principles_domain ON strategic_principles(domain);
     CREATE INDEX IF NOT EXISTS idx_strategic_principles_type ON strategic_principles(principle_type);
+    CREATE INDEX IF NOT EXISTS idx_run_episodes_domain ON run_episodes(domain);
+    CREATE INDEX IF NOT EXISTS idx_run_episodes_status ON run_episodes(status);
+    CREATE INDEX IF NOT EXISTS idx_run_episodes_created ON run_episodes(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_strategy_profiles_domain ON strategy_profiles(domain, status);
+    CREATE INDEX IF NOT EXISTS idx_strategy_profiles_score ON strategy_profiles(score DESC, confidence DESC);
+    CREATE INDEX IF NOT EXISTS idx_strategy_app_project ON strategy_application_events(project_id, ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_source_domain_stats_topic ON source_domain_stats_v2(topic_domain, verified_hits DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_decision_project ON memory_decision_log(project_id, ts DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_graph_from ON memory_graph_edges(from_node_type, from_node_id);
+    CREATE INDEX IF NOT EXISTS idx_memory_graph_to ON memory_graph_edges(to_node_type, to_node_id);
 """
 
 

@@ -95,6 +95,25 @@ export interface PriorKnowledgeInfo {
   findings_count: number;
 }
 
+export interface MemoryAppliedInfo {
+  selected_strategy?: {
+    id?: string;
+    name?: string;
+    domain?: string;
+    score?: number;
+    confidence?: number;
+    policy?: {
+      preferred_query_types?: Record<string, number>;
+      domain_rank_overrides?: Record<string, number>;
+      relevance_threshold?: number;
+      critic_threshold?: number;
+      revise_rounds?: number;
+      required_source_mix?: Record<string, number>;
+    };
+  };
+  expected_benefit?: string;
+}
+
 export interface ResearchProjectDetail extends ResearchProjectSummary {
   completed_at?: string;
   last_report_path?: string;
@@ -117,6 +136,7 @@ export interface ResearchProjectDetail extends ResearchProjectSummary {
   phase_history?: string[];
   spend_breakdown?: Record<string, number>;
   prior_knowledge?: PriorKnowledgeInfo;
+  memory_applied?: MemoryAppliedInfo;
 }
 
 export async function listResearchProjects(): Promise<ResearchProjectSummary[]> {
@@ -203,6 +223,17 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
     } catch {
       // ignore
     }
+    let memoryApplied: MemoryAppliedInfo | undefined;
+    try {
+      const msPath = path.join(projPath, "memory_strategy.json");
+      const msRaw = await readFile(msPath, "utf8");
+      const ms = JSON.parse(msRaw) as MemoryAppliedInfo;
+      if (ms && typeof ms === "object") {
+        memoryApplied = ms;
+      }
+    } catch {
+      // ignore
+    }
     return {
       id: typeof data.id === "string" ? data.id : projectId,
       question: typeof data.question === "string" ? data.question : "",
@@ -236,6 +267,7 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
           ? (data.spend_breakdown as Record<string, number>)
           : undefined,
       prior_knowledge: priorKnowledge,
+      memory_applied: memoryApplied,
     };
   } catch {
     return null;
@@ -307,7 +339,7 @@ export async function cancelResearchProject(projectId: string): Promise<{ killed
         const jobPath = path.join(dayPath, ent.name, "job.json");
         try {
           const raw = await readFile(jobPath, "utf8");
-          const job = JSON.parse(raw) as { status?: string; request?: string };
+          const job = JSON.parse(raw) as Record<string, unknown>;
           if (job.status === "RUNNING" && job.request === projectId) {
             job.status = "FAILED";
             job.finished_at = new Date().toISOString();
@@ -524,10 +556,10 @@ export async function getAudit(projectId: string): Promise<AuditData | null> {
       source = "claim_ledger";
     }
     const data = JSON.parse(raw) as { claims?: unknown[] };
-    const claims = (data.claims ?? []).map((raw) => {
+    const claims: AuditClaim[] = (data.claims ?? []).map((raw) => {
       const c = raw as Record<string, unknown>;
       const tier = c.verification_tier as string | undefined;
-      const verification_tier =
+      const verification_tier: AuditClaim["verification_tier"] =
         tier === "VERIFIED" || tier === "AUTHORITATIVE" || tier === "UNVERIFIED" ? tier : undefined;
       return {
         claim_id: String(c.claim_id ?? ""),

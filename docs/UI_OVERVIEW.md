@@ -70,6 +70,12 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 - **History:** Liste aller Reports (Dateinamen + Inhalt) aus `GET /api/research/projects/[id]/reports`.
 - **Audit:** Verifizierte Claims und Beweislage aus `GET /api/research/projects/[id]/audit` (für Qualitätsprüfung).
 
+**Memory Applied Panel (Research-Detail):**
+
+- Wenn `RESEARCH_MEMORY_V2_ENABLED=1` aktiv ist und eine Strategy gewählt wurde, zeigt die Detailseite zusätzlich ein Panel **„Memory Applied“**.
+- Sichtbar: gewählte Strategy, Confidence, aktive Regeln (`relevance_threshold`, `critic_threshold`, `revise_rounds`), Query-Type-Mix und Domain-Overrides.
+- Quelle: `research/proj-*/memory_strategy.json` (wird beim Planning geschrieben).
+
 **Live Activity & Runtime-Status („Läuft es oder hängt es?“):**
 
 - Die UI pollt `GET /api/research/projects/[id]/progress`. Der Endpoint liefert einen **berechneten Laufzeit-Status** (nicht nur „Running/Idle“):
@@ -93,6 +99,7 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 | „Forschung starten“ | POST /api/research/projects | Default: runResearchInitAndCycleUntilDone → init + run-research-cycle-until-done.sh; optional run_until_done: false → nur research-init |
 | „Nächste Phase starten“ | POST /api/research/projects/[id]/cycle | runWorkflow("research-cycle", id) → op job new + op run |
 | Projekt-Detail | GET project, report, findings, sources, reports | Liest research/proj-…/project.json, findings/, reports/, etc. |
+| Explainability (Memory Applied) | GET project detail | Liest `research/proj-…/memory_strategy.json` und rendert Strategy/Regeln |
 | Live-Fortschritt / Status | GET /api/research/projects/[id]/progress | Liest progress.json + events.jsonl, berechnet state (RUNNING/IDLE/STUCK/ERROR_LOOP/FAILED/DONE) |
 | Brain-Status (läuft/hängt) | GET /api/health (op healthcheck) | `brain.cycle` / `brain.reflect`: Anzahl, max_elapsed_sec; **stuck** wenn Cycle >10 min oder Reflect >5 min. Zeile im Command Center + Infobox auf Brain & Memory. System gilt als unhealthy wenn stuck. |
 | Feedback zu Finding | POST /api/research/feedback | research_feedback.py (Frage/Redirect/Type) |

@@ -94,6 +94,19 @@ export RESEARCH_MAX_FOLLOWUPS=3
 
 Wenn in der Umgebung **HTTP_PROXY/HTTPS_PROXY** gesetzt ist (z. B. Cursor/IDE), können OpenAI-Calls mit **403 Forbidden** fehlschlagen. Das Workflow-Skript **research-cycle.sh** setzt daher zu Beginn **NO_PROXY** für `api.openai.com` und `generativelanguage.googleapis.com`, sodass LLM-Traffic nicht über den Proxy läuft. Bei weiterhin 403: Proxy-Anbieter prüfen oder NO_PROXY vor dem Start setzen.
 
+## Memory v2 (optional, empfohlen)
+
+Feature-Flag und Verhalten:
+
+- `RESEARCH_MEMORY_V2_ENABLED=1` aktiviert Strategy-Memory-Injection im Planner/Cycle.
+- Planner schreibt `research/proj-*/memory_strategy.json` (gewählte Strategy + Regeln).
+- Cycle nutzt daraus konservative Guards:
+  - `relevance_threshold` (hart begrenzt auf `0.50..0.65`)
+  - `critic_threshold` (hart begrenzt auf `0.50..0.65`)
+  - `revise_rounds` (begrenzt auf `1..4`)
+  - `domain_rank_overrides` für Source-Ranking
+- Fallback: ohne Flag oder bei Fehlern läuft der bestehende statische Pfad weiter (kein Hard-Fail).
+
 ## Bekannte Laufzeit-Themen
 
 - **HTTP 429 (Rate Limit):** Semantic Scholar und arXiv können in der Explore-Phase 429 zurückgeben. Das Skript loggt WARN und fährt fort; ggf. weniger parallele Jobs oder Backoff.

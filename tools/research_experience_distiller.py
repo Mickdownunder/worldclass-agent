@@ -216,18 +216,22 @@ def main() -> None:
         prompt_instruction = (
             "Extract 3-5 GUIDING principles for future research projects in this domain. "
             "Each principle must be abstract enough to generalize, grounded in the trajectory, and actionable. "
-            "Return a JSON array of objects with keys: principle (string), evidence (string), confidence (number 0-1)."
+            "Also propose one executable strategy policy for similar future runs. "
+            "Return JSON object: {principles:[{principle,evidence,confidence}], strategy_proposal:{name,domain,policy,expected_benefit}}. "
+            "policy keys: preferred_query_types, domain_rank_overrides, relevance_threshold, critic_threshold, revise_rounds, required_source_mix."
         )
     else:
         prompt_instruction = (
             "Extract 2-3 CAUTIONARY principles — what to AVOID in future research. "
-            "Return a JSON array of objects with keys: principle (string), evidence (string), confidence (number 0-1)."
+            "Also propose one conservative recovery strategy policy for similar failures. "
+            "Return JSON object: {principles:[{principle,evidence,confidence}], strategy_proposal:{name,domain,policy,expected_benefit}}. "
+            "policy keys: preferred_query_types, domain_rank_overrides, relevance_threshold, critic_threshold, revise_rounds, required_source_mix."
         )
 
     model = os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gpt-4o-mini")
     system = (
         "You are a research quality analyst. Given a completed research project trajectory, "
-        "extract concise principles. Output only valid JSON array, no markdown."
+        "extract concise principles and an executable strategy. Output only valid JSON, no markdown."
     )
     user = f"Trajectory:\n{trajectory_str}\n\n{prompt_instruction}"
 
@@ -247,12 +251,20 @@ def main() -> None:
             lines = lines[:-1]
         text = "\n".join(lines)
     try:
-        principles_data = json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError as e:
         print(f"Distiller JSON parse failed (non-fatal): {e}", file=sys.stderr)
         sys.exit(0)
-    if not isinstance(principles_data, list):
+    if isinstance(parsed, list):
+        principles_data = parsed
+        strategy_proposal = None
+    elif isinstance(parsed, dict):
+        principles_data = parsed.get("principles") or []
+        strategy_proposal = parsed.get("strategy_proposal") if isinstance(parsed.get("strategy_proposal"), dict) else None
+    else:
         sys.exit(0)
+    if not isinstance(principles_data, list):
+        principles_data = []
 
     # Dedup among new principles (EvolveR-style: pairwise + BFS clusters)
     principles_data = _dedup_principles(principles_data[:15], project_id, model)
@@ -288,6 +300,57 @@ def main() -> None:
                     evidence_json=evidence_json,
                     metric_score=0.5,
                 )
+
+        # Strategy proposal (Memory v2): executable policy with strict bounds.
+        if isinstance(strategy_proposal, dict):
+            raw_policy = strategy_proposal.get("policy") if isinstance(strategy_proposal.get("policy"), dict) else {}
+            try:
+                rel_thr = float(raw_policy.get("relevance_threshold", 0.55))
+            except Exception:
+                rel_thr = 0.55
+            try:
+                crit_thr = float(raw_policy.get("critic_threshold", 0.55))
+            except Exception:
+                crit_thr = 0.55
+            try:
+                rev_rounds = int(raw_policy.get("revise_rounds", 2))
+            except Exception:
+                rev_rounds = 2
+            policy = {
+                "preferred_query_types": raw_policy.get("preferred_query_types") if isinstance(raw_policy.get("preferred_query_types"), dict) else {},
+                "domain_rank_overrides": raw_policy.get("domain_rank_overrides") if isinstance(raw_policy.get("domain_rank_overrides"), dict) else {},
+                "relevance_threshold": max(0.50, min(0.65, rel_thr)),
+                "critic_threshold": max(0.50, min(0.65, crit_thr)),
+                "revise_rounds": max(1, min(4, rev_rounds)),
+                "required_source_mix": raw_policy.get("required_source_mix") if isinstance(raw_policy.get("required_source_mix"), dict) else {},
+            }
+            strategy_name = str(strategy_proposal.get("name") or f"{domain}-adaptive-{principle_type}")[:120]
+            spid = mem.upsert_strategy_profile(
+                name=strategy_name,
+                domain=domain or "general",
+                policy=policy,
+                score=0.58 if success else 0.45,
+                confidence=0.45,
+                status="active",
+                metadata={
+                    "source_project_id": project_id,
+                    "principle_type": principle_type,
+                    "expected_benefit": str(strategy_proposal.get("expected_benefit") or "")[:400],
+                },
+            )
+            mem.record_memory_decision(
+                decision_type="strategy_proposed",
+                details={
+                    "strategy_profile_id": spid,
+                    "strategy_name": strategy_name,
+                    "domain": domain,
+                    "success": success,
+                },
+                project_id=project_id,
+                phase="distill",
+                strategy_profile_id=spid,
+                confidence=0.55 if success else 0.4,
+            )
         mem.close()
     except Exception as e:
         print(f"Distiller Memory write failed (non-fatal): {e}", file=sys.stderr)

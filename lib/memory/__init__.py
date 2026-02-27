@@ -26,6 +26,7 @@ from .utility import UtilityTracker
 from . import search as search_module
 from . import outcomes as outcomes_module
 from . import source_credibility as source_credibility_module
+from .memory_v2 import MemoryV2
 
 import os as _os
 DB_PATH = Path(_os.environ.get("OPERATOR_ROOT", str(Path.home() / "operator"))) / "memory" / "operator.db"
@@ -53,6 +54,7 @@ class Memory:
         self._entities = Entities(self._conn)
         self._principles = Principles(self._conn)
         self._utility = UtilityTracker(self._conn)
+        self._v2 = MemoryV2(self._conn)
 
     # ------------------------------------------------------------------
     # Episodes
@@ -281,6 +283,167 @@ class Memory:
         failed_verification_count: int,
     ) -> None:
         source_credibility_module.update(self._conn, domain, times_used, verified_count, failed_verification_count)
+
+    # ------------------------------------------------------------------
+    # Memory v2
+    # ------------------------------------------------------------------
+    def record_run_episode(
+        self,
+        project_id: str,
+        question: str,
+        domain: str,
+        status: str,
+        plan_query_mix: dict | None = None,
+        source_mix: dict | None = None,
+        gate_metrics: dict | None = None,
+        critic_score: float | None = None,
+        user_verdict: str | None = None,
+        fail_codes: list[str] | None = None,
+        what_helped: list[str] | None = None,
+        what_hurt: list[str] | None = None,
+        strategy_profile_id: str | None = None,
+    ) -> str:
+        return self._v2.record_run_episode(
+            project_id=project_id,
+            question=question,
+            domain=domain,
+            status=status,
+            plan_query_mix=plan_query_mix,
+            source_mix=source_mix,
+            gate_metrics=gate_metrics,
+            critic_score=critic_score,
+            user_verdict=user_verdict,
+            fail_codes=fail_codes,
+            what_helped=what_helped,
+            what_hurt=what_hurt,
+            strategy_profile_id=strategy_profile_id,
+        )
+
+    def upsert_strategy_profile(
+        self,
+        name: str,
+        domain: str,
+        policy: dict,
+        score: float = 0.5,
+        confidence: float = 0.5,
+        status: str = "active",
+        version: int = 1,
+        metadata: dict | None = None,
+    ) -> str:
+        return self._v2.upsert_strategy_profile(
+            name=name,
+            domain=domain,
+            policy=policy,
+            score=score,
+            confidence=confidence,
+            status=status,
+            version=version,
+            metadata=metadata,
+        )
+
+    def list_strategy_profiles(self, domain: str | None = None, limit: int = 20) -> list[dict]:
+        return self._v2.list_strategy_profiles(domain=domain, limit=limit)
+
+    def select_strategy(self, question: str, domain: str | None = None) -> dict | None:
+        return self._v2.select_strategy(question=question, domain=domain)
+
+    def record_strategy_application_event(
+        self,
+        project_id: str,
+        phase: str,
+        strategy_profile_id: str | None,
+        applied_policy: dict | None = None,
+        fallback_used: bool = False,
+        outcome_hint: str = "",
+        status: str = "ok",
+    ) -> str:
+        return self._v2.record_strategy_application_event(
+            project_id=project_id,
+            phase=phase,
+            strategy_profile_id=strategy_profile_id,
+            applied_policy=applied_policy,
+            fallback_used=fallback_used,
+            outcome_hint=outcome_hint,
+            status=status,
+        )
+
+    def record_memory_decision(
+        self,
+        decision_type: str,
+        details: dict,
+        project_id: str | None = None,
+        phase: str | None = None,
+        strategy_profile_id: str | None = None,
+        confidence: float = 0.5,
+    ) -> str:
+        return self._v2.record_memory_decision(
+            decision_type=decision_type,
+            details=details,
+            project_id=project_id,
+            phase=phase,
+            strategy_profile_id=strategy_profile_id,
+            confidence=confidence,
+        )
+
+    def record_graph_edge(
+        self,
+        edge_type: str,
+        from_node_type: str,
+        from_node_id: str,
+        to_node_type: str,
+        to_node_id: str,
+        project_id: str | None = None,
+    ) -> str:
+        return self._v2.record_graph_edge(
+            edge_type=edge_type,
+            from_node_type=from_node_type,
+            from_node_id=from_node_id,
+            to_node_type=to_node_type,
+            to_node_id=to_node_id,
+            project_id=project_id,
+        )
+
+    def update_source_domain_stats_v2(
+        self,
+        domain: str,
+        topic_domain: str,
+        times_seen: int = 1,
+        verified_hits: int = 0,
+        relevant_hits: int = 0,
+        fail_hits: int = 0,
+    ) -> None:
+        self._v2.update_source_domain_stats_v2(
+            domain=domain,
+            topic_domain=topic_domain,
+            times_seen=times_seen,
+            verified_hits=verified_hits,
+            relevant_hits=relevant_hits,
+            fail_hits=fail_hits,
+        )
+
+    def list_source_domain_stats_v2(self, topic_domain: str, limit: int = 30) -> list[dict]:
+        return self._v2.list_source_domain_stats_v2(topic_domain=topic_domain, limit=limit)
+
+    def update_strategy_from_outcome(
+        self,
+        strategy_profile_id: str,
+        critic_pass: bool,
+        evidence_gate_pass: bool,
+        user_verdict: str = "none",
+        claim_support_rate: float | None = None,
+        failed_quality_gate: bool = False,
+    ) -> None:
+        self._v2.update_strategy_from_outcome(
+            strategy_profile_id=strategy_profile_id,
+            critic_pass=critic_pass,
+            evidence_gate_pass=evidence_gate_pass,
+            user_verdict=user_verdict,
+            claim_support_rate=claim_support_rate,
+            failed_quality_gate=failed_quality_gate,
+        )
+
+    def summarize_query_type_mix(self, queries: list[dict]) -> dict[str, float]:
+        return self._v2.summarize_query_type_mix(queries=queries)
 
     # ------------------------------------------------------------------
     # State summary

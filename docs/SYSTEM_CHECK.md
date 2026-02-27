@@ -142,6 +142,19 @@ print('Episodes:', s['totals']['episodes'], 'Avg quality:', s['totals'].get('avg
 m.close()
 "
 # Erwartung: Zahlen ausgegeben, kein Traceback
+
+# 5. (Optional) Memory v2 aktiv?
+python3 -c "
+import json
+from pathlib import Path
+p = Path('/root/operator/research')
+latest = sorted([x for x in p.glob('proj-*') if (x / 'memory_strategy.json').exists()], key=lambda x: x.stat().st_mtime, reverse=True)
+print('memory_strategy_found:', bool(latest))
+if latest:
+    d = json.loads((latest[0] / 'memory_strategy.json').read_text())
+    print('strategy:', (d.get('selected_strategy') or {}).get('name'))
+"
+# Erwartung bei aktivem Flag: memory_strategy_found: True und ein Strategy-Name
 ```
 
 Wenn alle vier durchlaufen ohne Fehler und mit sinnvollen Werten: **Funktion (a) gegeben.** Qualität (b) beurteilst du an Hand der obigen Tabellen (Reports, Findings, Avg quality, Learnings, Playbooks).

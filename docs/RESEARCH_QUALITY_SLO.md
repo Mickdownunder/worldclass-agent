@@ -43,6 +43,7 @@ Projects with these statuses do not reach `done`; they remain in a failed state 
 - Evidence gate: `tools/research_quality_gate.py` → `EVIDENCE_GATE_THRESHOLDS`
 - Watchdog: `tools/research_watchdog.py` → `DRIFT_*`, `MAX_NEW_FINDINGS_*`
 - AEM (v1): `oracle_integrity_rate >= 0.80` for PASS_STABLE; `tentative_convergence_rate >= 0.60` within TTL; `deadlock_rate <= 0.05`. Enforced in `tools/research_aem_settlement.py` (strict mode: block_synthesize when any threshold violated). Scripts: `tools/research_claim_outcome_schema.py`, `tools/research_episode_metrics.py`, `tools/research_aem_settlement.py`, `tools/research_market_scoring.py`, `tools/research_falsification_gate.py`.
+- Memory v2 strategy guards (if enabled): `relevance_threshold` and `critic_threshold` are bounded to `0.50..0.65`; `revise_rounds` bounded to `1..4` (`workflows/research-cycle.sh`).
 
 ## V3 SLO targets (start values)
 

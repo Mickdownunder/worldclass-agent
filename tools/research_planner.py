@@ -10,6 +10,7 @@ Modes:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -276,6 +277,131 @@ def _sanitize_plan(plan: dict[str, Any], question: str) -> dict[str, Any]:
     }
 
 
+def _memory_v2_enabled() -> bool:
+    return os.environ.get("RESEARCH_MEMORY_V2_ENABLED", "0").strip() == "1"
+
+
+def _domain_for_project(project_id: str) -> str:
+    if not project_id:
+        return "general"
+    p = research_root() / project_id / "project.json"
+    if not p.exists():
+        return "general"
+    try:
+        d = json.loads(p.read_text())
+        return str(d.get("domain") or "general")
+    except Exception:
+        return "general"
+
+
+def _resample_query_types(queries: list[dict[str, Any]], preferred: dict[str, float]) -> list[dict[str, Any]]:
+    if not queries:
+        return queries
+    weights = {
+        "web": max(0.0, float(preferred.get("web", 0.0))),
+        "academic": max(0.0, float(preferred.get("academic", 0.0))),
+        "medical": max(0.0, float(preferred.get("medical", 0.0))),
+    }
+    if sum(weights.values()) <= 0.0:
+        return queries
+    ordered = sorted(weights.items(), key=lambda kv: kv[1], reverse=True)
+    target_types = [t for t, _ in ordered]
+    q_out = []
+    bucket = []
+    for idx, q in enumerate(queries):
+        qq = dict(q)
+        bucket.append(qq)
+        if len(bucket) >= max(1, len(target_types)):
+            for j, b in enumerate(bucket):
+                b["type"] = target_types[(idx + j) % len(target_types)]
+                q_out.append(b)
+            bucket = []
+    q_out.extend(bucket)
+    return q_out
+
+
+def _load_strategy_context(question: str, project_id: str) -> dict[str, Any] | None:
+    if not _memory_v2_enabled() or not project_id:
+        return None
+    try:
+        from lib.memory import Memory
+        domain = _domain_for_project(project_id)
+        with Memory() as mem:
+            strategy = mem.select_strategy(question, domain=domain)
+            if not strategy:
+                mem.record_memory_decision(
+                    decision_type="strategy_select_fallback",
+                    details={"reason": "no_strategy_found", "domain": domain},
+                    project_id=project_id,
+                    phase="planner",
+                    confidence=0.2,
+                )
+                return None
+            policy = strategy.get("policy") or {}
+            mem.record_strategy_application_event(
+                project_id=project_id,
+                phase="planner",
+                strategy_profile_id=strategy.get("id"),
+                applied_policy=policy,
+                fallback_used=False,
+                outcome_hint="pre-plan",
+            )
+            mem.record_memory_decision(
+                decision_type="strategy_selected",
+                details={
+                    "strategy_profile_id": strategy.get("id"),
+                    "strategy_name": strategy.get("name"),
+                    "domain": domain,
+                    "selection_confidence": strategy.get("selection_confidence", 0.5),
+                },
+                project_id=project_id,
+                phase="planner",
+                strategy_profile_id=strategy.get("id"),
+                confidence=float(strategy.get("selection_confidence", 0.5) or 0.5),
+            )
+            return {
+                "selected_strategy": {
+                    "id": strategy.get("id"),
+                    "name": strategy.get("name"),
+                    "domain": strategy.get("domain"),
+                    "score": strategy.get("score"),
+                    "confidence": strategy.get("selection_confidence", strategy.get("confidence", 0.5)),
+                    "policy": policy,
+                },
+                "expected_benefit": "higher critic pass and lower revision loops on similar topics",
+            }
+    except Exception:
+        return None
+
+
+def _apply_strategy_to_plan(plan: dict[str, Any], strategy_ctx: dict[str, Any] | None) -> dict[str, Any]:
+    if not strategy_ctx:
+        return plan
+    selected = strategy_ctx.get("selected_strategy") or {}
+    policy = selected.get("policy") or {}
+    preferred = policy.get("preferred_query_types")
+    if isinstance(preferred, dict):
+        plan["queries"] = _resample_query_types(plan.get("queries") or [], preferred)
+    return plan
+
+
+def _persist_strategy_context(project_id: str, strategy_ctx: dict[str, Any] | None) -> None:
+    if not project_id:
+        return
+    p = research_root() / project_id / "memory_strategy.json"
+    if strategy_ctx is None:
+        if p.exists():
+            try:
+                p.unlink()
+            except Exception:
+                pass
+        return
+    try:
+        p.write_text(json.dumps(strategy_ctx, indent=2, ensure_ascii=False))
+    except Exception:
+        pass
+
+
 def build_plan(question: str, project_id: str) -> dict[str, Any]:
     system = "You are a senior research strategist planning a comprehensive investigation."
     user = f"""
@@ -302,9 +428,13 @@ Return ONLY JSON.
 """.strip()
     try:
         resp = llm_call(PLANNER_MODEL, system, user, project_id=project_id)
-        return _sanitize_plan(_json_only(resp.text), question)
+        base = _sanitize_plan(_json_only(resp.text), question)
     except Exception:
-        return _fallback_plan(question)
+        base = _fallback_plan(question)
+    strategy_ctx = _load_strategy_context(question, project_id)
+    plan = _apply_strategy_to_plan(base, strategy_ctx)
+    _persist_strategy_context(project_id, strategy_ctx)
+    return plan
 
 
 def _load_project_plan(project_id: str) -> dict[str, Any]:

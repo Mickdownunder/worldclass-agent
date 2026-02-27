@@ -246,6 +246,9 @@ export default async function ResearchProjectPage({
       {/* ── Gate Metrics (inline, lightweight) ───────────────── */}
       <GateMetricsInline project={project} calibratedThresholds={calibratedThresholds ?? undefined} />
 
+      {/* ── Memory Applied ────────────────────────────────────── */}
+      <MemoryAppliedPanel project={project} />
+
       {/* ── Activity Feed ─────────────────────────────────────── */}
       <ActivityFeed projectId={id} currentPhase={project.phase} isProjectActive={isActive} />
 
@@ -370,6 +373,69 @@ function GateMetricsInline({
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function MemoryAppliedPanel({ project }: { project: ResearchProjectDetail }) {
+  const memory = project.memory_applied;
+  const selected = memory?.selected_strategy;
+  if (!selected || !selected.id) {
+    return null;
+  }
+  const policy = selected.policy || {};
+  const preferredTypes = Object.entries(policy.preferred_query_types || {});
+  const preferredDomains = Object.entries(policy.domain_rank_overrides || {}).slice(0, 5);
+  return (
+    <div
+      className="rounded-lg"
+      style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg-panel)" }}
+    >
+      <div className="flex items-center gap-2 px-5 py-2.5" style={{ borderBottom: "1px solid var(--tron-border)" }}>
+        <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--tron-text-muted)" }}>
+          Memory Applied
+        </span>
+        <span className="rounded px-1.5 py-0.5 font-mono text-[10px] font-bold"
+          style={{ border: "1px solid var(--tron-border)", color: "var(--tron-accent)" }}>
+          {selected.name || "Strategy"}
+        </span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-0">
+        <div className="px-5 py-3" style={{ borderRight: "1px solid var(--tron-border)" }}>
+          <div className="metric-label mb-1">Strategy Confidence</div>
+          <div className="font-mono text-sm font-semibold" style={{ color: "var(--tron-text)" }}>
+            {typeof selected.confidence === "number" ? `${Math.round(selected.confidence * 100)}%` : "—"}
+          </div>
+          <div className="mt-2 text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
+            Expected benefit: {memory?.expected_benefit || "better pass-rate on similar runs"}
+          </div>
+        </div>
+        <div className="px-5 py-3" style={{ borderRight: "1px solid var(--tron-border)" }}>
+          <div className="metric-label mb-1">Active Rules</div>
+          <div className="text-[11px] font-mono" style={{ color: "var(--tron-text)" }}>
+            relevance {policy.relevance_threshold ?? "—"} | critic {policy.critic_threshold ?? "—"} | revise {policy.revise_rounds ?? "—"}
+          </div>
+          {preferredTypes.length > 0 && (
+            <div className="mt-2 text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
+              Query mix: {preferredTypes.map(([k, v]) => `${k}:${v}`).join(" · ")}
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-3">
+          <div className="metric-label mb-1">Preferred Domains</div>
+          {preferredDomains.length === 0 ? (
+            <div className="text-[11px]" style={{ color: "var(--tron-text-dim)" }}>No overrides</div>
+          ) : (
+            <div className="space-y-1">
+              {preferredDomains.map(([domain, rank]) => (
+                <div key={domain} className="text-[11px] font-mono" style={{ color: "var(--tron-text)" }}>
+                  {domain}: {rank}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

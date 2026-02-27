@@ -39,6 +39,72 @@ export no_proxy="${no_proxy:+$no_proxy,}api.openai.com,openai.com,generativelang
 
 PHASE=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('phase','explore'), end='')")
 QUESTION=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('question',''), end='')")
+MEMORY_STRATEGY_FILE="$PROJ_DIR/memory_strategy.json"
+RESEARCH_MEMORY_RELEVANCE_THRESHOLD="${RESEARCH_MEMORY_RELEVANCE_THRESHOLD:-0.50}"
+RESEARCH_MEMORY_DOMAIN_OVERRIDES_JSON="${RESEARCH_MEMORY_DOMAIN_OVERRIDES_JSON:-{}}"
+RESEARCH_MEMORY_CRITIC_THRESHOLD="${RESEARCH_MEMORY_CRITIC_THRESHOLD:-}"
+RESEARCH_MEMORY_REVISE_ROUNDS="${RESEARCH_MEMORY_REVISE_ROUNDS:-2}"
+if [ "${RESEARCH_MEMORY_V2_ENABLED:-0}" = "1" ] && [ -f "$MEMORY_STRATEGY_FILE" ]; then
+  RESEARCH_MEMORY_RELEVANCE_THRESHOLD=$(python3 -c "
+import json
+from pathlib import Path
+p = Path('$MEMORY_STRATEGY_FILE')
+v = 0.50
+if p.exists():
+  try:
+    d = json.loads(p.read_text())
+    policy = ((d.get('selected_strategy') or {}).get('policy') or {})
+    v = float(policy.get('relevance_threshold', 0.50))
+  except Exception:
+    pass
+print(max(0.50, min(0.65, v)), end='')") || RESEARCH_MEMORY_RELEVANCE_THRESHOLD="0.50"
+  RESEARCH_MEMORY_CRITIC_THRESHOLD=$(python3 -c "
+import json
+from pathlib import Path
+p = Path('$MEMORY_STRATEGY_FILE')
+v = ''
+if p.exists():
+  try:
+    d = json.loads(p.read_text())
+    policy = ((d.get('selected_strategy') or {}).get('policy') or {})
+    if policy.get('critic_threshold') is not None:
+      v = str(max(0.50, min(0.65, float(policy.get('critic_threshold')))))
+  except Exception:
+    pass
+print(v, end='')") || RESEARCH_MEMORY_CRITIC_THRESHOLD=""
+  RESEARCH_MEMORY_REVISE_ROUNDS=$(python3 -c "
+import json
+from pathlib import Path
+p = Path('$MEMORY_STRATEGY_FILE')
+v = 2
+if p.exists():
+  try:
+    d = json.loads(p.read_text())
+    policy = ((d.get('selected_strategy') or {}).get('policy') or {})
+    v = int(policy.get('revise_rounds', 2))
+  except Exception:
+    pass
+print(max(1, min(4, v)), end='')") || RESEARCH_MEMORY_REVISE_ROUNDS="2"
+  RESEARCH_MEMORY_DOMAIN_OVERRIDES_JSON=$(python3 -c "
+import json
+from pathlib import Path
+p = Path('$MEMORY_STRATEGY_FILE')
+out = {}
+if p.exists():
+  try:
+    d = json.loads(p.read_text())
+    policy = ((d.get('selected_strategy') or {}).get('policy') or {})
+    o = policy.get('domain_rank_overrides') or {}
+    if isinstance(o, dict):
+      out = o
+  except Exception:
+    pass
+print(json.dumps(out), end='')") || RESEARCH_MEMORY_DOMAIN_OVERRIDES_JSON="{}"
+fi
+export RESEARCH_MEMORY_RELEVANCE_THRESHOLD
+export RESEARCH_MEMORY_DOMAIN_OVERRIDES_JSON
+export RESEARCH_MEMORY_CRITIC_THRESHOLD
+export RESEARCH_MEMORY_REVISE_ROUNDS
 
 log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$PROJ_DIR/log.txt" 2>/dev/null; echo "$*" >&2; }
 
@@ -111,6 +177,122 @@ advance_phase() {
   python3 "$TOOLS/research_advance_phase.py" "$PROJ_DIR" "$next_phase"
 }
 
+persist_v2_episode() {
+  local run_status="$1"
+  python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" "$run_status" <<'MEMORY_V2_EPISODE' 2>> "$PWD/log.txt" || true
+import json, sys
+from collections import Counter
+from pathlib import Path
+proj_dir, op_root, project_id, run_status = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4]
+sys.path.insert(0, str(op_root))
+try:
+    project = json.loads((proj_dir / "project.json").read_text())
+except Exception:
+    project = {}
+plan_queries = []
+plan_path = proj_dir / "research_plan.json"
+if plan_path.exists():
+    try:
+        plan_queries = json.loads(plan_path.read_text()).get("queries", [])
+    except Exception:
+        plan_queries = []
+mix_counter = Counter()
+for q in plan_queries:
+    qtype = str((q or {}).get("type") or "web").lower()
+    if qtype not in {"web", "academic", "medical"}:
+        qtype = "web"
+    mix_counter[qtype] += 1
+plan_mix = {}
+if mix_counter:
+    total = sum(mix_counter.values())
+    plan_mix = {k: round(v / total, 3) for k, v in mix_counter.items()}
+source_counter = Counter()
+for sf in (proj_dir / "sources").glob("*.json"):
+    if sf.name.endswith("_content.json"):
+        continue
+    try:
+        sd = json.loads(sf.read_text())
+    except Exception:
+        continue
+    url = (sd.get("url") or "").strip()
+    if "://" in url:
+        domain = url.split("/")[2].replace("www.", "")
+        if domain:
+            source_counter[domain] += 1
+source_mix = dict(source_counter.most_common(10))
+qg = project.get("quality_gate", {}) if isinstance(project.get("quality_gate"), dict) else {}
+evidence_gate = qg.get("evidence_gate", {}) if isinstance(qg.get("evidence_gate"), dict) else {}
+gate_metrics = evidence_gate.get("metrics", {}) if isinstance(evidence_gate.get("metrics"), dict) else {}
+critic_score = qg.get("critic_score")
+if not isinstance(critic_score, (int, float)):
+    critic_score = None
+strategy_profile_id = None
+strategy_name = None
+ms = proj_dir / "memory_strategy.json"
+if ms.exists():
+    try:
+        selected = (json.loads(ms.read_text()).get("selected_strategy") or {})
+        strategy_profile_id = selected.get("id")
+        strategy_name = selected.get("name")
+    except Exception:
+        pass
+fail_codes = []
+status = str(project.get("status") or run_status or "unknown")
+if status.startswith("failed") or status in {"aem_blocked", "cancelled"}:
+    fail_codes.append(status)
+what_helped = []
+if gate_metrics.get("verified_claim_count", 0) >= 3:
+    what_helped.append("multi_source_verification")
+if gate_metrics.get("claim_support_rate", 0) >= 0.6:
+    what_helped.append("high_claim_support_rate")
+what_hurt = []
+if status.startswith("failed"):
+    what_hurt.append(status)
+if gate_metrics.get("claim_support_rate", 1) < 0.4:
+    what_hurt.append("low_claim_support_rate")
+from lib.memory import Memory
+with Memory() as mem:
+    episode_id = mem.record_run_episode(
+        project_id=project_id,
+        question=str(project.get("question") or ""),
+        domain=str(project.get("domain") or "general"),
+        status=status,
+        plan_query_mix=plan_mix,
+        source_mix=source_mix,
+        gate_metrics=gate_metrics,
+        critic_score=critic_score,
+        user_verdict="approved" if status == "done" else "rejected" if status.startswith("failed") else "none",
+        fail_codes=fail_codes,
+        what_helped=what_helped,
+        what_hurt=what_hurt,
+        strategy_profile_id=strategy_profile_id,
+    )
+    mem.record_memory_decision(
+        decision_type="episode_persisted",
+        details={
+            "episode_id": episode_id,
+            "status": status,
+            "strategy_profile_id": strategy_profile_id,
+            "strategy_name": strategy_name,
+            "plan_query_mix": plan_mix,
+        },
+        project_id=project_id,
+        phase="terminal",
+        strategy_profile_id=strategy_profile_id,
+        confidence=0.8,
+    )
+    if strategy_profile_id:
+        mem.record_graph_edge(
+            edge_type="used_in",
+            from_node_type="strategy_profile",
+            from_node_id=strategy_profile_id,
+            to_node_type="run_episode",
+            to_node_id=episode_id,
+            project_id=project_id,
+        )
+MEMORY_V2_EPISODE
+}
+
 case "$PHASE" in
   explore)
     log "Phase: EXPLORE — 3-round adaptive planning/search/read/coverage"
@@ -162,13 +344,20 @@ print(saved)
 FILTER_AND_SAVE
 
     python3 - "$PROJ_DIR" "$ART/research_plan.json" "$ART" <<'SMART_RANK'
-import json, sys, re
+import json, os, sys, re
 from pathlib import Path
 proj_dir = Path(sys.argv[1]); plan = json.loads(Path(sys.argv[2]).read_text()); art = Path(sys.argv[3])
 topics = {str(t.get("id","")): t for t in plan.get("topics", [])}
 entities = [str(e).lower() for e in plan.get("entities", [])]
 source_type_by_topic = {tid: set((t.get("source_types") or [])) for tid, t in topics.items()}
 DOMAIN_RANK = {"arxiv.org":10,"semanticscholar.org":10,"nature.com":10,"science.org":10,"pubmed.ncbi.nlm.nih.gov":12,"ncbi.nlm.nih.gov":11,"nih.gov":11,"thelancet.com":11,"nejm.org":11,"bmj.com":10,"jamanetwork.com":10,"who.int":10,"cochranelibrary.com":10,"clinicaltrials.gov":10,"openai.com":9,"anthropic.com":9,"google.com":8,"reuters.com":8,"nytimes.com":8}
+try:
+    overrides = json.loads(os.environ.get("RESEARCH_MEMORY_DOMAIN_OVERRIDES_JSON", "{}"))
+    if isinstance(overrides, dict):
+        for k, v in overrides.items():
+            DOMAIN_RANK[str(k).replace("www.", "")] = int(v)
+except Exception:
+    pass
 per_domain = {}
 ranked = []
 for f in (proj_dir / "sources").glob("*.json"):
@@ -219,6 +408,7 @@ SMART_RANK
       fi
       python3 - "$PROJ_DIR" "$ART" "$url" "$QUESTION" "$OPERATOR_ROOT" <<'SAVE_READ'
 import json, sys, hashlib
+import os
 from pathlib import Path
 proj_dir, art, url, question, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 p = art / "read_result.json"
@@ -231,6 +421,7 @@ title = data.get("title", "")
 # Relevance gate: only keep sources that are actually relevant
 relevant = True
 rel_score = 10
+rel_threshold = float(os.environ.get("RESEARCH_MEMORY_RELEVANCE_THRESHOLD", "0.50"))
 if text and question:
   try:
     sys.path.insert(0, op_root)
@@ -243,6 +434,10 @@ if text and question:
       print(f"FILTERED (score={rel_score}): {url[:80]} — {reason}", file=sys.stderr)
   except Exception as e:
     print(f"WARN: relevance gate error: {e}", file=sys.stderr)
+if relevant:
+  if rel_score < rel_threshold:
+    relevant = False
+    print(f"FILTERED (below threshold={rel_threshold:.2f}, score={rel_score}): {url[:80]}", file=sys.stderr)
 if relevant:
   (proj_dir / "sources" / f"{sid}_content.json").write_text(json.dumps(data))
   if text:
@@ -349,7 +544,7 @@ for item in (data if isinstance(data, list) else []):
 FOCUS_SAVE
 
     python3 - "$PROJ_DIR" "$ART/focus_queries.json" "$ART" <<'RANK_FOCUS'
-import json, sys
+import json, os, sys
 from pathlib import Path
 proj_dir, qpath, art = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
 plan = json.loads(qpath.read_text()) if qpath.exists() else {}
@@ -359,6 +554,13 @@ for i, q in enumerate(plan.get("queries", [])):
     if tid not in topic_boost:
         topic_boost[tid] = max(1, 10 - i)
 DOMAIN_RANK = {"arxiv.org":10,"semanticscholar.org":10,"nature.com":10,"science.org":10,"pubmed.ncbi.nlm.nih.gov":12,"ncbi.nlm.nih.gov":11,"nih.gov":11,"thelancet.com":11,"nejm.org":11,"bmj.com":10,"jamanetwork.com":10,"who.int":10,"cochranelibrary.com":10,"clinicaltrials.gov":10,"openai.com":9,"anthropic.com":9,"reuters.com":8,"nytimes.com":8}
+try:
+    overrides = json.loads(os.environ.get("RESEARCH_MEMORY_DOMAIN_OVERRIDES_JSON", "{}"))
+    if isinstance(overrides, dict):
+        for k, v in overrides.items():
+            DOMAIN_RANK[str(k).replace("www.", "")] = int(v)
+except Exception:
+    pass
 ranked = []
 for f in (proj_dir / "sources").glob("*.json"):
     if f.name.endswith("_content.json"): continue
@@ -394,6 +596,7 @@ RANK_FOCUS
       fi
       python3 - "$PROJ_DIR" "$ART" "$url" "$QUESTION" "$OPERATOR_ROOT" <<'FOCUS_READ'
 import json, sys, hashlib
+import os
 from pathlib import Path
 proj_dir, art, url, question, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 if not (art / "read_result.json").exists():
@@ -404,6 +607,7 @@ text = (data.get("text") or data.get("abstract") or "")[:8000]
 title = data.get("title", "")
 relevant = True
 rel_score = 10
+rel_threshold = float(os.environ.get("RESEARCH_MEMORY_RELEVANCE_THRESHOLD", "0.50"))
 if text and question:
   try:
     sys.path.insert(0, op_root)
@@ -415,6 +619,10 @@ if text and question:
       print(f"FILTERED (score={rel_score}): {url[:80]} — {gate.get('reason','')}", file=sys.stderr)
   except Exception as e:
     print(f"WARN: relevance gate error: {e}", file=sys.stderr)
+if relevant:
+  if rel_score < rel_threshold:
+    relevant = False
+    print(f"FILTERED (below threshold={rel_threshold:.2f}, score={rel_score}): {url[:80]}", file=sys.stderr)
 if relevant:
   (proj_dir / "sources" / f"{sid}_content.json").write_text(json.dumps(data))
   if text:
@@ -520,6 +728,7 @@ COUNTER_EVIDENCE
         python3 "$TOOLS/research_web_reader.py" "$curl" > "$ART/read_result.json" 2>> "$PWD/log.txt" || true
         python3 - "$PROJ_DIR" "$ART" "$curl" "$QUESTION" "$OPERATOR_ROOT" <<'COUNTER_READ'
 import json, sys, hashlib
+import os
 from pathlib import Path
 proj_dir, art, url, question, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 if not (art / "read_result.json").exists():
@@ -530,6 +739,7 @@ text = (data.get("text") or "")[:8000]
 title = data.get("title", "")
 relevant = True
 rel_score = 10
+rel_threshold = float(os.environ.get("RESEARCH_MEMORY_RELEVANCE_THRESHOLD", "0.50"))
 if text and question:
   try:
     sys.path.insert(0, op_root)
@@ -541,6 +751,10 @@ if text and question:
       print(f"COUNTER FILTERED (score={rel_score}): {url[:80]}", file=sys.stderr)
   except Exception as e:
     print(f"WARN: relevance gate error: {e}", file=sys.stderr)
+if relevant:
+  if rel_score < rel_threshold:
+    relevant = False
+    print(f"COUNTER FILTERED (below threshold={rel_threshold:.2f}, score={rel_score}): {url[:80]}", file=sys.stderr)
 if relevant:
   (proj_dir / "sources" / f"{key}_content.json").write_text(json.dumps(data))
   if text:
@@ -620,6 +834,7 @@ except Exception:
           fi
           python3 - "$PROJ_DIR" "$ART" "$rurl" "$QUESTION" "$OPERATOR_ROOT" <<'INNER_RECOVERY'
 import json, sys, hashlib
+import os
 from pathlib import Path
 proj_dir, art, url, question, op_root = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
 if not (art / "read_result.json").exists():
@@ -630,6 +845,7 @@ text = (data.get("text") or data.get("abstract") or "")[:8000]
 title = data.get("title", "")
 relevant = True
 rel_score = 10
+rel_threshold = float(os.environ.get("RESEARCH_MEMORY_RELEVANCE_THRESHOLD", "0.50"))
 if text and question:
   try:
     sys.path.insert(0, op_root)
@@ -641,6 +857,10 @@ if text and question:
       print(f"RECOVERY FILTERED (score={rel_score}): {url[:80]}", file=sys.stderr)
   except Exception as e:
     print(f"WARN: relevance gate error: {e}", file=sys.stderr)
+if relevant:
+  if rel_score < rel_threshold:
+    relevant = False
+    print(f"RECOVERY FILTERED (below threshold={rel_threshold:.2f}, score={rel_score}): {url[:80]}", file=sys.stderr)
 if relevant:
   (proj_dir / "sources" / f"{key}_content.json").write_text(json.dumps(data))
   if text:
@@ -772,6 +992,7 @@ except Exception as e:
 BRAIN_REFLECT
       python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
       python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      persist_v2_episode "failed"
     else
     echo "$GATE_RESULT" > "$ART/evidence_gate_result.json" 2>/dev/null || true
     python3 - "$PROJ_DIR" "$ART" <<'GATE_PASS'
@@ -1033,27 +1254,33 @@ if manifest_entries:
   },
 }, indent=2))
 PY
-    # Quality Gate: critic pass, optionally revise if score < 0.6
+    # Quality Gate: critic pass; up to 2 revision rounds if score below threshold
+    CRITIC_THRESHOLD="${RESEARCH_CRITIC_THRESHOLD:-0.55}"
+    if [ -n "${RESEARCH_MEMORY_CRITIC_THRESHOLD:-}" ]; then
+      CRITIC_THRESHOLD="$RESEARCH_MEMORY_CRITIC_THRESHOLD"
+    fi
+    MAX_REVISE_ROUNDS="${RESEARCH_MEMORY_REVISE_ROUNDS:-2}"
     progress_step "Running critic"
     python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$PWD/log.txt" || true
     SCORE=0.5
     if [ -f "$ART/critique.json" ]; then
       SCORE=$(python3 -c "import json; d=json.load(open('$ART/critique.json')); print(d.get('score', 0.5), end='')" 2>/dev/null || echo "0.5")
     fi
-    if [ -f "$ART/critique.json" ] && python3 -c "exit(0 if float('$SCORE') < 0.6 else 1)" 2>/dev/null; then
-      log "Report quality low (score $SCORE). Revising..."
+    REV_ROUND=0
+    while [ "$REV_ROUND" -lt "$MAX_REVISE_ROUNDS" ] && python3 -c "exit(0 if float('$SCORE') < float('$CRITIC_THRESHOLD') else 1)" 2>/dev/null; do
+      REV_ROUND=$((REV_ROUND + 1))
+      log "Report quality below threshold (score $SCORE, threshold $CRITIC_THRESHOLD). Revision round $REV_ROUND/$MAX_REVISE_ROUNDS..."
       python3 "$TOOLS/research_critic.py" "$PROJECT_ID" revise "$ART" > "$ART/revised_report.md" 2>> "$PWD/log.txt" || true
       if [ -f "$ART/revised_report.md" ] && [ -s "$ART/revised_report.md" ]; then
         cp "$ART/revised_report.md" "$ART/report.md"
         REV_TS=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'), end='')")
-        cp "$ART/revised_report.md" "$PROJ_DIR/reports/report_${REV_TS}_revised.md"
+        cp "$ART/revised_report.md" "$PROJ_DIR/reports/report_${REV_TS}_revised${REV_ROUND}.md"
       fi
-      # Re-run critic on revised report and use NEW score for quality gate
       python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$PWD/log.txt" || true
       SCORE=$(python3 -c "import json; d=json.load(open('$ART/critique.json')); print(d.get('score', 0.5), end='')" 2>/dev/null || echo "0.5")
-    fi
-    if python3 -c "exit(0 if float('$SCORE') < 0.6 else 1)" 2>/dev/null; then
-      log "Quality gate failed (score $SCORE) — status failed_quality_gate"
+    done
+    if python3 -c "exit(0 if float('$SCORE') < float('$CRITIC_THRESHOLD') else 1)" 2>/dev/null; then
+      log "Quality gate failed (score $SCORE, threshold $CRITIC_THRESHOLD) — status failed_quality_gate"
       python3 - "$PROJ_DIR" "$ART" "$SCORE" <<'QF_FAIL'
 import json, sys
 from pathlib import Path
@@ -1088,6 +1315,7 @@ except Exception as e:
 OUTCOME_RECORD
       python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
       python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      persist_v2_episode "failed"
     else
     # Persist quality_gate and critique to project (passed)
     python3 - "$PROJ_DIR" "$ART" "$SCORE" <<'QG'
@@ -1178,6 +1406,7 @@ except Exception as e:
 BRAIN_REFLECT
     python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
     python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    persist_v2_episode "done"
     fi
     ;;
   done)
