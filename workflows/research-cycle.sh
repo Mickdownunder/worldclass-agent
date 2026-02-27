@@ -44,7 +44,7 @@ RESEARCH_MEMORY_RELEVANCE_THRESHOLD="${RESEARCH_MEMORY_RELEVANCE_THRESHOLD:-0.50
 RESEARCH_MEMORY_DOMAIN_OVERRIDES_JSON="${RESEARCH_MEMORY_DOMAIN_OVERRIDES_JSON:-{}}"
 RESEARCH_MEMORY_CRITIC_THRESHOLD="${RESEARCH_MEMORY_CRITIC_THRESHOLD:-}"
 RESEARCH_MEMORY_REVISE_ROUNDS="${RESEARCH_MEMORY_REVISE_ROUNDS:-2}"
-if [ "${RESEARCH_MEMORY_V2_ENABLED:-0}" = "1" ] && [ -f "$MEMORY_STRATEGY_FILE" ]; then
+if [ "${RESEARCH_MEMORY_V2_ENABLED:-1}" = "1" ] && [ -f "$MEMORY_STRATEGY_FILE" ]; then
   RESEARCH_MEMORY_RELEVANCE_THRESHOLD=$(python3 -c "
 import json
 from pathlib import Path
@@ -131,7 +131,7 @@ mode = "v2_disabled"
 reason = "flag_off"
 confidence = 1.0
 details = {"mode": mode, "fallback_reason": reason}
-if os.environ.get("RESEARCH_MEMORY_V2_ENABLED", "0").strip() == "1":
+if os.environ.get("RESEARCH_MEMORY_V2_ENABLED", "1").strip() == "1":
     ms = proj_dir / "memory_strategy.json"
     if not ms.exists():
         mode = "v2_fallback"

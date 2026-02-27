@@ -279,7 +279,8 @@ def _sanitize_plan(plan: dict[str, Any], question: str) -> dict[str, Any]:
 
 
 def _memory_v2_enabled() -> bool:
-    return os.environ.get("RESEARCH_MEMORY_V2_ENABLED", "0").strip() == "1"
+    # Default ON; set RESEARCH_MEMORY_V2_ENABLED=0 to force-disable.
+    return os.environ.get("RESEARCH_MEMORY_V2_ENABLED", "1").strip() == "1"
 
 
 def _min_strategy_confidence() -> float:
