@@ -18,14 +18,20 @@ from tools.research_common import project_dir, load_project, save_project
 
 # Cost per token (USD).  Format: model -> (input_cost_per_token, output_cost_per_token)
 MODEL_COSTS: dict[str, tuple[float, float]] = {
+    # OpenAI
     "gpt-4.1-mini":              (0.40 / 1_000_000,  1.60 / 1_000_000),
     "gpt-4.1":                   (2.00 / 1_000_000,  8.00 / 1_000_000),
     "gpt-4o-mini":               (0.15 / 1_000_000,  0.60 / 1_000_000),
     "gpt-5.2":                   (1.75 / 1_000_000, 14.00 / 1_000_000),
+    # Gemini
     "gemini-3.1-pro-preview":    (2.00 / 1_000_000, 12.00 / 1_000_000),
+    "gemini-3.1-pro":            (2.00 / 1_000_000, 12.00 / 1_000_000),
+    "gemini-2.5-pro":            (1.25 / 1_000_000, 10.00 / 1_000_000),
+    "gemini-2.5-flash":          (0.30 / 1_000_000,  2.50 / 1_000_000),
+    "gemini-2.0-flash":          (0.10 / 1_000_000,  0.40 / 1_000_000),
 }
 
-_FALLBACK_COST: tuple[float, float] = (1.00 / 1_000_000, 3.00 / 1_000_000)
+_FALLBACK_COST: tuple[float, float] = (2.00 / 1_000_000, 12.00 / 1_000_000)
 
 # API costs per call (USD). Semantic Scholar and arXiv are free.
 API_COSTS: dict[str, float] = {
@@ -36,7 +42,7 @@ API_COSTS: dict[str, float] = {
     "arxiv": 0.0,
 }
 
-DEFAULT_BUDGET_LIMIT = 3.00
+DEFAULT_BUDGET_LIMIT = 5.00
 
 
 def get_budget_limit(project: dict) -> float:
