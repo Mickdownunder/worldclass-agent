@@ -15,7 +15,14 @@ async function brainJson(args: string[]): Promise<unknown> {
 }
 
 export interface MemorySummary {
-  totals: { episodes: number; decisions: number; reflections: number; avg_quality: number };
+  totals: {
+    episodes: number;
+    decisions: number;
+    reflections: number;
+    avg_quality: number;
+    principles?: number | string;
+    outcomes?: number | string;
+  };
   recent_episodes: Array<{ kind: string; content: string; ts: string }>;
   recent_reflections: Array<{ job_id: string; quality: number; learnings?: string; ts: string }>;
   playbooks: Array<{ domain: string; strategy: string; success_rate: number }>;

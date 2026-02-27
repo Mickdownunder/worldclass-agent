@@ -27,7 +27,7 @@ export async function GET() {
       }
     }
 
-    const totals = mem?.totals ?? {};
+    const totals = (mem?.totals ?? {}) as { decisions?: number; reflections?: number; avg_quality?: number };
     const brain = health?.brain ?? null;
 
     return NextResponse.json({

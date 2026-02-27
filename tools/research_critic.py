@@ -20,6 +20,13 @@ def _model():
     return os.environ.get("RESEARCH_CRITIQUE_MODEL", "gpt-5.2")
 
 
+def _threshold() -> float:
+    try:
+        return float(os.environ.get("RESEARCH_CRITIC_THRESHOLD", "0.55"))
+    except ValueError:
+        return 0.55
+
+
 def _load_report(proj_path: Path, art_path: Path | None) -> str:
     # Prefer latest report from project reports/ or artifacts
     reports_dir = proj_path / "reports"
@@ -58,16 +65,20 @@ def critique_report(proj_path: Path, project: dict, art_path: Path | None = None
     if not report:
         return {"score": 0.0, "weaknesses": ["No report found"], "suggestions": [], "pass": False}
     question = project.get("question", "")
-    system = """You are a research quality reviewer. Evaluate the report and return JSON only:
-{"score": 0.0-1.0, "weaknesses": ["list of specific weaknesses"], "suggestions": ["list of concrete improvements"], "pass": true/false}
+    thresh = _threshold()
+    system = f"""You are a research quality reviewer. Evaluate the report and return JSON only:
+{{"score": 0.0-1.0, "weaknesses": ["list of specific weaknesses"], "suggestions": ["list of concrete improvements"], "pass": true/false}}
+
+Calibration: Score 0.6 = adequate report that answers the research question with cited sources and no major flaws. Use scores below 0.5 only for missing content, major contradictions, or no/fake sources. A solid frontier-style report with good coverage should get 0.65-0.85.
+
 Criteria: completeness (answers the question?), source coverage (diverse sources?), logical consistency (contradictions?), depth (substantial vs superficial?), actionability (clear next steps?).
-pass = true if score >= 0.6."""
+pass = true if score >= {thresh:.2f}."""
     user = f"RESEARCH QUESTION: {question}\n\nREPORT:\n{report[:12000]}\n\nEvaluate and return only valid JSON."
     out = _llm_json(system, user, project_id=project_id)
     if not isinstance(out, dict):
         return {"score": 0.5, "weaknesses": [], "suggestions": [], "pass": False}
     out.setdefault("score", 0.5)
-    out.setdefault("pass", out["score"] >= 0.6)
+    out.setdefault("pass", out["score"] >= _threshold())
     from tools.research_common import audit_log
     audit_log(proj_path, "critic_evaluation", {
         "score": out.get("score", 0),

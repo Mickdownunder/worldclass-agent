@@ -10,7 +10,7 @@ interface PhaseData {
 }
 
 interface TracePhase {
-  phase: string;
+  phase?: string;
   reasoning?: string;
   decision?: string;
   confidence?: number;
