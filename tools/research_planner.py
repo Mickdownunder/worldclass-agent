@@ -21,7 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.research_common import llm_call, research_root
 
 
-PLANNER_MODEL = "gpt-4.1-mini"
+PLANNER_MODEL = os.environ.get("RESEARCH_PLANNER_MODEL", "gemini-2.5-flash")
 
 
 def _json_only(text: str) -> dict[str, Any]:
@@ -253,6 +253,21 @@ def _fallback_plan(question: str) -> dict[str, Any]:
     }
 
 
+_PRIORITY_MAP = {"high": 1, "medium": 2, "mid": 2, "low": 3, "critical": 1, "hoch": 1, "mittel": 2, "niedrig": 3}
+
+
+def _parse_priority(val: Any) -> int:
+    if isinstance(val, int):
+        return max(1, min(3, val))
+    s = str(val).strip().lower()
+    if s in _PRIORITY_MAP:
+        return _PRIORITY_MAP[s]
+    try:
+        return max(1, min(3, int(s)))
+    except (ValueError, TypeError):
+        return 2
+
+
 def _sanitize_plan(plan: dict[str, Any], question: str) -> dict[str, Any]:
     if not isinstance(plan, dict):
         return _fallback_plan(question)
@@ -270,7 +285,7 @@ def _sanitize_plan(plan: dict[str, Any], question: str) -> dict[str, Any]:
             {
                 "id": tid,
                 "name": str(t.get("name") or f"Topic {i}")[:120],
-                "priority": int(t.get("priority") or 2),
+                "priority": _parse_priority(t.get("priority")),
                 "description": str(t.get("description") or "")[:400],
                 "source_types": [str(x) for x in (t.get("source_types") or ["docs"])][:4],
                 "min_sources": max(1, min(5, int(t.get("min_sources") or 2))),
@@ -648,7 +663,7 @@ def build_gap_fill_queries(coverage_path: str, project_id: str) -> dict[str, Any
         tid = str(t.get("id") or f"gap-{i+1}")
         name = str(t.get("name") or "topic").strip()
         desc = str(t.get("description") or "").strip()
-        prio = int(t.get("priority") or 2)
+        prio = _parse_priority(t.get("priority"))
         pset = perspectives[:3] if prio == 1 else perspectives[:2]
         for p in pset:
             q = f"{name} {desc[:40]} evidence comparison".strip()
