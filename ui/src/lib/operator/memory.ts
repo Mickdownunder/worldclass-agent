@@ -40,6 +40,23 @@ export async function getMemorySummary(): Promise<MemorySummary | null> {
   }
 }
 
+export interface MemoryValueScore {
+  memory_value: number | null;
+  applied_avg: number | null;
+  fallback_avg: number | null;
+  applied_count: number;
+  fallback_count: number;
+}
+
+export async function getMemoryValueScore(): Promise<MemoryValueScore | null> {
+  try {
+    const data = await brainJson(["memory-value"]);
+    return data as MemoryValueScore;
+  } catch {
+    return null;
+  }
+}
+
 export interface CrossLinkInsight {
   id: string;
   finding_a_id?: string;

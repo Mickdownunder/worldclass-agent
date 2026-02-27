@@ -3,9 +3,10 @@ Brain Context Compiler — High-signal context for the planner only.
 
 Builds a compact context from:
 - Accepted research findings only (admission_state = 'accepted')
-- Reflections with quality >= min_reflection_quality (default 0.6)
+- Reflections with quality >= min_reflection_quality (default 0.35)
 
 Low-quality reflections are not included in planning context (telemetry only elsewhere).
+- Strategic principles: causal type is prioritized over generic when injecting into think-context.
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ from __future__ import annotations
 MAX_FINDINGS_PER_PROJECT = 5
 MAX_PROJECTS = 10
 MAX_REFLECTIONS = 10
-MIN_REFLECTION_QUALITY = 0.6
+MIN_REFLECTION_QUALITY = 0.35
 
 
 def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
@@ -45,6 +46,8 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
             })
         keys = list(by_project.keys())[:max_projects]
         by_project = {k: by_project[k] for k in keys}
+        # Prioritize causal principles (do/avoid from experience) over generic
+        principles_sorted = sorted(principles, key=lambda p: (0 if (p.get("principle_type") or "").lower() == "causal" else 1, -(p.get("metric_score") or 0)))
         return {
             "accepted_findings_by_project": by_project,
             "high_quality_reflections": [
@@ -53,7 +56,7 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
             ],
             "strategic_principles": [
                 {"description": (p.get("description") or "")[:200], "principle_type": p.get("principle_type"), "metric_score": p.get("metric_score")}
-                for p in principles
+                for p in principles_sorted
             ],
             "totals": {
                 "accepted_projects": len(by_project),
@@ -81,10 +84,11 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
     recent = memory.recent_reflections(limit=max_reflections * 2)
     high_reflections = [r for r in recent if (r.get("quality") or 0) >= min_reflection_quality][:max_reflections]
 
-    # Cross-workflow principles: retrieve top-scoring regardless of domain
+    # Cross-workflow principles: retrieve top-scoring regardless of domain; prioritize causal
     principles = []
     if hasattr(memory, "list_principles"):
         principles = memory.list_principles(limit=10)
+    principles_sorted = sorted(principles, key=lambda p: (0 if (p.get("principle_type") or "").lower() == "causal" else 1, -(p.get("metric_score") or 0)))
 
     return {
         "accepted_findings_by_project": by_project,
@@ -95,7 +99,7 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
         "strategic_principles": [
             {"description": (p.get("description") or "")[:200], "principle_type": p.get("principle_type"),
              "metric_score": p.get("metric_score"), "domain": p.get("domain", "")}
-            for p in principles
+            for p in principles_sorted
         ],
         "totals": {
             "accepted_projects": len(by_project),

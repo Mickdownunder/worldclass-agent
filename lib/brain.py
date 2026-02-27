@@ -246,7 +246,7 @@ class Brain:
         state["memory"] = self.memory.state_summary()
         state["memory"]["recent_reflections"] = [
             r for r in state["memory"].get("recent_reflections", [])
-            if (r.get("quality") or 0) >= 0.6
+            if (r.get("quality") or 0) >= 0.35
         ]
         # Optional query: focus context on current research topic (utility-ranked retrieval)
         goal = ""

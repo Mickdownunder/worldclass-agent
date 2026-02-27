@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getHealth } from "@/lib/operator/health";
 import { listJobs } from "@/lib/operator/jobs";
 import { listResearchProjects } from "@/lib/operator/research";
+import { getMemoryValueScore } from "@/lib/operator/memory";
 import { DashboardQuickActions } from "@/components/DashboardQuickActions";
 import { EventFeed } from "@/components/EventFeed";
 import { LiveRefresh } from "@/components/LiveRefresh";
@@ -17,10 +18,11 @@ function phaseProgress(phase: string): number {
 }
 
 export default async function CommandCenterPage() {
-  const [health, projects, runningJobsResult] = await Promise.all([
+  const [health, projects, runningJobsResult, memoryValue] = await Promise.all([
     getHealth(),
     listResearchProjects(),
     listJobs(500, 0, "RUNNING"),
+    getMemoryValueScore(),
   ]);
   const healthy = health.healthy ?? false;
   const failures = health.recent_failures ?? [];
@@ -214,6 +216,19 @@ export default async function CommandCenterPage() {
           { label: "Total Spend",      value: `$${totalSpend.toFixed(2)}`, color: "var(--tron-text)", href: "/research" },
           { label: "Avg Verify Rate",  value: avgVerifyRate,         color: "var(--tron-text)",   href: "/research" },
           { label: "Blocked Reads",    value: blockedReads,          color: blockedReads === "—" ? "var(--tron-text-dim)" : "var(--tron-error)", href: "/research" },
+          {
+            label: "Memory Value",
+            value: memoryValue?.memory_value != null
+              ? `${memoryValue.memory_value >= 0 ? "+" : ""}${memoryValue.memory_value.toFixed(2)}`
+              : "—",
+            color:
+              memoryValue?.memory_value == null
+                ? "var(--tron-text-dim)"
+                : memoryValue.memory_value >= 0
+                  ? "var(--tron-success)"
+                  : "var(--tron-error)",
+            href: "/memory" as string | null,
+          },
         ].map((s) => {
           const content = (
             <>

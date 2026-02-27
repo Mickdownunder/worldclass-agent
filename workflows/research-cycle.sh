@@ -285,12 +285,20 @@ if not isinstance(critic_score, (int, float)):
     critic_score = None
 strategy_profile_id = None
 strategy_name = None
+memory_mode = "fallback"
+strategy_confidence = None
 ms = proj_dir / "memory_strategy.json"
 if ms.exists():
     try:
-        selected = (json.loads(ms.read_text()).get("selected_strategy") or {})
+        ms_data = json.loads(ms.read_text())
+        selected = (ms_data.get("selected_strategy") or {})
         strategy_profile_id = selected.get("id")
         strategy_name = selected.get("name")
+        raw_mode = (ms_data.get("mode") or "").strip().lower()
+        memory_mode = "applied" if raw_mode == "v2_applied" else "fallback"
+        strategy_confidence = ms_data.get("confidence") or selected.get("confidence")
+        if strategy_confidence is not None:
+            strategy_confidence = float(strategy_confidence)
     except Exception:
         pass
 fail_codes = []
@@ -308,6 +316,12 @@ if status.startswith("failed"):
 if gate_metrics.get("claim_support_rate", 1) < 0.4:
     what_hurt.append("low_claim_support_rate")
 from lib.memory import Memory
+verified_claim_count = gate_metrics.get("verified_claim_count")
+claim_support_rate = gate_metrics.get("claim_support_rate")
+if verified_claim_count is not None:
+    verified_claim_count = int(verified_claim_count)
+if claim_support_rate is not None:
+    claim_support_rate = float(claim_support_rate)
 with Memory() as mem:
     episode_id = mem.record_run_episode(
         project_id=project_id,
@@ -323,6 +337,10 @@ with Memory() as mem:
         what_helped=what_helped,
         what_hurt=what_hurt,
         strategy_profile_id=strategy_profile_id,
+        memory_mode=memory_mode,
+        strategy_confidence=strategy_confidence,
+        verified_claim_count=verified_claim_count,
+        claim_support_rate=claim_support_rate,
     )
     mem.record_memory_decision(
         decision_type="episode_persisted",

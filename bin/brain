@@ -19,6 +19,7 @@ Usage:
   brain credibility [--limit N]
   brain outcomes [--limit N]
   brain decisions [--limit N]
+  brain memory-value
 """
 import os
 import sys
@@ -174,6 +175,12 @@ def cmd_decisions(args: list[str]):
         print(json.dumps({"decisions": decisions}, indent=2, default=str))
 
 
+def cmd_memory_value(args: list[str]):
+    with Memory() as mem:
+        score = mem.get_memory_value_score()
+        print(json.dumps(score, indent=2, default=str))
+
+
 def cmd_plumber(args: list[str]):
     from lib.plumber import (
         run_plumber, rollback_patch, list_patches,
@@ -239,6 +246,7 @@ def main():
         "credibility": cmd_credibility,
         "outcomes": cmd_outcomes,
         "decisions": cmd_decisions,
+        "memory-value": cmd_memory_value,
     }
 
     if cmd in commands:

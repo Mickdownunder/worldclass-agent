@@ -192,7 +192,11 @@ SCHEMA_SQL = """
         what_helped_json TEXT DEFAULT '[]',
         what_hurt_json TEXT DEFAULT '[]',
         strategy_profile_id TEXT,
-        created_at TEXT NOT NULL
+        created_at TEXT NOT NULL,
+        memory_mode TEXT,
+        strategy_confidence REAL,
+        verified_claim_count INTEGER,
+        claim_support_rate REAL
     );
     CREATE TABLE IF NOT EXISTS strategy_profiles (
         id TEXT PRIMARY KEY,
@@ -278,6 +282,7 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     conn.commit()
     migrate_research_findings_quality(conn)
+    migrate_run_episodes_memory_value(conn)
 
 
 def migrate_research_findings_quality(conn: sqlite3.Connection) -> None:
@@ -302,4 +307,19 @@ def migrate_research_findings_quality(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_research_findings_admission ON research_findings(admission_state)"
     )
+    conn.commit()
+
+
+def migrate_run_episodes_memory_value(conn: sqlite3.Connection) -> None:
+    """Add memory_value columns to run_episodes (Priority 1: Memory Value Score)."""
+    cur = conn.execute("PRAGMA table_info(run_episodes)")
+    existing = {row[1] for row in cur.fetchall()}
+    for name, typ in [
+        ("memory_mode", "TEXT"),
+        ("strategy_confidence", "REAL"),
+        ("verified_claim_count", "INTEGER"),
+        ("claim_support_rate", "REAL"),
+    ]:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE run_episodes ADD COLUMN {name} {typ}")
     conn.commit()

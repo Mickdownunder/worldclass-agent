@@ -45,15 +45,23 @@ class MemoryV2:
         what_helped: list[str] | None = None,
         what_hurt: list[str] | None = None,
         strategy_profile_id: str | None = None,
+        memory_mode: str | None = None,
+        strategy_confidence: float | None = None,
+        verified_claim_count: int | None = None,
+        claim_support_rate: float | None = None,
     ) -> str:
         episode_id = hash_id(f"episode:{project_id}")
         now = utcnow()
+        mode_val = (memory_mode or "fallback").strip().lower()
+        if mode_val not in ("applied", "fallback"):
+            mode_val = "fallback"
         self._conn.execute(
             """INSERT OR REPLACE INTO run_episodes
                (id, project_id, question, domain, status, plan_query_mix_json, source_mix_json,
                 gate_metrics_json, critic_score, user_verdict, fail_codes_json,
-                what_helped_json, what_hurt_json, strategy_profile_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                what_helped_json, what_hurt_json, strategy_profile_id, created_at,
+                memory_mode, strategy_confidence, verified_claim_count, claim_support_rate)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 episode_id,
                 project_id,
@@ -70,10 +78,47 @@ class MemoryV2:
                 _safe_json(what_hurt, []),
                 strategy_profile_id,
                 now,
+                mode_val,
+                strategy_confidence,
+                verified_claim_count,
+                claim_support_rate,
             ),
         )
         self._conn.commit()
         return episode_id
+
+    def get_memory_value_score(self) -> dict:
+        """Memory Value: avg(critic_score) applied - avg(critic_score) fallback. Answers: does memory help?"""
+        try:
+            applied = self._conn.execute(
+                """SELECT AVG(critic_score) AS avg_score, COUNT(*) AS cnt
+                   FROM run_episodes WHERE memory_mode = 'applied' AND critic_score IS NOT NULL"""
+            ).fetchone()
+            fallback = self._conn.execute(
+                """SELECT AVG(critic_score) AS avg_score, COUNT(*) AS cnt
+                   FROM run_episodes WHERE memory_mode = 'fallback' AND critic_score IS NOT NULL"""
+            ).fetchone()
+            applied_avg = float(applied["avg_score"]) if applied and applied["avg_score"] is not None else None
+            fallback_avg = float(fallback["avg_score"]) if fallback and fallback["avg_score"] is not None else None
+            applied_cnt = int(applied["cnt"] or 0) if applied else 0
+            fallback_cnt = int(fallback["cnt"] or 0) if fallback else 0
+            if applied_avg is not None and fallback_avg is not None:
+                memory_value = round(applied_avg - fallback_avg, 3)
+            elif applied_avg is not None:
+                memory_value = round(applied_avg, 3)
+            elif fallback_avg is not None:
+                memory_value = round(-fallback_avg, 3)
+            else:
+                memory_value = None
+            return {
+                "memory_value": memory_value,
+                "applied_avg": round(applied_avg, 3) if applied_avg is not None else None,
+                "fallback_avg": round(fallback_avg, 3) if fallback_avg is not None else None,
+                "applied_count": applied_cnt,
+                "fallback_count": fallback_cnt,
+            }
+        except Exception:
+            return {"memory_value": None, "applied_avg": None, "fallback_avg": None, "applied_count": 0, "fallback_count": 0}
 
     def upsert_strategy_profile(
         self,
@@ -148,7 +193,16 @@ class MemoryV2:
         candidates = self.list_strategy_profiles(domain=domain or None, limit=20)
         if not candidates:
             return None
+        # Fail-code filter: hard-exclude strategies that had blocking fail_codes in this domain (Priority 3)
+        candidates = [c for c in candidates if not self._strategy_fail_code_blocked(c.get("id") or "", domain)]
+        if not candidates:
+            return None
         q_tokens = _tokenize(question)
+        similar_count, similar_recency = self._similar_episode_signals(question, domain)
+        similar_norm = min(1.0, similar_count / 10.0)
+        recency_domain = similar_recency
+        if domain and any(c.get("domain") == domain for c in candidates):
+            recency_domain = _clamp(recency_domain + 0.1, 0.0, 1.0)
         best = None
         best_score = -1.0
         for c in candidates:
@@ -156,26 +210,41 @@ class MemoryV2:
             p_tokens = _tokenize(policy_text)
             overlap = len(q_tokens & p_tokens)
             lexical = overlap / max(1, len(q_tokens))
-            similar_count, similar_recency = self._similar_episode_signals(question, domain)
-            similar_norm = min(1.0, similar_count / 10.0)
+            causal_score, what_hurt_penalty = self._causal_signal(
+                c.get("id") or "", c.get("domain") or "", question, domain
+            )
+            # Weights: 40% historical, 20% lexical, 20% causal, 10% similar episodes, 10% recency+domain (Priority 3)
             combined = (
-                0.55 * float(c.get("score") or 0.5)
+                0.40 * float(c.get("score") or 0.5)
                 + 0.20 * lexical
-                + 0.15 * similar_norm
-                + 0.10 * similar_recency
+                + 0.20 * causal_score
+                + 0.10 * similar_norm
+                + 0.10 * recency_domain
             )
             if c.get("domain") == domain:
                 combined += 0.05
+            if what_hurt_penalty:
+                combined -= 0.2
             if combined > best_score:
                 best_score = combined
                 best = c
                 best["confidence_drivers"] = {
                     "strategy_score": round(float(c.get("score") or 0.5), 3),
                     "query_overlap": round(lexical, 3),
+                    "causal_score": round(causal_score, 3),
+                    "what_hurt_penalty": what_hurt_penalty,
                     "similar_episode_count": similar_count,
                     "similar_recency_weight": round(similar_recency, 3),
                 }
         if not best:
+            return None
+        # Domain mismatch: if strategy's domain overrides don't fit question domain, fall back to defaults (Priority 3)
+        if self._strategy_domain_mismatch(best, domain):
+            self.record_memory_decision(
+                "strategy_domain_mismatch",
+                {"strategy_id": best.get("id"), "strategy_domain": best.get("domain"), "question_domain": domain or ""},
+                confidence=_clamp(best_score, 0.0, 1.0),
+            )
             return None
         confidence = _clamp(best_score, 0.0, 1.0)
         best["selection_confidence"] = confidence
@@ -222,6 +291,138 @@ class MemoryV2:
         if similar_count <= 0:
             return 0, 0.0
         return similar_count, _clamp(weighted / similar_count, 0.0, 1.0)
+
+    # Domain -> fail_codes that trigger hard-exclude when strategy was used in that domain (Priority 3)
+    _DOMAIN_BLOCKING_FAIL_CODES: dict[str, list[str]] = {
+        "biomedical": ["safety_filter_block"],
+        "clinical": ["safety_filter_block"],
+        "medical": ["safety_filter_block"],
+    }
+
+    def _strategy_episodes_for_causal(
+        self, strategy_profile_id: str, domain: str | None, limit: int = 30
+    ) -> list[dict]:
+        """Episodes that used this strategy in same/similar domain for what_helped/what_hurt/fail_codes."""
+        try:
+            if domain:
+                rows = self._conn.execute(
+                    """SELECT question, domain, what_helped_json, what_hurt_json, fail_codes_json, critic_score
+                       FROM run_episodes WHERE strategy_profile_id=? AND domain=?
+                       ORDER BY created_at DESC LIMIT ?""",
+                    (strategy_profile_id, domain, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    """SELECT question, domain, what_helped_json, what_hurt_json, fail_codes_json, critic_score
+                       FROM run_episodes WHERE strategy_profile_id=?
+                       ORDER BY created_at DESC LIMIT ?""",
+                    (strategy_profile_id, limit),
+                ).fetchall()
+            out = []
+            for r in rows:
+                try:
+                    what_helped = json.loads(r["what_helped_json"] or "[]")
+                    what_hurt = json.loads(r["what_hurt_json"] or "[]")
+                    fail_codes = json.loads(r["fail_codes_json"] or "[]")
+                except Exception:
+                    what_helped, what_hurt, fail_codes = [], [], []
+                out.append({
+                    "question": r["question"] or "",
+                    "domain": r["domain"] or "",
+                    "what_helped": what_helped if isinstance(what_helped, list) else [],
+                    "what_hurt": what_hurt if isinstance(what_hurt, list) else [],
+                    "fail_codes": fail_codes if isinstance(fail_codes, list) else [],
+                    "critic_score": float(r["critic_score"]) if r["critic_score"] is not None else None,
+                })
+            return out
+        except Exception:
+            return []
+
+    def _strategy_fail_code_blocked(self, strategy_profile_id: str, domain: str | None) -> bool:
+        """True if this strategy should be hard-excluded for this domain (e.g. safety_filter_block on biomedical)."""
+        if not domain:
+            return False
+        domain_lower = (domain or "").lower()
+        blocking = []
+        for d, codes in self._DOMAIN_BLOCKING_FAIL_CODES.items():
+            if d in domain_lower or domain_lower in d:
+                blocking.extend(codes)
+        if not blocking:
+            return False
+        try:
+            rows = self._conn.execute(
+                """SELECT fail_codes_json FROM run_episodes
+                   WHERE strategy_profile_id=? AND domain=?""",
+                (strategy_profile_id, domain),
+            ).fetchall()
+            for r in rows:
+                try:
+                    codes = json.loads(r["fail_codes_json"] or "[]")
+                    if isinstance(codes, list) and any(c in blocking for c in (str(x) for x in codes)):
+                        return True
+                except Exception:
+                    pass
+            return False
+        except Exception:
+            return False
+
+    def _causal_signal(
+        self, strategy_profile_id: str, strategy_domain: str, question: str, domain: str | None
+    ) -> tuple[float, bool]:
+        """
+        Returns (causal_score 0..1, what_hurt_penalty_applied).
+        causal_score: higher if past episodes with this strategy had what_helped / good outcomes; lower if what_hurt matches.
+        what_hurt_penalty_applied: True if we apply -0.2 elsewhere (similar episode had what_hurt matching question).
+        """
+        episodes = self._strategy_episodes_for_causal(strategy_profile_id, domain or strategy_domain, limit=20)
+        if not episodes:
+            return 0.5, False  # neutral
+        q_tokens = _tokenize(question)
+        hurt_penalty = False
+        help_count = 0
+        hurt_count = 0
+        good_outcome_count = 0
+        for ep in episodes:
+            what_hurt = [str(x).lower() for x in ep.get("what_hurt") or []]
+            what_helped = [str(x).lower() for x in ep.get("what_helped") or []]
+            hurt_tokens = _tokenize(" ".join(what_hurt))
+            help_tokens = _tokenize(" ".join(what_helped))
+            if q_tokens and hurt_tokens and len(q_tokens & hurt_tokens) >= 1:
+                hurt_penalty = True
+                hurt_count += 1
+            if what_helped and (not q_tokens or len(q_tokens & help_tokens) >= 1 or len(help_tokens) <= 2):
+                help_count += 1
+            if isinstance(ep.get("critic_score"), (int, float)) and float(ep["critic_score"]) >= 0.5:
+                good_outcome_count += 1
+        n = len(episodes)
+        causal = 0.5
+        if n > 0:
+            causal = 0.3 + 0.4 * (good_outcome_count / n) + 0.2 * min(1.0, help_count / 3) - 0.2 * min(1.0, hurt_count)
+        causal = _clamp(causal, 0.0, 1.0)
+        return causal, hurt_penalty
+
+    def _strategy_domain_mismatch(self, strategy: dict, question_domain: str | None) -> bool:
+        """True if strategy's domain overrides don't fit question domain (e.g. clinical strategy for manufacturing)."""
+        if not question_domain:
+            return False
+        strategy_domain = (strategy.get("domain") or "").strip().lower()
+        if not strategy_domain or strategy_domain == "general":
+            return False
+        qd = (question_domain or "").lower()
+        # Mismatch if strategy is domain-specific and question domain is different
+        domain_keywords = {
+            "clinical": ["clinical", "medical", "biomedical", "health", "trial"],
+            "manufacturing": ["manufacturing", "industrial", "supply", "production"],
+            "biomedical": ["bio", "medical", "clinical", "health"],
+            "general": [],
+        }
+        for key, keywords in domain_keywords.items():
+            if key == "general":
+                continue
+            if strategy_domain == key or strategy_domain in key:
+                if not any(kw in qd for kw in keywords):
+                    return True
+        return False
 
     def record_strategy_application_event(
         self,

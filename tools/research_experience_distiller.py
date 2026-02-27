@@ -96,6 +96,70 @@ def _dedup_principles(principles_data: list[dict], project_id: str, model: str) 
     return representatives
 
 
+def _distill_causal_principles(
+    project_id: str,
+    question: str,
+    domain: str,
+    strategy_used: str,
+    findings_count: int,
+    claim_breakdown: dict,
+    critic_score: float,
+    critic_weaknesses: list,
+    what_helped: list,
+    what_hurt: list,
+    model: str,
+) -> None:
+    """Single cheap LLM call: extract 2-3 causal strategic principles. Store with type=causal. Runs for every run."""
+    from tools.research_common import llm_call
+    payload = {
+        "question": question[:300],
+        "strategy_used": strategy_used[:200],
+        "findings_count": findings_count,
+        "claim_breakdown": claim_breakdown,
+        "critic_score": critic_score,
+        "critic_weaknesses": critic_weaknesses[:5],
+        "what_helped": what_helped,
+        "what_hurt": what_hurt,
+    }
+    system = (
+        "You are a research analyst. From this single run experience, extract 2-3 CAUSAL strategic principles: "
+        "what caused success or failure (e.g. 'Manufacturing questions need SEC sources, not clinical DBs'). "
+        "Return only valid JSON: {\"principles\": [{\"principle\": \"...\", \"evidence\": \"...\", \"type\": \"causal\"}]}. "
+        "evidence = one short sentence from this run (e.g. 'proj-X: 0 verified claims from 38 clinical sources')."
+    )
+    user = f"Run summary:\n{json.dumps(payload, indent=2)}\n\nExtract 2-3 causal principles. Return only JSON."
+    try:
+        result = llm_call(model, system, user, project_id=project_id)
+        text = (result.text or "").strip()
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:].strip()
+        parsed = json.loads(text)
+        principles_data = parsed.get("principles") or []
+        if not isinstance(principles_data, list):
+            return
+        from lib.memory import Memory
+        mem = Memory()
+        for p in principles_data[:3]:
+            desc = (p.get("principle") or p.get("description") or "").strip()
+            if not desc or len(desc) < 10:
+                continue
+            evidence = (p.get("evidence") or "").strip()[:500]
+            evidence_json = json.dumps([evidence]) if evidence else "[]"
+            mem.insert_principle(
+                principle_type="causal",
+                description=desc[:2000],
+                source_project_id=project_id,
+                domain=domain or None,
+                evidence_json=evidence_json,
+                metric_score=0.5,
+            )
+        mem.close()
+    except Exception as e:
+        print(f"Causal distillation failed (non-fatal): {e}", file=sys.stderr)
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: research_experience_distiller.py <project_id>", file=sys.stderr)
@@ -187,6 +251,8 @@ def main() -> None:
         reverse=True,
     )[:10]
 
+    model = os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gpt-4o-mini")
+
     # Loop-backs from phase_history
     phase_history = d.get("phase_history") or []
     loop_back_count = 0
@@ -210,6 +276,54 @@ def main() -> None:
 
     trajectory_str = json.dumps(trajectory, indent=2)
 
+    gate_metrics = (quality_gate.get("evidence_gate") or {}).get("metrics") or {}
+    # Priority 2: Causal distillation (EvolveR: every run produces learnings)
+    strategy_used = ""
+    ms_path = proj_dir / "memory_strategy.json"
+    if ms_path.exists():
+        try:
+            ms_data = json.loads(ms_path.read_text())
+            strategy_used = (ms_data.get("selected_strategy") or {}).get("name") or ms_data.get("mode") or ""
+        except Exception:
+            pass
+    what_helped_list = []
+    if gate_metrics.get("verified_claim_count", 0) >= 3:
+        what_helped_list.append("multi_source_verification")
+    if gate_metrics.get("claim_support_rate", 0) >= 0.6:
+        what_helped_list.append("high_claim_support_rate")
+    what_hurt_list = []
+    if status.startswith("failed"):
+        what_hurt_list.append(status)
+    if gate_metrics.get("claim_support_rate", 1) < 0.4:
+        what_hurt_list.append("low_claim_support_rate")
+    critic_weaknesses = []
+    critique_path = proj_dir / "verify" / "critique.json"
+    if not critique_path.exists():
+        critique_path = proj_dir / "artifacts" / "critique.json" if (proj_dir / "artifacts").is_dir() else None
+    if critique_path and critique_path.exists():
+        try:
+            cq = json.loads(critique_path.read_text())
+            critic_weaknesses = (cq.get("weaknesses") or [])[:5]
+        except Exception:
+            pass
+    claim_breakdown = {
+        "verified_claim_count": gate_metrics.get("verified_claim_count"),
+        "claim_support_rate": gate_metrics.get("claim_support_rate"),
+    }
+    _distill_causal_principles(
+        project_id=project_id,
+        question=question,
+        domain=domain,
+        strategy_used=strategy_used,
+        findings_count=findings_count,
+        claim_breakdown=claim_breakdown,
+        critic_score=critic_score,
+        critic_weaknesses=critic_weaknesses,
+        what_helped=what_helped_list,
+        what_hurt=what_hurt_list,
+        model=model,
+    )
+
     success = (critic_score >= 0.7 and status == "done") or (status == "done" and critic_score >= 0.5)
     principle_type = "guiding" if success else "cautionary"
     if success:
@@ -228,7 +342,6 @@ def main() -> None:
             "policy keys: preferred_query_types, domain_rank_overrides, relevance_threshold, critic_threshold, revise_rounds, required_source_mix."
         )
 
-    model = os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gpt-4o-mini")
     system = (
         "You are a research quality analyst. Given a completed research project trajectory, "
         "extract concise principles and an executable strategy. Output only valid JSON, no markdown."

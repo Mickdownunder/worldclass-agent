@@ -302,6 +302,10 @@ class Memory:
         what_helped: list[str] | None = None,
         what_hurt: list[str] | None = None,
         strategy_profile_id: str | None = None,
+        memory_mode: str | None = None,
+        strategy_confidence: float | None = None,
+        verified_claim_count: int | None = None,
+        claim_support_rate: float | None = None,
     ) -> str:
         return self._v2.record_run_episode(
             project_id=project_id,
@@ -317,7 +321,15 @@ class Memory:
             what_helped=what_helped,
             what_hurt=what_hurt,
             strategy_profile_id=strategy_profile_id,
+            memory_mode=memory_mode,
+            strategy_confidence=strategy_confidence,
+            verified_claim_count=verified_claim_count,
+            claim_support_rate=claim_support_rate,
         )
+
+    def get_memory_value_score(self) -> dict:
+        """Memory Value: avg(critic) applied - avg(critic) fallback. Does memory help?"""
+        return self._v2.get_memory_value_score()
 
     def upsert_strategy_profile(
         self,
