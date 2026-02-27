@@ -1250,10 +1250,34 @@ PY
     if [ -f "$ART/critique.json" ]; then
       SCORE=$(python3 -c "import json; d=json.load(open('$ART/critique.json')); print(d.get('score', 0.5), end='')" 2>/dev/null || echo "0.5")
     fi
+    FORCE_ONE_REVISION=0
+    if [ -f "$ART/critique.json" ]; then
+      FORCE_ONE_REVISION=$(python3 -c "
+import json
+try:
+  d = json.load(open('$ART/critique.json'))
+  weaknesses = d.get('weaknesses') or []
+  text = ' '.join(str(w) for w in weaknesses).lower()
+  if any(k in text for k in ['unvollständig', 'bricht ab', 'fehlt']):
+    print('1', end='')
+  else:
+    print('0', end='')
+except Exception:
+  print('0', end='')
+" 2>/dev/null) || FORCE_ONE_REVISION=0
+    fi
     REV_ROUND=0
-    while [ "$REV_ROUND" -lt "$MAX_REVISE_ROUNDS" ] && python3 -c "exit(0 if float('$SCORE') < float('$CRITIC_THRESHOLD') else 1)" 2>/dev/null; do
+    while [ "$REV_ROUND" -lt "$MAX_REVISE_ROUNDS" ]; do
+      NEED_REVISION=0
+      if python3 -c "exit(0 if float('$SCORE') < float('$CRITIC_THRESHOLD') else 1)" 2>/dev/null; then NEED_REVISION=1; fi
+      if [ "$FORCE_ONE_REVISION" = "1" ] && [ "$REV_ROUND" -eq 0 ]; then NEED_REVISION=1; fi
+      [ "$NEED_REVISION" -eq 0 ] && break
       REV_ROUND=$((REV_ROUND + 1))
-      log "Report quality below threshold (score $SCORE, threshold $CRITIC_THRESHOLD). Revision round $REV_ROUND/$MAX_REVISE_ROUNDS..."
+      if [ "$FORCE_ONE_REVISION" = "1" ] && [ "$REV_ROUND" -eq 1 ]; then
+        log "Critic found critical structural weaknesses — forcing at least one revision round."
+      else
+        log "Report quality below threshold (score $SCORE, threshold $CRITIC_THRESHOLD). Revision round $REV_ROUND/$MAX_REVISE_ROUNDS..."
+      fi
       python3 "$TOOLS/research_critic.py" "$PROJECT_ID" revise "$ART" > "$ART/revised_report.md" 2>> "$PWD/log.txt" || true
       if [ -f "$ART/revised_report.md" ] && [ -s "$ART/revised_report.md" ]; then
         cp "$ART/revised_report.md" "$ART/report.md"

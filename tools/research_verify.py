@@ -157,18 +157,47 @@ Prefer specific, quantitative claims (e.g. "X achieved Y% response rate in phase
     return []
 
 
+def _normalize_claim_for_dedup(text: str) -> str:
+    """Normalize claim text for dedup: lowercase, collapse whitespace, strip punctuation at end."""
+    t = " ".join((text or "").lower().split()).strip()
+    t = re.sub(r"[^\w\s\-\.\%]", " ", t)
+    return " ".join(t.split())[:250]
+
+
+def _claim_similarity(a: str, b: str) -> float:
+    """Jaccard-like overlap on words; 1.0 = identical, 0 = no overlap."""
+    wa = set(re.findall(r"\b[a-z0-9\-\.\%]{2,}\b", a.lower()))
+    wb = set(re.findall(r"\b[a-z0-9\-\.\%]{2,}\b", b.lower()))
+    if not wa or not wb:
+        return 0.0
+    return len(wa & wb) / len(wa | wb)
+
+
 def _merge_dedupe_claims(claims_list: list[dict]) -> list[dict]:
-    """Merge claims from multiple batches and deduplicate by normalized claim text."""
-    seen_normalized: set[str] = set()
+    """Merge claims from multiple batches; deduplicate by normalized text and similarity (stronger dedup)."""
     merged: list[dict] = []
     for c in claims_list:
         text = (c.get("claim") or "").strip()
         if not text:
             continue
-        norm = " ".join(text.lower().split())[:200]
-        if norm in seen_normalized:
+        norm = _normalize_claim_for_dedup(text)
+        if not norm:
             continue
-        seen_normalized.add(norm)
+        # Skip if we already have a very similar claim (same prefix or high word overlap)
+        is_dup = False
+        for m in merged:
+            existing = _normalize_claim_for_dedup(m.get("claim") or "")
+            if norm == existing:
+                is_dup = True
+                break
+            if len(norm) >= 30 and len(existing) >= 30 and _claim_similarity(norm, existing) >= 0.65:
+                is_dup = True
+                break
+            if norm.startswith(existing[:40]) or existing.startswith(norm[:40]):
+                is_dup = True
+                break
+        if is_dup:
+            continue
         merged.append(c)
     return merged
 

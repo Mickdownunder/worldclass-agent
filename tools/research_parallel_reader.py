@@ -207,9 +207,12 @@ def main() -> None:
             lock,
             results,
         ): i for i, line in enumerate(lines)}
+        completed = 0
         for future in as_completed(futures):
             try:
                 future.result()
+                completed += 1
+                progress_step(project_id, f"Reading source {completed}/{total}", completed, total)
             except Exception as e:
                 print(f"WARN: parallel read worker failed: {e}", file=sys.stderr)
     # Results list is appended by workers; sort by idx and aggregate
@@ -221,8 +224,6 @@ def main() -> None:
                 successes += 1
         if saved:
             saved_count += 1
-    # Progress: report once at end
-    progress_step(project_id, f"Read {attempts} sources ({successes} ok)", attempts, total)
     out = {"read_attempts": attempts, "read_successes": successes, "read_failures": attempts - successes}
     print(json.dumps(out))
 

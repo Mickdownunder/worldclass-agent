@@ -123,6 +123,31 @@ Return JSON: {"sections": ["Section Title One", "Section Title Two", ...]} with 
     return [f"Analysis: Topic {i+1}" for i in range(len(clusters))]
 
 
+def _build_claim_source_registry(
+    claim_ledger: list[dict],
+    sources: list[dict],
+    ref_list_with_titles: list[tuple[str, str]],
+) -> str:
+    """Build Claim Evidence Registry table: claim (short) | source | URL | date | tier. No LLM."""
+    url_to_title = dict(ref_list_with_titles)
+    url_to_date = {}
+    for s in sources:
+        u = (s.get("url") or "").strip()
+        if u:
+            url_to_date[u] = (s.get("published_date") or s.get("date") or "").strip()[:20]
+    lines = ["| # | Claim (short) | Source | URL | Date | Tier |", "| --- | --- | --- | --- | --- | --- |"]
+    for i, c in enumerate(claim_ledger[:50], 1):
+        text = (c.get("text") or "")[:60].replace("|", " ").replace("\n", " ")
+        urls = c.get("supporting_source_ids") or []
+        first_url = urls[0] if urls else ""
+        title = (url_to_title.get(first_url) or "").strip()[:50].replace("|", " ")
+        url_short = (first_url[:55] + "...") if len(first_url) > 55 else first_url
+        date = url_to_date.get(first_url, "")
+        tier = (c.get("verification_tier") or "").strip() or "UNVERIFIED"
+        lines.append(f"| {i} | {text} | {title} | {url_short} | {date} | {tier} |")
+    return "\n".join(lines)
+
+
 def _build_ref_map(findings: list[dict], claim_ledger: list[dict]) -> tuple[dict[str, int], list[tuple[str, str]]]:
     """Build url -> ref number (1-based) and ordered list (url, title) for References."""
     cited = set()
@@ -181,6 +206,21 @@ def _claim_ledger_block(claim_ledger: list[dict]) -> str:
     return "\n".join(lines) if lines else ""
 
 
+def _extract_section_key_points(body: str, max_points: int = 5) -> list[str]:
+    """Extract 3-5 key points from a section body for anti-repetition (no LLM)."""
+    points = []
+    for para in (body or "").split("\n\n"):
+        para = para.strip()
+        if not para or len(para) < 30:
+            continue
+        first = re.sub(r"\s+", " ", para)[:150].strip()
+        if first and first not in points:
+            points.append(first)
+        if len(points) >= max_points:
+            break
+    return points[:max_points]
+
+
 def _synthesize_section(
     section_title: str,
     findings_for_section: list[dict],
@@ -190,9 +230,11 @@ def _synthesize_section(
     project_id: str,
     rel_sources: dict,
     claim_ledger: list[dict] | None = None,
+    previous_sections_summary: list[str] | None = None,
 ) -> str:
     """One LLM call for one deep-analysis section (500–1500 words). When claim_ledger is provided, section must use [claim_ref: id@version] for every claim-bearing sentence."""
     claim_ledger = claim_ledger or []
+    previous_sections_summary = previous_sections_summary or []
     ref_lines = []
     for f in findings_for_section[:15]:
         url = (f.get("url") or "").strip()
@@ -222,7 +264,10 @@ def _synthesize_section(
     system = """You are a research analyst. Write a single analytical section of a professional report.
 Use inline citations as [1], [2] etc. to match the reference list provided. Write 500–1500 words.
 State confidence where relevant (e.g. "HIGH confidence (3 sources)" or "LOW (single source)").
-Do not repeat URLs in the body; use only [N] references."""
+Do not repeat URLs in the body; use only [N] references.
+Do not repeat information already covered in previous sections."""
+    if previous_sections_summary:
+        system += "\n\nAlready covered in previous sections (do not repeat):\n- " + "\n- ".join(previous_sections_summary[:15])
     if claim_block:
         system += """
 For every factual claim or finding you state, you MUST cite the claim from the CLAIM LEDGER by including exactly one [claim_ref: claim_id@version] in that sentence. Example: "The effect was significant [claim_ref: cl_1@1]." Use only claim_refs from the CLAIM LEDGER list below. Do not introduce new claims; only cite existing ledger claims."""
@@ -268,6 +313,33 @@ Be specific to the actual topic. 4-8 lines total. No filler."""
     claims_text = json.dumps([{"text": c.get("text", "")[:120], "tier": c.get("verification_tier", "UNVERIFIED")} for c in claim_ledger[:20]], ensure_ascii=False)
     findings_text = json.dumps([{"excerpt": (f.get("excerpt") or "")[:200]} for f in findings[:15]], ensure_ascii=False)[:4000]
     user = f"QUESTION: {question}\nCLAIMS:\n{claims_text}\nFINDINGS:\n{findings_text}\n\nWrite the Research Situation Map (no heading, just content)."
+    try:
+        result = llm_call(_model(), system, user, project_id=project_id)
+        return (result.text or "").strip()
+    except Exception:
+        return ""
+
+
+def _synthesize_decision_matrix(
+    question: str,
+    claim_ledger: list[dict],
+    thesis: dict,
+    tipping_text: str,
+    project_id: str,
+) -> str:
+    """One-page decision matrix: who wins, when, why; dimension-by-dimension; overall recommendation with confidence."""
+    system = """You are a research strategist. Given the research question, verified claims, thesis, and tipping conditions, produce an Executive Decision Synthesis (about 1 page). Format as markdown with no top-level heading. Include:
+1) Dimension-by-dimension winner or comparison (what the evidence says per dimension)
+2) Conditions under which each conclusion flips (when would the answer change?)
+3) Overall recommendation with confidence (HIGH/MEDIUM/LOW)
+
+Be specific and concise. No filler."""
+    claims_text = json.dumps(
+        [{"text": (c.get("text") or "")[:150], "tier": c.get("verification_tier", "UNVERIFIED")} for c in claim_ledger[:30]],
+        ensure_ascii=False,
+    )[:6000]
+    thesis_text = json.dumps(thesis, ensure_ascii=False)[:1500] if thesis else "{}"
+    user = f"QUESTION: {question}\n\nCLAIMS:\n{claims_text}\n\nTHESIS:\n{thesis_text}\n\nTIPPING CONDITIONS:\n{(tipping_text or '')[:2000]}\n\nWrite the Executive Decision Synthesis (no heading)."
     try:
         result = llm_call(_model(), system, user, project_id=project_id)
         return (result.text or "").strip()
@@ -601,6 +673,9 @@ def run_synthesis(project_id: str) -> str:
     parts.append("\n\n---\n\n")
 
     checkpoint_bodies = list(ck["bodies"]) if (ck and ck.get("bodies")) else []
+    accumulated_summary: list[str] = []
+    for b in checkpoint_bodies:
+        accumulated_summary.extend(_extract_section_key_points(b))
     for i in range(start_index, len(clusters)):
         cluster = clusters[i]
         title = section_titles[i] if i < len(section_titles) else f"Analysis: Topic {i+1}"
@@ -615,7 +690,8 @@ def run_synthesis(project_id: str) -> str:
             progress_step(project_id, f"Writing section {i+1}/{len(clusters)}: {title}", i+1, len(clusters))
         except Exception:
             pass
-        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger)
+        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger, previous_sections_summary=accumulated_summary)
+        accumulated_summary.extend(_extract_section_key_points(body))
         if os.environ.get("RESEARCH_WARP_DEEPEN") == "1" and i == 0 and len(body) > 300:
             try:
                 from tools.research_progress import step as progress_step
@@ -644,7 +720,7 @@ def run_synthesis(project_id: str) -> str:
                                     if wr.get("text"):
                                         new_f = {"url": url, "title": wr.get("title", ""), "excerpt": (wr.get("text") or "")[:1500]}
                                         section_findings = section_findings + [new_f]
-                                        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger)
+                                        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger, previous_sections_summary=accumulated_summary)
                                 except Exception:
                                     pass
                 except Exception:
@@ -655,11 +731,12 @@ def run_synthesis(project_id: str) -> str:
     parts.append("\n\n".join(deep_parts))
     parts.append("\n\n---\n\n")
 
-    # Methodology (auto)
+    # Methodology (auto): use actual on-disk counts, not capped findings list
     source_count = len(sources)
     read_count = len(list((proj_path / "sources").glob("*_content.json")))
+    findings_count_actual = len(list((proj_path / "findings").glob("*.json")))
     parts.append("## Methodology\n\n")
-    parts.append(f"This report is based on **{len(findings)} findings** from **{source_count} sources** ")
+    parts.append(f"This report is based on **{findings_count_actual} findings** from **{source_count} sources** ")
     parts.append(f"({read_count} successfully read). ")
     parts.append(f"Synthesis model: {_model()}. Verification and claim ledger applied. ")
     parts.append(f"Report generated at {ts}.\n\n")
@@ -673,7 +750,7 @@ def run_synthesis(project_id: str) -> str:
 
     # Verification Summary table (Tentative label for PASS_TENTATIVE per Spec §6.3)
     parts.append("## Verification Summary\n\n| # | Claim | Status | Sources |\n| --- | --- | --- | ---|\n")
-    for i, c in enumerate(claim_ledger[:25], 1):
+    for i, c in enumerate(claim_ledger[:50], 1):
         text = (c.get("text") or "")[:80].replace("|", " ")
         fstatus = (c.get("falsification_status") or "").strip()
         tier = c.get("verification_tier", "")
@@ -737,12 +814,26 @@ def run_synthesis(project_id: str) -> str:
     else:
         report_body = full_so_far
 
-    # Appendices & References
-    report_body += "\n\n## Appendix A: Source Details\n\n| # | Title | URL | Type | Reliability |\n| --- | --- | --- | --- | --- |\n"
-    for i, (url, title) in enumerate(ref_list[:50], 1):
-        rel = rel_sources.get(url, {})
-        score = rel.get("reliability_score", "")
-        report_body += f"| {i} | {(title or '')[:50]} | {url[:60]}... | web | {score} |\n"
+    # Executive Decision Synthesis at top (after header, before KEY NUMBERS)
+    try:
+        from tools.research_progress import step as progress_step
+        progress_step(project_id, "Generating Executive Decision Synthesis")
+    except Exception:
+        pass
+    decision_matrix = _synthesize_decision_matrix(question, claim_ledger, thesis, tipping, project_id)
+    if decision_matrix:
+        first_section = report_body.find("\n## ")
+        if first_section >= 0:
+            report_body = (
+                report_body[:first_section] +
+                "\n\n## Executive Decision Synthesis\n\n" + decision_matrix + "\n\n---\n\n" +
+                report_body[first_section:]
+            )
+
+    # Claim Evidence Registry (claim → source → URL → date → tier)
+    registry_md = _build_claim_source_registry(claim_ledger, sources, ref_list)
+    report_body += "\n\n## Claim Evidence Registry\n\n"
+    report_body += registry_md
     report_body += "\n\n## Appendix B: Methodology Details\n\n"
     report_body += f"- Synthesis model: {_model()}\n- Findings cap: {MAX_FINDINGS}\n- Report timestamp: {ts}\n\n"
     report_body += "## References\n\n"
