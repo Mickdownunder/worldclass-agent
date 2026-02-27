@@ -41,6 +41,18 @@ def test_validate_authority_auditability_panel_requires_audit(schema=None):
     assert len(errs3) == 1
 
 
+def test_a1_invalid_resolution_authority_stable_denied():
+    """A1: invalid resolution_authority or audit_trace_required missing for panel/manual => stable denied."""
+    schema = _default_schema_dict()
+    ok, reason = can_settle_stable(schema, {"resolution_authority": "panel", "audit_trace_required": False, "settlement_confidence": 0.9})
+    assert ok is False
+    assert "audit_trace_required" in reason.lower() or "panel" in reason.lower()
+    errs = validate_authority_auditability(schema, {"resolution_authority": "invalid_authority"})
+    assert len(errs) == 0
+    errs2 = validate_outcome_shape({"outcome_type": "binary", "resolution_authority": "invalid_authority", "settlement_confidence": 0.8})
+    assert any("resolution_authority" in e for e in errs2)
+
+
 def test_can_settle_stable_confidence_floor():
     schema = _default_schema_dict()
     ok, reason = can_settle_stable(schema, {"settlement_confidence": 0.3, "resolution_authority": "internal_auditor"})

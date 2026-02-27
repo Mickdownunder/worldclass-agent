@@ -44,8 +44,10 @@ def test_can_transition_retired_requires_reason():
 def test_can_transition_allowed():
     ok, _ = can_transition("proposed", "evidenced", {})
     assert ok is True
-    ok2, _ = can_transition("evidenced", "stable", {})
+    ok2, _ = can_transition("evidenced", "attacked", {})
     assert ok2 is True
+    ok3, _ = can_transition("evidenced", "stable", {})
+    assert ok3 is False, "evidenced -> stable must go through attacked -> defended -> stable"
 
 
 def test_can_transition_disallowed():
@@ -53,6 +55,22 @@ def test_can_transition_disallowed():
     assert ok is False
     ok2, _ = can_transition("retired", "stable", {})
     assert ok2 is False
+
+
+def test_a6_ledger_retired_without_reopen_conditions_rejected():
+    """A6: Ledger entry without reopen_conditions when state=retired => transition rejected."""
+    ok, reason = can_transition("contested", "retired", {"retire_reason": "ILL_POSED"})
+    assert ok is False
+    assert "reopen_conditions" in reason
+    ok2, _ = can_transition("contested", "retired", {"retire_reason": "ILL_POSED", "reopen_conditions": []})
+    assert ok2 is True
+
+
+def test_a7_invalid_state_transition_proposed_to_stable_rejected():
+    """A7: invalid state transition (e.g. proposed -> stable directly) => transition rejected."""
+    ok, reason = can_transition("proposed", "stable", {})
+    assert ok is False
+    assert "not allowed" in reason or "stable" in reason
 
 
 def test_upgrade_verify_ledger_to_claims(mock_operator_root, tmp_project):
@@ -83,6 +101,13 @@ def test_apply_transition(mock_operator_root, tmp_project):
         "contradicts": [], "claim_scope": {}, "reopen_conditions": [], "retire_reason": None,
     }
     save_ledger_jsonl(tmp_project, [claim])
+    # evidenced -> attacked -> defended -> stable (must go through full path)
+    updated = apply_transition(pid, "cl_0_1@1", "attacked")
+    assert updated is not None
+    assert updated["state"] == "attacked"
+    updated = apply_transition(pid, "cl_0_1@1", "defended")
+    assert updated is not None
+    assert updated["state"] == "defended"
     updated = apply_transition(pid, "cl_0_1@1", "stable")
     assert updated is not None
     assert updated["state"] == "stable"
@@ -109,3 +134,14 @@ def test_set_claim_scope(mock_operator_root, tmp_project):
     assert out is not None
     assert out["claim_scope"].get("population") == "EU"
     assert out["claim_scope"].get("timeframe") == "2025"
+
+
+def test_a4_invalid_claim_ref_format_settlement_fail(mock_operator_root, tmp_project):
+    """A4: invalid claim_ref@version (nonexistent claim) => transition returns None (settlement fail)."""
+    pid = tmp_project.name
+    (tmp_project / "claims").mkdir(parents=True, exist_ok=True)
+    save_ledger_jsonl(tmp_project, [{"claim_id": "cl_1", "claim_version": 1, "state": "defended", "text": "x", "contradicts": [], "claim_scope": {}, "reopen_conditions": [], "retire_reason": None}])
+    out_valid = apply_transition(pid, "cl_1@1", "stable")
+    assert out_valid is not None
+    out_bad = apply_transition(pid, "no_such_claim@1", "stable")
+    assert out_bad is None
