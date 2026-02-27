@@ -15,7 +15,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import project_dir, load_project, llm_call
+from tools.research_common import project_dir, load_project, llm_call, get_claims_for_synthesis
 
 MAX_FINDINGS = 80
 EXCERPT_CHARS = 2000
@@ -264,6 +264,109 @@ One line per item, bold the number. Only include verified or clearly sourced dat
     return "**—** | Key numbers to be filled from findings."
 
 
+SYNTHESIZE_CHECKPOINT = "synthesize_checkpoint.json"
+
+# Hard synthesis contract (Spec §6.2–6.3): no new claims; every claim-bearing sentence maps to ledger.
+def _normalize_for_match(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").lower().strip())
+
+
+def _is_claim_like_sentence(sentence: str) -> bool:
+    """Heuristic: sentence that looks like a factual claim (length + signals)."""
+    s = (sentence or "").strip()
+    words = s.split()
+    if len(words) < 10:
+        return False
+    lower = s.lower()
+    signals = ("found that", "study shows", "report states", "data indicate", "percent", "%", "research suggests", "evidence shows", "according to")
+    if any(sig in lower for sig in signals):
+        return True
+    if any(c.isdigit() for c in s):
+        return True
+    return len(words) >= 18  # Long declarative sentence likely a claim
+
+
+def _sentence_overlaps_claim(sentence: str, claim_texts_normalized: list[str]) -> bool:
+    """True if sentence overlaps substantially with any claim text (substring or word overlap)."""
+    norm = _normalize_for_match(sentence)
+    if not norm:
+        return False
+    words = set(re.findall(r"\b[a-z0-9]{2,}\b", norm))
+    for ct in claim_texts_normalized:
+        if norm in ct or ct in norm:
+            return True
+        cw = set(re.findall(r"\b[a-z0-9]{2,}\b", ct))
+        if cw and words and len(words & cw) / max(len(words), 1) >= 0.25:
+            return True
+    return False
+
+
+def validate_synthesis_contract(report: str, claim_ledger: list[dict], mode: str) -> dict:
+    """
+    Returns dict: unreferenced_claim_sentence_count, new_claims_in_synthesis (same), tentative_labels_ok, valid.
+    valid = (unreferenced == 0 and new_claims == 0) and (tentative_labels_ok or mode != "strict").
+    """
+    claim_texts = [c.get("text") or "" for c in claim_ledger if (c.get("text") or "").strip()]
+    claim_texts_normalized = [_normalize_for_match(t) for t in claim_texts]
+    unreferenced = 0
+    sentences = re.split(r"[.!?]\s+", report)
+    for sent in sentences:
+        if not _is_claim_like_sentence(sent):
+            continue
+        if not _sentence_overlaps_claim(sent, claim_texts_normalized):
+            unreferenced += 1
+    tentative_ok = True
+    tentative_claims = [c for c in claim_ledger if (c.get("falsification_status") or "").strip() == "PASS_TENTATIVE"]
+    if tentative_claims:
+        report_lower = report.lower()
+        for c in tentative_claims:
+            text_snippet = (c.get("text") or "")[:60]
+            if text_snippet and _normalize_for_match(text_snippet) not in _normalize_for_match(report):
+                continue
+            if "tentative" not in report_lower and "[tentative]" not in report_lower and "pass_tentative" not in report_lower:
+                tentative_ok = False
+                break
+    valid = unreferenced == 0 and tentative_ok
+    if mode == "strict":
+        valid = valid and unreferenced == 0
+    return {
+        "unreferenced_claim_sentence_count": unreferenced,
+        "new_claims_in_synthesis": unreferenced,
+        "tentative_labels_ok": tentative_ok,
+        "valid": valid,
+    }
+
+
+class SynthesisContractError(Exception):
+    """Raised when synthesis violates hard contract and mode is strict."""
+    pass
+
+
+def _load_checkpoint(proj_path: Path) -> dict | None:
+    p = proj_path / SYNTHESIZE_CHECKPOINT
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text())
+        if not isinstance(data.get("clusters"), list) or not isinstance(data.get("section_titles"), list) or not isinstance(data.get("bodies"), list):
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def _save_checkpoint(proj_path: Path, clusters: list, section_titles: list, bodies: list) -> None:
+    p = proj_path / SYNTHESIZE_CHECKPOINT
+    try:
+        p.write_text(json.dumps({"clusters": clusters, "section_titles": section_titles, "bodies": bodies}, indent=2, ensure_ascii=False))
+    except Exception:
+        pass
+
+
+def _clear_checkpoint(proj_path: Path) -> None:
+    (proj_path / SYNTHESIZE_CHECKPOINT).unlink(missing_ok=True)
+
+
 def run_synthesis(project_id: str) -> str:
     proj_path = project_dir(project_id)
     if not proj_path.exists():
@@ -273,12 +376,8 @@ def run_synthesis(project_id: str) -> str:
     verify_dir = proj_path / "verify"
     findings = _load_findings(proj_path)
     sources = _load_sources(proj_path)
-    claim_ledger = []
-    if (verify_dir / "claim_ledger.json").exists():
-        try:
-            claim_ledger = json.loads((verify_dir / "claim_ledger.json").read_text()).get("claims", [])
-        except Exception:
-            pass
+    # Dual-source: AEM claims/ledger.jsonl or fallback verify/claim_ledger.json (Spec §6.1)
+    claim_ledger = get_claims_for_synthesis(proj_path)
     contradictions = []
     if (proj_path / "contradictions.json").exists():
         try:
@@ -302,25 +401,35 @@ def run_synthesis(project_id: str) -> str:
         thesis = {}
 
     ref_map, ref_list = _build_ref_map(findings, claim_ledger)
-    clusters = _cluster_findings(findings, question, project_id)
-    playbook_id = (project.get("config") or {}).get("playbook_id")
-    playbook_instructions = None
-    if playbook_id:
-        playbook_path = proj_path.parent / "playbooks" / f"{playbook_id}.json"
-        if not playbook_path.exists():
-            playbook_path = Path(os.environ.get("OPERATOR_ROOT", "/root/operator")) / "research" / "playbooks" / f"{playbook_id}.json"
-        if playbook_path.exists():
-            try:
-                pb = json.loads(playbook_path.read_text())
-                playbook_instructions = pb.get("synthesis_instructions")
-            except Exception:
-                pass
-    try:
-        from tools.research_progress import step as progress_step
-        progress_step(project_id, "Generating outline")
-    except Exception:
-        pass
-    section_titles = _outline_sections(question, clusters, playbook_instructions, project_id)
+
+    ck = _load_checkpoint(proj_path)
+    if ck and len(ck["bodies"]) > 0 and len(ck["bodies"]) <= len(ck.get("section_titles", [])):
+        clusters = ck["clusters"]
+        section_titles = ck["section_titles"]
+        deep_parts = [f"## {section_titles[i]}\n\n{ck['bodies'][i]}" for i in range(len(ck["bodies"]))]
+        start_index = len(ck["bodies"])
+    else:
+        clusters = _cluster_findings(findings, question, project_id)
+        playbook_id = (project.get("config") or {}).get("playbook_id")
+        playbook_instructions = None
+        if playbook_id:
+            playbook_path = proj_path.parent / "playbooks" / f"{playbook_id}.json"
+            if not playbook_path.exists():
+                playbook_path = Path(os.environ.get("OPERATOR_ROOT", "/root/operator")) / "research" / "playbooks" / f"{playbook_id}.json"
+            if playbook_path.exists():
+                try:
+                    pb = json.loads(playbook_path.read_text())
+                    playbook_instructions = pb.get("synthesis_instructions")
+                except Exception:
+                    pass
+        try:
+            from tools.research_progress import step as progress_step
+            progress_step(project_id, "Generating outline")
+        except Exception:
+            pass
+        section_titles = _outline_sections(question, clusters, playbook_instructions, project_id)
+        deep_parts = []
+        start_index = 0
 
     now = datetime.now(timezone.utc)
     report_date = now.strftime("%Y-%m-%d")
@@ -332,10 +441,15 @@ def run_synthesis(project_id: str) -> str:
     parts.append(_key_numbers(findings, claim_ledger, project_id))
     parts.append("\n\n---\n\n")
 
-    deep_parts = []
-    for i, (cluster, title) in enumerate(zip(clusters, section_titles)):
+    checkpoint_bodies = list(ck["bodies"]) if (ck and ck.get("bodies")) else []
+    for i in range(start_index, len(clusters)):
+        cluster = clusters[i]
+        title = section_titles[i] if i < len(section_titles) else f"Analysis: Topic {i+1}"
         section_findings = [findings[j] for j in cluster if 0 <= j < len(findings)]
         if not section_findings:
+            checkpoint_bodies.append("_No findings for this cluster._")
+            deep_parts.append(f"## {title}\n\n_No findings for this cluster._")
+            _save_checkpoint(proj_path, clusters, section_titles, checkpoint_bodies)
             continue
         try:
             from tools.research_progress import step as progress_step
@@ -376,7 +490,9 @@ def run_synthesis(project_id: str) -> str:
                                     pass
                 except Exception:
                     pass
+        checkpoint_bodies.append(body)
         deep_parts.append(f"## {title}\n\n{body}")
+        _save_checkpoint(proj_path, clusters, section_titles, checkpoint_bodies)
     parts.append("\n\n".join(deep_parts))
     parts.append("\n\n---\n\n")
 
@@ -396,11 +512,17 @@ def run_synthesis(project_id: str) -> str:
             parts.append(f"- **{c.get('claim', c.get('topic', 'Unknown'))}**: {c.get('summary', c.get('description', ''))}\n")
         parts.append("\n")
 
-    # Verification Summary table
+    # Verification Summary table (Tentative label for PASS_TENTATIVE per Spec §6.3)
     parts.append("## Verification Summary\n\n| # | Claim | Status | Sources |\n| --- | --- | --- | ---|\n")
     for i, c in enumerate(claim_ledger[:25], 1):
         text = (c.get("text") or "")[:80].replace("|", " ")
-        status = "VERIFIED" if c.get("is_verified") else "UNVERIFIED"
+        fstatus = (c.get("falsification_status") or "").strip()
+        if fstatus == "PASS_TENTATIVE":
+            status = "TENTATIVE"
+        elif c.get("is_verified"):
+            status = "VERIFIED"
+        else:
+            status = "UNVERIFIED"
         n_src = len(c.get("supporting_source_ids") or [])
         parts.append(f"| {i} | {text}... | {status} | {n_src} |\n")
     parts.append("\n")
@@ -414,6 +536,7 @@ def run_synthesis(project_id: str) -> str:
     parts.append("\n\n---\n\n")
 
     # Executive Summary (generated last, inserted after KEY NUMBERS)
+    _clear_checkpoint(proj_path)
     full_so_far = "\n".join(parts)
     exec_summary = _synthesize_exec_summary(full_so_far, question, project_id)
     insert_idx = full_so_far.find("## Methodology")
@@ -440,6 +563,17 @@ def run_synthesis(project_id: str) -> str:
             report_body += f"[{i}] {title}  \n    {url}\n\n"
         else:
             report_body += f"[{i}] {url}\n\n"
+
+    # Hard synthesis contract (Spec §6.2–6.3): validate; strict/enforce block on violation
+    mode = (os.environ.get("AEM_ENFORCEMENT_MODE") or "observe").strip().lower()
+    if mode not in ("observe", "enforce", "strict"):
+        mode = "observe"
+    validation = validate_synthesis_contract(report_body, claim_ledger, mode)
+    if not validation["valid"] and mode in ("enforce", "strict"):
+        raise SynthesisContractError(
+            f"Synthesis contract violation: unreferenced_claim_sentence_count={validation['unreferenced_claim_sentence_count']}, "
+            f"new_claims_in_synthesis={validation['new_claims_in_synthesis']}, tentative_labels_ok={validation['tentative_labels_ok']}"
+        )
 
     return report_body
 

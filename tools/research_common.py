@@ -156,6 +156,31 @@ def api_retry():
     )
 
 
+def get_claims_for_synthesis(proj_path: Path) -> list[dict]:
+    """Unified claim list for synthesis: AEM claims/ledger.jsonl or fallback verify/claim_ledger.json. Spec §6.2."""
+    claims_dir = proj_path / "claims"
+    ledger_jsonl = claims_dir / "ledger.jsonl"
+    if ledger_jsonl.exists():
+        claims = []
+        for line in ledger_jsonl.read_text(encoding="utf-8").strip().splitlines():
+            if not line.strip():
+                continue
+            try:
+                claims.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        if claims:
+            return claims
+    verify_ledger = proj_path / "verify" / "claim_ledger.json"
+    if verify_ledger.exists():
+        try:
+            data = json.loads(verify_ledger.read_text(encoding="utf-8"))
+            return data.get("claims", [])
+        except Exception:
+            pass
+    return []
+
+
 def audit_log(proj_path: Path, event: str, detail: dict | None = None) -> None:
     """Append a structured audit entry to the project's audit_log.jsonl."""
     from datetime import datetime, timezone

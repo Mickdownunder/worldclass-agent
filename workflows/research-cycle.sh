@@ -31,6 +31,10 @@ export RESEARCH_SYNTHESIS_MODEL="${RESEARCH_SYNTHESIS_MODEL:-gpt-5.2}"
 export RESEARCH_CRITIQUE_MODEL="${RESEARCH_CRITIQUE_MODEL:-gpt-5.2}"
 export RESEARCH_VERIFY_MODEL="${RESEARCH_VERIFY_MODEL:-gpt-5.2}"
 
+# Don't send LLM API traffic through HTTP_PROXY (prevents 403 from proxy)
+export NO_PROXY="${NO_PROXY:+$NO_PROXY,}api.openai.com,openai.com,generativelanguage.googleapis.com"
+export no_proxy="${no_proxy:+$no_proxy,}api.openai.com,openai.com,generativelanguage.googleapis.com"
+
 PHASE=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('phase','explore'), end='')")
 QUESTION=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('question',''), end='')")
 
@@ -266,17 +270,42 @@ SAVE_DEPTH
 
     progress_step "Extracting findings"
     python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    # Persist read stats for evidence gate and UI (research_quality_gate._load_explore_stats)
+    read_failures=$((read_attempts - read_successes))
+    mkdir -p "$PROJ_DIR/explore"
+    python3 -c "
+import json
+from pathlib import Path
+p = Path('$PROJ_DIR/explore/read_stats.json')
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text(json.dumps({
+    'read_attempts': $read_attempts,
+    'read_successes': $read_successes,
+    'read_failures': $read_failures,
+}, indent=2))
+"
     advance_phase "focus"
     ;;
   focus)
     log "Phase: FOCUS — targeted deep-dive from coverage gaps"
     progress_start "focus"
     progress_step "Analyzing coverage gaps"
-    COV_FILE="$ART/coverage_round3.json"
+    # Coverage is copied to PROJ_DIR by explore; use it when FOCUS runs in a separate job
+    COV_FILE="$PROJ_DIR/coverage_round3.json"
+    [ -f "$COV_FILE" ] || COV_FILE="$PROJ_DIR/coverage_round2.json"
+    [ -f "$COV_FILE" ] || COV_FILE="$PROJ_DIR/coverage_round1.json"
+    [ -f "$COV_FILE" ] || COV_FILE="$ART/coverage_round3.json"
     [ -f "$COV_FILE" ] || COV_FILE="$ART/coverage_round2.json"
     [ -f "$COV_FILE" ] || COV_FILE="$ART/coverage_round1.json"
-    python3 "$TOOLS/research_planner.py" --gap-fill "$COV_FILE" "$PROJECT_ID" > "$ART/focus_queries.json"
+    if [ ! -f "$COV_FILE" ]; then
+      log "No coverage file found (explore may have run in another job) — using empty focus queries"
+      echo '{"queries":[]}' > "$ART/focus_queries.json"
+    else
+      python3 "$TOOLS/research_planner.py" --gap-fill "$COV_FILE" "$PROJECT_ID" > "$ART/focus_queries.json"
+    fi
+    progress_step "Searching for sources (KI)"
     python3 "$TOOLS/research_web_search.py" --queries-file "$ART/focus_queries.json" --max-per-query 8 > "$ART/focus_search.json" 2>> "$PWD/log.txt" || true
+    progress_step "Saving and ranking sources"
     python3 - "$PROJ_DIR" "$ART/focus_search.json" <<'FOCUS_SAVE'
 import json, sys, hashlib
 from pathlib import Path
@@ -352,6 +381,7 @@ FOCUS_READ
     log "Focus reads: $focus_read_attempts attempted, $focus_read_successes succeeded"
     progress_step "Extracting focused findings"
     python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    progress_done
     advance_phase "connect"
     ;;
   connect)
@@ -730,6 +760,63 @@ VERIFY_PY
     fi
     # Update source credibility from verify outcomes (per-domain)
     python3 "$TOOLS/research_source_credibility.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    # AEM Settlement (optional; when contracts present): upgrade ledger, run settlement, write AEM artifacts.
+    # Enforcement: observe=fail-open; enforce=block if AEM fails; strict=block if AEM fails or oracle_integrity_rate < 0.80.
+    AEM_ADVANCE=1
+    if [ -f "$TOOLS/research_claim_outcome_schema.py" ] && [ -f "$TOOLS/research_episode_metrics.py" ]; then
+      progress_step "AEM settlement"
+      python3 "$TOOLS/research_aem_settlement.py" "$PROJECT_ID" > "$ART/aem_result.json" 2>> "$PWD/log.txt"
+      AEM_EXIT=$?
+      AEM_MODE="${AEM_ENFORCEMENT_MODE:-observe}"
+      if [ "$AEM_MODE" = "enforce" ] || [ "$AEM_MODE" = "strict" ]; then
+        AEM_ADVANCE=$(python3 -c "
+import json, os
+art = os.environ.get('ART', '$ART')
+mode = os.environ.get('AEM_ENFORCEMENT_MODE', 'observe').strip().lower() or 'observe'
+path = os.path.join(art, 'aem_result.json')
+advance = 1
+try:
+    with open(path) as f:
+        d = json.load(f)
+    ok = d.get('ok', True)
+    block = d.get('block_synthesize', False)
+    if mode == 'enforce' and not ok:
+        advance = 0
+    elif mode == 'strict' and (not ok or block):
+        advance = 0
+except Exception:
+    if mode != 'observe':
+        advance = 0
+print(advance)
+" ART="$ART" AEM_ENFORCEMENT_MODE="${AEM_ENFORCEMENT_MODE:-observe}" 2>/dev/null) || AEM_ADVANCE=0
+      fi
+      if [ "$AEM_ADVANCE" = "0" ]; then
+        log "AEM block: mode=$AEM_MODE AEM_EXIT=$AEM_EXIT — not advancing to synthesize"
+        python3 - "$PROJ_DIR" "$ART" "$AEM_MODE" "$AEM_EXIT" <<'AEM_BLOCK'
+import json, sys
+from pathlib import Path
+from datetime import datetime, timezone
+proj_dir, art, mode, aem_exit = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], int(sys.argv[4])
+reason = f"aem_blocked mode={mode} exit={aem_exit}"
+try:
+    p = art / "aem_result.json"
+    if p.exists():
+        d = json.loads(p.read_text())
+        if d.get("block_synthesize"):
+            reason = "aem_blocked oracle_integrity_rate_below_threshold"
+        elif not d.get("ok"):
+            reason = "aem_blocked settlement_failed"
+except Exception:
+    pass
+d = json.loads((proj_dir / "project.json").read_text())
+d["status"] = "aem_blocked"
+d["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+d.setdefault("quality_gate", {})["aem_block_reason"] = reason
+(proj_dir / "project.json").write_text(json.dumps(d, indent=2))
+AEM_BLOCK
+        exit 0
+      fi
+    fi
     # Evidence gate passed — advance to synthesize (no loop-back; gate already enforces evidence)
     advance_phase "synthesize"
     fi
@@ -751,12 +838,9 @@ report = ""
 if (art / "report.md").exists():
   report = (art / "report.md").read_text()
 ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-claim_ledger = []
-if (verify_dir / "claim_ledger.json").exists():
-  try:
-    claim_ledger = json.loads((verify_dir / "claim_ledger.json").read_text()).get("claims", [])
-  except: pass
 sys.path.insert(0, str(op_root))
+from tools.research_common import get_claims_for_synthesis
+claim_ledger = get_claims_for_synthesis(proj_dir)
 from tools.research_verify import apply_verified_tags_to_report
 report = apply_verified_tags_to_report(report, claim_ledger)
 # Deterministic References section (replaces LLM-generated sources list)
@@ -991,7 +1075,9 @@ MANIFEST_UPDATE
     # Generate PDF report (non-fatal)
     log "Generating PDF report..."
     progress_step "Generating PDF"
-    python3 "$OPERATOR_ROOT/tools/research_pdf_report.py" "$PROJECT_ID" 2>>"$PWD/log.txt" || log "PDF generation failed (non-fatal)"
+    if ! python3 "$OPERATOR_ROOT/tools/research_pdf_report.py" "$PROJECT_ID" 2>>"$PWD/log.txt"; then
+      log "PDF generation failed (install weasyprint? pip install weasyprint); see log.txt for details"
+    fi
     # Store verified findings in Memory DB for cross-domain learning (non-fatal)
     python3 "$OPERATOR_ROOT/tools/research_embed.py" "$PROJECT_ID" 2>>"$PWD/log.txt" || true
     # Update cross-project links (Brain/UI can show cross-links)
@@ -1033,7 +1119,6 @@ except Exception as e:
 BRAIN_REFLECT
     python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
     python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
-    fi
     ;;
   done)
     log "Project already done."

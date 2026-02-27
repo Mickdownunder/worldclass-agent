@@ -279,6 +279,21 @@ confirmed = multiple sources agree; disputed = sources disagree; unverifiable = 
     return {"facts": out if isinstance(out, list) else []}
 
 
+def _record_progress_error(project_id: str, e: BaseException) -> None:
+    try:
+        from tools.research_progress import error as progress_error
+        name = type(e).__name__
+        if "Proxy" in name or "403" in str(e):
+            code = "proxy_forbidden"
+        elif "Connection" in name or "APIConnection" in name:
+            code = "openai_connection"
+        else:
+            code = "verify_error"
+        progress_error(project_id, code, str(e)[:500])
+    except Exception:
+        pass
+
+
 def main():
     if len(sys.argv) < 3:
         print("Usage: research_verify.py <project_id> <source_reliability|claim_verification|fact_check|claim_ledger>", file=sys.stderr)
@@ -290,18 +305,22 @@ def main():
         print(f"Project not found: {project_id}", file=sys.stderr)
         sys.exit(1)
     project = load_project(proj_path)
-    if mode == "source_reliability":
-        result = source_reliability(proj_path, project, project_id=project_id)
-    elif mode == "claim_verification":
-        result = claim_verification(proj_path, project, project_id=project_id)
-    elif mode == "fact_check":
-        result = fact_check(proj_path, project, project_id=project_id)
-    elif mode == "claim_ledger":
-        result = build_claim_ledger(proj_path, project)
-    else:
-        print(f"Unknown mode: {mode}", file=sys.stderr)
-        sys.exit(2)
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    try:
+        if mode == "source_reliability":
+            result = source_reliability(proj_path, project, project_id=project_id)
+        elif mode == "claim_verification":
+            result = claim_verification(proj_path, project, project_id=project_id)
+        elif mode == "fact_check":
+            result = fact_check(proj_path, project, project_id=project_id)
+        elif mode == "claim_ledger":
+            result = build_claim_ledger(proj_path, project)
+        else:
+            print(f"Unknown mode: {mode}", file=sys.stderr)
+            sys.exit(2)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+    except Exception as e:
+        _record_progress_error(project_id, e)
+        raise
 
 
 if __name__ == "__main__":
