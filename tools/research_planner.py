@@ -608,7 +608,9 @@ Return ONLY JSON.
     try:
         resp = llm_call(PLANNER_MODEL, system, user, project_id=project_id)
         base = _sanitize_plan(_json_only(resp.text), question)
-    except Exception:
+        print(f"PLANNER: LLM plan generated ({len(base.get('queries', []))} queries, {len(base.get('topics', []))} topics)", file=sys.stderr)
+    except Exception as exc:
+        print(f"PLANNER: LLM call failed ({type(exc).__name__}: {exc}), using fallback", file=sys.stderr)
         base = _fallback_plan(question)
     strategy_ctx = _load_strategy_context(question, project_id)
     plan = _apply_strategy_to_plan(base, strategy_ctx)

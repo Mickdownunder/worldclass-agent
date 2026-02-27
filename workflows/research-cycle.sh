@@ -355,7 +355,7 @@ case "$PHASE" in
     progress_start "explore"
 
     progress_step "Creating research plan"
-    python3 "$TOOLS/research_planner.py" "$QUESTION" "$PROJECT_ID" > "$ART/research_plan.json"
+    python3 "$TOOLS/research_planner.py" "$QUESTION" "$PROJECT_ID" > "$ART/research_plan.json" 2>> "$PWD/log.txt"
     cp "$ART/research_plan.json" "$PROJ_DIR/research_plan.json"
 
     QUERY_COUNT=$(python3 -c "import json; d=json.load(open('$ART/research_plan.json')); print(len(d.get('queries',[])), end='')" 2>/dev/null || echo "0")
