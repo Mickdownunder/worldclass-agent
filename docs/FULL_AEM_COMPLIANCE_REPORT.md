@@ -17,16 +17,19 @@ This report maps each requirement from **Full_AEM_Implementation_Spec.md** and *
 
 ---
 
-## 2. Hard synthesis contract
+## 2. Hard synthesis contract (claim_ref-enforced)
 
 | Requirement | Implementation | Test evidence |
 |-------------|----------------|----------------|
-| Synthesis cannot introduce new claims | `research_synthesize.py`: `validate_synthesis_contract(report, claim_ledger, mode)`; heuristic `_is_claim_like_sentence` + `_sentence_overlaps_claim`; `unreferenced_claim_sentence_count` | `test_synthesis_contract_blocks_new_claims_in_enforce` (report string vs ledger; valid/unreferenced asserted) |
-| Every claim-bearing sentence must map to existing `claim_ref` | Same validator; `valid = (unreferenced == 0 and tentative_ok)` | Synthesis contract test |
-| Unreferenced/new-claim detection fails synthesis in enforce/strict | `run_synthesis` raises `SynthesisContractError` when (enforce or strict) and not valid | Synthesis module; contract validation at end of run_synthesis |
+| Explicit `claim_ref` format in output | Format: `[claim_ref: claim_id@version]` or `[claim_ref: id1@v1; id2@v2]`. Parser: `extract_claim_refs_from_report()`; validator checks every ref against ledger. | `test_extract_claim_refs_from_report`, `test_build_valid_claim_ref_set` |
+| Synthesis cannot introduce new claims | Claim-bearing sentences (heuristic) without a valid `[claim_ref: ...]` in the same sentence → unreferenced; `unknown_refs` = refs not in ledger. | `test_synthesis_contract_blocks_missing_claim_ref_enforce`, `test_synthesis_contract_blocks_new_claim_with_ref_mismatch` |
+| Every claim-bearing sentence must carry explicit `claim_ref` | `_sentence_contains_valid_claim_ref(sent, valid_refs)`; `valid_refs = _build_valid_claim_ref_set(claim_ledger)`. | `test_synthesis_contract_passes_with_valid_refs` |
+| `claim_ref` not in ledger => violation | `unknown_refs` list; `valid` false when `len(unknown_refs) > 0`. | `test_synthesis_contract_blocks_unknown_claim_ref_enforce` |
+| Unreferenced/unknown ref fails synthesis in enforce/strict | `run_synthesis` raises `SynthesisContractError` when (enforce or strict) and not valid; writes `synthesis_contract_status.json`. | `test_enforce_mode_raises_on_violation_in_run_synthesis` |
+| Observe mode logs violations, does not block | Contract status written to `synthesis_contract_status.json`; no raise in observe. | `test_synthesis_contract_observe_logs_but_does_not_block` |
 | Tentative labels required when PASS_TENTATIVE claims exist | `tentative_labels_ok`: report must contain "tentative"/"[tentative]"/"pass_tentative" when ledger has PASS_TENTATIVE | Verification Summary shows TENTATIVE for PASS_TENTATIVE claims |
 
-**Files:** `operator/tools/research_synthesize.py` (`validate_synthesis_contract`, `SynthesisContractError`, Verification Summary).
+**Files:** `operator/tools/research_synthesize.py` (`CLAIM_REF_PATTERN`, `extract_claim_refs_from_report`, `_build_valid_claim_ref_set`, `_sentence_contains_valid_claim_ref`, `validate_synthesis_contract`, `SynthesisContractError`, `_claim_ledger_block`, `_synthesize_section` with claim_ledger). **Tests:** `operator/tests/tools/test_research_synthesize_contract.py`.
 
 ---
 

@@ -100,3 +100,77 @@ Die UI zeigt im Command Center und auf Brain & Memory, ob Brain-Prozesse laufen 
 | **Stuck**          | Cycle > 10 min oder Reflect > 5 min → Health meldet „Brain hängend“. |
 
 Wenn du willst, können wir als Nächstes z. B. nur die Reflect-Logik oder nur den Ablauf „von UI-Klick bis Job“ Schritt für Schritt durchgehen.
+
+---
+
+## 7. Plumber — Self-Healing-Subsystem
+
+Der **Plumber** ist ein eingebautes Reparatur-System, das der Brain nutzen kann, wenn er wiederkehrende Fehler erkennt.
+
+### Wie der Plumber arbeitet
+
+1. **Diagnose:** 7 Kategorien — Shell-Syntax, Job-Failures, Python-Tools, Dependencies, Tool-Referenzen, Prozesse, Venv.
+2. **Classify:** Erkennt nicht-reparierbare Fehler (API-Outage, OOM, Disk Full, Permissions) und markiert sie als `non_repairable`.
+3. **Cooldown:** Nach 3 gescheiterten Fix-Versuchen pro Error-Fingerprint wird 6h pausiert (kein Thrashing).
+4. **Fix:** Deterministische Reparatur bekannter Muster (fehlende `fi`/`esac`/`done`, Dependencies, Quotes).
+5. **Verify:** Jeder Fix wird vor dem Anwenden mit `bash -n` / `py_compile` verifiziert.
+6. **Audit:** Jede Aenderung wird als Patch in `plumber/patches/` gespeichert, mit Rollback.
+7. **Learn:** Error-Fingerprints werden persistent gespeichert — Occurrences, Fix-Attempts, Success-Rate pro Kategorie.
+
+### Governance-Gate
+
+| Level | Plumber-Verhalten |
+|-------|-------------------|
+| 0-1   | Nur Diagnose, keine Schreibzugriffe |
+| 2     | Dry Run: Patch erstellt, nicht angewendet |
+| 3     | Auto Fix: Patch erstellt, verifiziert, angewendet |
+
+### Sicherheit
+
+- Nur `workflows/` und `tools/` duerfen geaendert werden.
+- Patches als unified diff + JSON-Meta gespeichert.
+- Rollback: `brain plumber --rollback <patch>`.
+- Kein Fix ohne bestandene Syntax-Pruefung.
+- Non-repairable Fehler werden nie versucht zu fixen (API-429, OOM, ENOSPC, etc.).
+- Fix-Cooldown verhindert Endlos-Schleifen bei gleichen Fehlern.
+
+### Error Fingerprints
+
+Jeder Fehler bekommt einen stabilen SHA-256-Hash (normalisiert: Timestamps, PIDs, Job-Dirs entfernt).
+Gespeichert in `plumber/fingerprints.json` mit:
+- `occurrences` — Wie oft aufgetreten
+- `fix_attempts` / `fix_successes` — Fix-Tracking
+- `non_repairable` — Ob der Fehler als unreparierbar klassifiziert wurde
+- `cooldown_until` — Wann der naechste Fix-Versuch erlaubt ist
+- `category` — Diagnostik-Kategorie
+
+### Patch-Impact Metrics
+
+Jeder Plumber-Report enthaelt aggregierte Patch-Metriken:
+- Total Patches, Files Affected, LOC Changed
+- Reverts, Success Rate (gesamt + pro Kategorie)
+
+### Brain-Integration
+
+Perceive erkennt repeated failures -> Think schlaegt `plumber:diagnose-and-fix` vor -> Act leitet an Plumber.
+
+### CLI
+
+```bash
+brain plumber                          # Diagnose + Fix (Gov. 2 = Dry Run)
+brain plumber --governance 3           # Auto Fix
+brain plumber --target research-cycle  # Nur einen Workflow pruefen
+brain plumber --list-patches           # Alle Patches anzeigen
+brain plumber --rollback <patch>       # Patch rueckgaengig machen
+brain plumber --fingerprints           # Fingerprint-Statistiken
+brain plumber --fingerprints-full      # Vollstaendige Fingerprint-DB
+```
+
+### UI
+
+Tab "Plumber" im Brain & Memory Dashboard:
+- Governance-Auswahl (0-3), System-Scan Button
+- 7 Diagnose-Kategorien mit Details
+- Error Fingerprints Panel (Fix Rate, Non-Repairable, Cooldown, Top Recurring)
+- Patch Impact Panel (Success %, Files, LOC, Reverts, per-Category Breakdown)
+- Patch-Verlauf

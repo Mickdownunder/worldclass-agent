@@ -304,9 +304,10 @@ def get_claims_for_synthesis(proj_path: Path) -> list[dict]:
 
 - **research_synthesize.py:** Am Anfang (nach load_project) `claims = get_claims_for_synthesis(proj_path)` aufrufen und diese Liste für Sektionen und für `apply_verified_tags_to_report(report, claims)` verwenden. Bestehende Lade-Logik für `verify/claim_ledger.json` durch diesen Aufruf ersetzen.
 - **Tagging:** `apply_verified_tags_to_report(report, claims)` unverändert; Liste aus `get_claims_for_synthesis`.
-- **Synthesis-Contract (hart, verbindlich):**
-  - Synthese darf **keine neuen Claims erzeugen**.
-  - Jeder claim-bezogene Satz muss einen `claim_ref` besitzen, der in Ledger existiert.
+- **Synthesis-Contract (hart, verbindlich, claim_ref-enforced):**
+  - **Format:** Jeder claim-bezogene Satz muss mindestens einen expliziten Verweis im Format `[claim_ref: claim_id@version]` enthalten (z. B. `[claim_ref: cl_1@1]` oder mehrere `[claim_ref: cl_1@1; cl_2@1]`). Maschinenlesbar, Regex-parsebar.
+  - Synthese darf **keine neuen Claims erzeugen**; jeder Satz, der als Claim erkannt wird (Heuristik), muss einen gültigen `claim_ref` in derselben Satzspanne haben.
+  - Jeder in der Synthese vorkommende `claim_ref` muss im aktuellen Ledger (`claims/ledger.jsonl` oder Fallback `verify/claim_ledger.json`) existieren; unbekannte Refs → Verletzung.
   - Für jeden referenzierten Claim müssen mindestens folgende Felder verfügbar sein:
     - `state`
     - `failure_boundary`
