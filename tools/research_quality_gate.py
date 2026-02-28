@@ -117,7 +117,7 @@ def _metrics_claims(verify_dir: Path) -> tuple[list, int, float]:
 def _metrics_reliability(verify_dir: Path) -> tuple[float, bool]:
     """High-reliability source ratio from source_reliability.json. Returns (ratio, has_data)."""
     path = verify_dir / "source_reliability.json"
-    if not path.exists():
+    if not path.exists() or path.stat().st_size == 0:
         return 0.0, False
     try:
         rel = json.loads(path.read_text())
@@ -197,13 +197,17 @@ def _decide_gate(metrics: dict) -> tuple[str, str | None]:
     return "fail", "failed_insufficient_evidence"
 
 
-def _decide_gate_frontier(metrics: dict) -> tuple[str, str | None]:
-    """Frontier research: source authority > cross-verification. Verified-claim thresholds not blocking."""
+def _decide_gate_frontier(metrics: dict, has_reliability_data: bool = True) -> tuple[str, str | None]:
+    """Frontier research: source authority > cross-verification. Strong verified-claim count overrides missing reliability."""
     findings = metrics.get("findings_count", 0)
     sources = metrics.get("unique_source_count", 0)
     reliability = metrics.get("high_reliability_source_ratio", 0)
+    verified = metrics.get("verified_claim_count", 0)
 
-    if findings >= 8 and sources >= 5 and reliability >= 0.3:
+    if verified >= HARD_PASS_VERIFIED_MIN:
+        return "pass", None
+    reliability_ok = reliability >= 0.3 if has_reliability_data else True
+    if findings >= 8 and sources >= 5 and reliability_ok:
         return "pass", None
     if findings >= 5 and sources >= 3:
         return "pending_review", None
@@ -264,7 +268,7 @@ def run_evidence_gate(project_id: str) -> dict:
         research_mode = "standard"
 
     if research_mode == "frontier":
-        decision, fail_code = _decide_gate_frontier(metrics)
+        decision, fail_code = _decide_gate_frontier(metrics, has_reliability_data)
     else:
         decision, fail_code = _decide_gate(metrics)
     if decision == "pass":

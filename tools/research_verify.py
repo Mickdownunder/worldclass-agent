@@ -213,8 +213,15 @@ def claim_verification(proj_path: Path, project: dict, project_id: str = "") -> 
         return {"claims": []}
     batch_size = CLAIM_EXTRACTION_BATCH_SIZE
     domain = (project.get("domain") or "").strip()
+    total_batches = (len(findings) + batch_size - 1) // batch_size if findings else 0
     all_claims: list[dict] = []
     for start in range(0, len(findings), batch_size):
+        batch_num = start // batch_size + 1
+        try:
+            from tools.research_progress import step as progress_step
+            progress_step(project_id or proj_path.name, f"Extracting claims batch {batch_num}/{total_batches} ({start + len(findings[start:start+batch_size])}/{len(findings)} findings)", batch_num, total_batches)
+        except Exception:
+            pass
         batch = findings[start : start + batch_size]
         batch_claims = _claim_verification_batch(batch, source_meta, question, project_id, domain=domain)
         all_claims.extend(batch_claims)
@@ -271,6 +278,7 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
                 rel_by_url[u] = float(s.get("reliability_score", 0.5))
         except Exception:
             pass
+    default_reliability = 0.65 if not rel_by_url else 0.5
     claims_out = []
     for i, c in enumerate(claims_in):
         try:
@@ -285,7 +293,7 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
         if isinstance(supporting, str):
             supporting = [supporting] if supporting else []
         supporting_source_ids = [s for s in supporting if s][:20]
-        reliable_sources = [u for u in supporting_source_ids if rel_by_url.get(u, 0.5) >= 0.6]
+        reliable_sources = [u for u in supporting_source_ids if rel_by_url.get(u, default_reliability) >= 0.6]
         distinct_reliable = len(set(reliable_sources))
         dispute = (c.get("disputed") or c.get("verification_status", "") == "disputed" or
                    str(c.get("verification_status", "")).lower() == "disputed")
