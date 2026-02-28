@@ -36,12 +36,13 @@ def advance(proj_dir: Path, new_phase: str) -> None:
 
     d.setdefault("phase_history", []).append(new_phase)
     loop_count = d["phase_history"].count(new_phase)
-    if loop_count > 2:
+    if loop_count > 3:
         order = ["explore", "focus", "connect", "verify", "synthesize", "done"]
         try:
             idx = order.index(new_phase)
             if idx < len(order) - 1:
                 new_phase = order[idx + 1]
+                d["phase_history"][-1] = new_phase
         except ValueError:
             pass
 

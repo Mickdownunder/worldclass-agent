@@ -51,6 +51,8 @@ class ConductorState:
     verified_claims: int
     budget_spent_pct: float  # 0-1
     steps_taken: int
+    findings_delta: int = 0  # change since last conductor decision
+    sources_delta: int = 0  # change since last conductor decision
 
 
 def read_state(project_id: str) -> ConductorState:
@@ -65,6 +67,8 @@ def read_state(project_id: str) -> ConductorState:
             verified_claims=0,
             budget_spent_pct=0.0,
             steps_taken=0,
+            findings_delta=0,
+            sources_delta=0,
         )
 
     # findings_count
@@ -94,6 +98,8 @@ def read_state(project_id: str) -> ConductorState:
         sources = _iter_source_meta(proj)
         result = assess_coverage(plan, findings, sources)
         coverage_score = float(result.get("coverage_rate", 0))
+    if coverage_score >= 1.0 and findings_count < 40:
+        coverage_score = min(0.95, findings_count / 50.0)
 
     # verified_claims from quality_gate or claim_ledger
     verified_claims = 0
@@ -136,6 +142,20 @@ def read_state(project_id: str) -> ConductorState:
         except Exception:
             pass
 
+    findings_delta = 0
+    sources_delta = 0
+    decisions_path = proj / "conductor_decisions.json"
+    if decisions_path.exists():
+        try:
+            entries = json.loads(decisions_path.read_text())
+            if isinstance(entries, list) and entries:
+                last = entries[-1].get("state") or {}
+                if isinstance(last, dict):
+                    findings_delta = findings_count - int(last.get("findings_count", 0))
+                    sources_delta = source_count - int(last.get("source_count", 0))
+        except Exception:
+            pass
+
     return ConductorState(
         findings_count=findings_count,
         source_count=source_count,
@@ -143,6 +163,8 @@ def read_state(project_id: str) -> ConductorState:
         verified_claims=verified_claims,
         budget_spent_pct=budget_spent_pct,
         steps_taken=min(steps_taken, MAX_STEPS),
+        findings_delta=findings_delta,
+        sources_delta=sources_delta,
     )
 
 
@@ -183,13 +205,20 @@ State (bounded metrics only):
 - coverage_score (0-1): topic coverage from coverage tool
 - verified_claims: number of verified claims
 - budget_spent_pct (0-1): budget used
-- steps_taken: steps so far (max 25)
+- steps_taken: total conductor overrides so far (max 25)
+- findings_delta, sources_delta: change since last decision. If both are 0 or near 0, additional rounds of the same phase are unlikely to help — proceed to next phase.
+
+IMPORTANT PHASE CONTEXT:
+- verified_claims is ALWAYS 0 before the verify phase runs. This is expected.
+- In explore/focus/connect phases: decide based on coverage_score and findings_count, NOT verified_claims.
+- Only consider verified_claims when current phase is verify or synthesize.
+- If coverage_score >= 0.8 and findings_count >= 30, the research base is strong enough to proceed.
 
 Allowed actions ONLY (reply with exactly one word):
-- search_more: need more sources or broader coverage
-- read_more: have sources to read, need more content/findings
-- verify: have enough evidence, run verification
-- synthesize: enough evidence and verification, write report
+- search_more: need more sources or broader coverage (coverage_score < 0.7)
+- read_more: have sources to read, need more content/findings (findings_count < 20)
+- verify: have enough evidence, run verification (coverage >= 0.8 AND findings >= 30)
+- synthesize: enough evidence and verification done, write report
 
 Reply with exactly one word: search_more, read_more, verify, or synthesize. No explanation."""
 
@@ -227,7 +256,8 @@ Reply with exactly one word: search_more, read_more, verify, or synthesize. No e
 PHASE_TO_ACTION = {
     "explore": "search_more",
     "focus": "read_more",
-    "connect": "verify",
+    "connect": "read_more",  # connect is cross-referencing findings, similar to reading
+    "verify": "verify",
     "synthesize": "synthesize",
     "done": "synthesize",
 }
@@ -279,6 +309,8 @@ def gate_check(project_id: str, proposed_next: str) -> str:
     if proposed_next == "done":
         return proposed_next
     state = read_state(project_id)
+    if current_phase in ("explore", "focus", "connect") and state.coverage_score >= 0.8 and state.findings_count >= 30:
+        return proposed_next
     if state.budget_spent_pct >= 0.8:
         return proposed_next
     key = f"{current_phase}->{proposed_next}"
@@ -291,6 +323,30 @@ def gate_check(project_id: str, proposed_next: str) -> str:
         compressed = get_compressed_context(project_id) or ""
     except Exception:
         pass
+    if not compressed:
+        plan_path = proj / "research_plan.json"
+        if plan_path.exists():
+            try:
+                plan = json.loads(plan_path.read_text())
+                queries = plan.get("queries", [])[:5]
+                compressed = "Research queries: " + ", ".join((q.get("query") or "")[:60] for q in queries)
+            except Exception:
+                pass
+        findings_dir = proj / "findings"
+        if findings_dir.exists():
+            try:
+                latest = sorted(findings_dir.glob("*.json"), key=lambda f: f.stat().st_mtime)[-3:]
+                summaries = []
+                for f in latest:
+                    try:
+                        d = json.loads(f.read_text())
+                        summaries.append((d.get("excerpt") or "")[:100])
+                    except Exception:
+                        pass
+                if summaries:
+                    compressed += " | Latest findings: " + "; ".join(summaries)
+            except Exception:
+                pass
     action = decide_action(
         state, question, compressed, phase=current_phase, project_id=project_id
     )
