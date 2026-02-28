@@ -37,6 +37,7 @@ def main() -> None:
         ledger = {}
     claims = ledger.get("claims", [])
     domain_stats: dict[str, dict] = defaultdict(lambda: {"used": 0, "verified": 0, "failed": 0})
+    url_to_domain: dict[str, str] = {}
     for sf in sources_dir.glob("*.json"):
         if "_content" in sf.name:
             continue
@@ -44,14 +45,23 @@ def main() -> None:
             src = json.loads(sf.read_text())
         except Exception:
             continue
-        url = src.get("url", "")
+        url = (src.get("url") or "").strip()
         domain = urlparse(url).netloc if url else ""
         if not domain:
             continue
         domain_stats[domain]["used"] += 1
-        source_id = sf.stem
-        claims_from_source = [c for c in claims if source_id in (c.get("supporting_sources") or [])]
-        for c in claims_from_source:
+        url_to_domain[url] = domain
+    for c in claims:
+        urls = c.get("supporting_source_ids") or []
+        if isinstance(urls, str):
+            urls = [urls] if urls else []
+        for url in urls:
+            url = (url or "").strip()
+            if not url:
+                continue
+            domain = url_to_domain.get(url)
+            if not domain:
+                continue
             if c.get("is_verified"):
                 domain_stats[domain]["verified"] += 1
             else:
