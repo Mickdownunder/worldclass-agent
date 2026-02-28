@@ -249,6 +249,14 @@ class MemoryV2:
         confidence = _clamp(best_score, 0.0, 1.0)
         best["selection_confidence"] = confidence
         best["similar_episode_count"] = int((best.get("confidence_drivers") or {}).get("similar_episode_count", 0))
+        # Similar-episode gate: do not apply a strategy when there are no similar past runs (avoids cross-topic leakage)
+        if (best.get("similar_episode_count") or 0) == 0:
+            self.record_memory_decision(
+                "strategy_skipped_no_similar_episodes",
+                {"strategy_id": best.get("id"), "strategy_name": best.get("name")},
+                confidence=confidence,
+            )
+            return None
         return best
 
     def _similar_episode_signals(self, question: str, domain: str | None) -> tuple[int, float]:
