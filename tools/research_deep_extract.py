@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import hashlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -54,11 +55,11 @@ def run(project_id: str) -> int:
     findings_dir = proj_path / "findings"
     findings_dir.mkdir(parents=True, exist_ok=True)
     content_files = [f for f in sources_dir.glob("*_content.json")]
-    total_sources = len(content_files)
-    _progress_step(project_id, "KI: Extracting key facts from sources", 0, max(1, total_sources))
-    added = 0
-    skipped = 0
-    for idx, f in enumerate(content_files, start=1):
+    q_context = f"\n\nResearch question for context: {question}" if question else ""
+    system_tpl = """Extract 2-5 key facts or claims from the text that are RELEVANT to the research question. Return JSON: {{"facts": ["fact one", "fact two", ...]}}.
+Each fact should be a single sentence or short paragraph. Be specific (numbers, dates, names). Only extract facts that help answer the research question.{q_context}"""
+    work: list[tuple[int, str, str, str, str]] = []
+    for f in content_files:
         try:
             d = json.loads(f.read_text())
             text = (d.get("text") or d.get("abstract") or "").strip()
@@ -77,7 +78,6 @@ def run(project_id: str) -> int:
                 title = (m.get("title") or "").strip()
             except Exception:
                 pass
-        # Check if any existing finding for this source already has a relevance score
         existing_relevant = True
         for ef in findings_dir.glob("*.json"):
             try:
@@ -89,14 +89,38 @@ def run(project_id: str) -> int:
             except Exception:
                 continue
         if not existing_relevant:
-            skipped += 1
             continue
-        _progress_step(project_id, "KI: Extracting key facts from sources", idx - skipped, max(1, total_sources - skipped))
-        q_context = f"\n\nResearch question for context: {question}" if question else ""
-        system = f"""Extract 2-5 key facts or claims from the text that are RELEVANT to the research question. Return JSON: {{"facts": ["fact one", "fact two", ...]}}.
-Each fact should be a single sentence or short paragraph. Be specific (numbers, dates, names). Only extract facts that help answer the research question.{q_context}"""
         user = f"TEXT:\n{text[:8000]}\n\nReturn only valid JSON with key 'facts'."
-        facts = _llm_json(system, user, project_id=project_id)
+        work.append((len(work), system_tpl, user, url, title))
+    if not work:
+        return 0
+    total_work = len(work)
+    results_by_index: dict[int, tuple[str, str, list]] = {}
+    done = 0
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_item = {
+            executor.submit(_llm_json, system, user, project_id): (idx, url, title)
+            for idx, system, user, url, title in work
+        }
+        for future in as_completed(future_to_item):
+            idx, url, title = future_to_item[future]
+            try:
+                facts = future.result()
+            except Exception:
+                facts = []
+            if not isinstance(facts, list):
+                facts = []
+            results_by_index[idx] = (url, title, facts)
+            done += 1
+            _progress_step(
+                project_id,
+                "KI: Extracting key facts from sources",
+                done,
+                total_work,
+            )
+    added = 0
+    for idx in sorted(results_by_index.keys()):
+        url, title, facts = results_by_index[idx]
         for i, fact in enumerate(facts):
             if not isinstance(fact, str) or len(fact.strip()) < 10:
                 continue

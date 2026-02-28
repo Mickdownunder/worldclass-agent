@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -204,7 +205,8 @@ def _merge_dedupe_claims(claims_list: list[dict]) -> list[dict]:
 
 def claim_verification(proj_path: Path, project: dict, project_id: str = "") -> dict:
     """Extract key claims from findings and check if >= 2 independent sources support them.
-    Findings are batched (15-20 per LLM call) to avoid truncation; claims are merged and deduplicated."""
+    Findings are batched (15-20 per LLM call) to avoid truncation; claims are merged and deduplicated.
+    Batches are processed in parallel (4 workers)."""
     ensure_project_layout(proj_path)
     question = project.get("question", "")
     findings = _load_findings(proj_path, question=question)
@@ -213,18 +215,48 @@ def claim_verification(proj_path: Path, project: dict, project_id: str = "") -> 
         return {"claims": []}
     batch_size = CLAIM_EXTRACTION_BATCH_SIZE
     domain = (project.get("domain") or "").strip()
-    total_batches = (len(findings) + batch_size - 1) // batch_size if findings else 0
+    batches = [
+        (start, findings[start : start + batch_size])
+        for start in range(0, len(findings), batch_size)
+    ]
+    if not batches:
+        return {"claims": []}
+    total_batches = len(batches)
+    try:
+        from tools.research_progress import step as progress_step
+    except Exception:
+        progress_step = lambda _pid, _msg, _idx=None, _tot=None: None
+    results_by_batch: dict[int, list[dict]] = {}
+    done = 0
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        future_to_batch = {
+            executor.submit(
+                _claim_verification_batch,
+                batch,
+                source_meta,
+                question,
+                project_id,
+                domain,
+            ): batch_num
+            for batch_num, (_start, batch) in enumerate(batches, start=1)
+        }
+        for future in as_completed(future_to_batch):
+            batch_num = future_to_batch[future]
+            try:
+                batch_claims = future.result()
+            except Exception:
+                batch_claims = []
+            results_by_batch[batch_num] = batch_claims
+            done += 1
+            progress_step(
+                project_id or proj_path.name,
+                f"Extracting claims batch {done}/{total_batches} ({len(findings)} findings)",
+                done,
+                total_batches,
+            )
     all_claims: list[dict] = []
-    for start in range(0, len(findings), batch_size):
-        batch_num = start // batch_size + 1
-        try:
-            from tools.research_progress import step as progress_step
-            progress_step(project_id or proj_path.name, f"Extracting claims batch {batch_num}/{total_batches} ({start + len(findings[start:start+batch_size])}/{len(findings)} findings)", batch_num, total_batches)
-        except Exception:
-            pass
-        batch = findings[start : start + batch_size]
-        batch_claims = _claim_verification_batch(batch, source_meta, question, project_id, domain=domain)
-        all_claims.extend(batch_claims)
+    for batch_num in sorted(results_by_batch.keys()):
+        all_claims.extend(results_by_batch[batch_num])
     merged = _merge_dedupe_claims(all_claims)
     return {"claims": merged}
 
