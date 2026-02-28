@@ -9,6 +9,7 @@ Usage:
 import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -95,15 +96,41 @@ def run_for_project(project_id: str) -> dict:
     from lib.memory import Memory
     mem = Memory()
     name_to_id: dict[str, str] = {}
-    all_text = []
-    total_findings = len(findings)
+    work = []
     for i, f in enumerate(findings):
         excerpt = (f.get("excerpt") or "")[:8000]
         if not excerpt:
             continue
-        progress_step(project_id, f"Knowledge graph: entities from finding {i + 1}/{total_findings}", i + 1, total_findings)
+        work.append((i, f, excerpt))
+    if not work:
+        mem.close()
+        return {"entities": 0, "relations": 0, "mentions": 0}
+    total_work = len(work)
+    results_by_index: dict[int, tuple[dict, str, list[dict]]] = {}
+    done = 0
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_item = {
+            executor.submit(extract_entities, excerpt): (i, f, excerpt)
+            for i, f, excerpt in work
+        }
+        for future in as_completed(future_to_item):
+            i, f, excerpt = future_to_item[future]
+            try:
+                entities = future.result()
+            except Exception:
+                entities = []
+            results_by_index[i] = (f, excerpt, entities)
+            done += 1
+            progress_step(
+                project_id,
+                f"Knowledge graph: entities from finding {done}/{total_work}",
+                done,
+                total_work,
+            )
+    all_text = []
+    for i in sorted(results_by_index.keys()):
+        f, excerpt, entities = results_by_index[i]
         all_text.append(excerpt)
-        entities = extract_entities(excerpt)
         finding_key = (f.get("url") or "")[:200]
         for e in entities:
             name = (e.get("name") or "").strip()
