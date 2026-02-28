@@ -536,7 +536,7 @@ for p in paths:
 order_file.write_text("\n".join(filtered))
 FILTER_READ_URLS
 
-    READ_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/read_order_round1.txt" --read-limit "$READ_LIMIT" --workers 4 2>> "$PWD/log.txt" | tail -1)
+    READ_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/read_order_round1.txt" --read-limit "$READ_LIMIT" --workers 8 2>> "$PWD/log.txt" | tail -1)
     read_attempts=0
     read_successes=0
     [ -n "$READ_STATS" ] && read -r read_attempts read_successes <<< "$(echo "$READ_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null)" 2>/dev/null || true
@@ -578,7 +578,7 @@ Path('$ART/refinement_urls_to_read.txt').write_text('\n'.join(urls[:10]))
 "
       if [ -s "$ART/refinement_urls_to_read.txt" ]; then
         progress_step "Reading refinement sources"
-        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/refinement_urls_to_read.txt" --read-limit 10 --workers 4 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
+        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/refinement_urls_to_read.txt" --read-limit 10 --workers 8 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
       fi
     fi
 
@@ -611,7 +611,7 @@ Path('$ART/gap_urls_to_read.txt').write_text('\n'.join(urls[:10]))
 "
       if [ -s "$ART/gap_urls_to_read.txt" ]; then
         progress_step "Reading gap-fill sources"
-        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/gap_urls_to_read.txt" --read-limit 10 --workers 4 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
+        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/gap_urls_to_read.txt" --read-limit 10 --workers 8 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
       fi
       python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round2.json"
       cp "$ART/coverage_round2.json" "$PROJ_DIR/coverage_round2.json"
@@ -648,7 +648,7 @@ Path('$ART/depth_urls_to_read.txt').write_text('\n'.join(urls[:8]))
 "
         if [ -s "$ART/depth_urls_to_read.txt" ]; then
           progress_step "Reading depth sources"
-          python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/depth_urls_to_read.txt" --read-limit 8 --workers 4 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
+          python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/depth_urls_to_read.txt" --read-limit 8 --workers 8 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
         fi
         python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round3.json"
         cp "$ART/coverage_round3.json" "$PROJ_DIR/coverage_round3.json"
@@ -745,7 +745,7 @@ for f in (proj_dir / "sources").glob("*.json"):
 ranked.sort()
 (art / "focus_read_order.txt").write_text("\n".join(path for _, path in ranked))
 RANK_FOCUS
-    FOCUS_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" focus --input-file "$ART/focus_read_order.txt" --read-limit 15 --workers 4 2>> "$PWD/log.txt" | tail -1)
+    FOCUS_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" focus --input-file "$ART/focus_read_order.txt" --read-limit 15 --workers 8 2>> "$PWD/log.txt" | tail -1)
     focus_read_attempts=0
     focus_read_successes=0
     [ -n "$FOCUS_STATS" ] && read -r focus_read_attempts focus_read_successes <<< "$(echo "$FOCUS_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null)" 2>/dev/null || true
@@ -763,19 +763,31 @@ RANK_FOCUS
     log "Phase: VERIFY — source reliability, claim verification, fact-check"
     progress_start "verify"
     progress_step "Checking source reliability"
-    python3 "$TOOLS/research_verify.py" "$PROJECT_ID" source_reliability > "$ART/source_reliability.json" 2>> "$PWD/log.txt" || true
+    if ! python3 "$TOOLS/research_verify.py" "$PROJECT_ID" source_reliability > "$ART/source_reliability.json" 2>> "$PWD/log.txt"; then
+      log "source_reliability failed — retrying in 30s"
+      sleep 30
+      python3 "$TOOLS/research_verify.py" "$PROJECT_ID" source_reliability > "$ART/source_reliability.json" 2>> "$PWD/log.txt" || true
+    fi
     progress_step "Verifying claims"
-    python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification > "$ART/claim_verification.json" 2>> "$PWD/log.txt" || true
-    python3 "$TOOLS/research_verify.py" "$PROJECT_ID" fact_check > "$ART/fact_check.json" 2>> "$PWD/log.txt" || true
-    # Persist verify artifacts to project for synthesize phase (may run in another job)
+    if ! python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification > "$ART/claim_verification.json" 2>> "$PWD/log.txt"; then
+      log "claim_verification failed — retrying in 30s"
+      sleep 30
+      python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification > "$ART/claim_verification.json" 2>> "$PWD/log.txt" || true
+    fi
+    if ! python3 "$TOOLS/research_verify.py" "$PROJECT_ID" fact_check > "$ART/fact_check.json" 2>> "$PWD/log.txt"; then
+      log "fact_check failed — retrying in 30s"
+      sleep 30
+      python3 "$TOOLS/research_verify.py" "$PROJECT_ID" fact_check > "$ART/fact_check.json" 2>> "$PWD/log.txt" || true
+    fi
+    # Persist verify artifacts to project for synthesize phase (only copy non-empty files)
     mkdir -p "$PROJ_DIR/verify"
-    [ -f "$ART/source_reliability.json" ] && cp "$ART/source_reliability.json" "$PROJ_DIR/verify/" 2>/dev/null || true
-    [ -f "$ART/claim_verification.json" ] && cp "$ART/claim_verification.json" "$PROJ_DIR/verify/" 2>/dev/null || true
-    [ -f "$ART/fact_check.json" ] && cp "$ART/fact_check.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+    [ -s "$ART/source_reliability.json" ] && cp "$ART/source_reliability.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+    [ -s "$ART/claim_verification.json" ] && cp "$ART/claim_verification.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+    [ -s "$ART/fact_check.json" ] && cp "$ART/fact_check.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     # Claim ledger: deterministic is_verified (V3)
     progress_step "Building claim ledger"
     python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_ledger > "$ART/claim_ledger.json" 2>> "$PWD/log.txt" || true
-    [ -f "$ART/claim_ledger.json" ] && cp "$ART/claim_ledger.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+    [ -s "$ART/claim_ledger.json" ] && cp "$ART/claim_ledger.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     # Counter-evidence: search for contradicting sources for top 3 verified claims (before gate)
     python3 - "$PROJ_DIR" "$ART" "$TOOLS" "$OPERATOR_ROOT" <<'COUNTER_EVIDENCE' 2>> "$PWD/log.txt" || true
 import json, sys, hashlib, subprocess
@@ -841,7 +853,7 @@ for i in range(6):
 (art / "counter_urls_to_read.txt").write_text("\n".join(urls_to_read[:9]))
 COUNTER_EVIDENCE
     if [ -f "$ART/counter_urls_to_read.txt" ] && [ -s "$ART/counter_urls_to_read.txt" ]; then
-      python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" counter --input-file "$ART/counter_urls_to_read.txt" --read-limit 9 --workers 4 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
+      python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" counter --input-file "$ART/counter_urls_to_read.txt" --read-limit 9 --workers 8 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
       python3 "$TOOLS/research_reason.py" "$PROJECT_ID" contradiction_detection > "$PROJ_DIR/contradictions.json" 2>> "$PWD/log.txt" || true
     fi
     # Evidence Gate: must pass before synthesize
@@ -888,7 +900,7 @@ for f in (proj_dir / "sources").glob("*.json"):
 ranked.sort()
 (art / "recovery_read_order.txt").write_text("\n".join(path for _, path in ranked))
 RANK_RECOVERY
-        RECOVERY_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" recovery --input-file "$ART/recovery_read_order.txt" --read-limit 10 --workers 4 2>> "$PWD/log.txt" | tail -1)
+        RECOVERY_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" recovery --input-file "$ART/recovery_read_order.txt" --read-limit 10 --workers 8 2>> "$PWD/log.txt" | tail -1)
         recovery_reads=0
         recovery_successes=0
         [ -n "$RECOVERY_STATS" ] && read -r recovery_reads recovery_successes <<< "$(echo "$RECOVERY_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null)" 2>/dev/null || true
@@ -896,9 +908,9 @@ RANK_RECOVERY
         if [ "$recovery_successes" -gt 0 ]; then
           # Re-run claim verification and ledger with new findings
           python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification > "$ART/claim_verification.json" 2>> "$PWD/log.txt" || true
-          [ -f "$ART/claim_verification.json" ] && cp "$ART/claim_verification.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+          [ -s "$ART/claim_verification.json" ] && cp "$ART/claim_verification.json" "$PROJ_DIR/verify/" 2>/dev/null || true
           python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_ledger > "$ART/claim_ledger.json" 2>> "$PWD/log.txt" || true
-          [ -f "$ART/claim_ledger.json" ] && cp "$ART/claim_ledger.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+          [ -s "$ART/claim_ledger.json" ] && cp "$ART/claim_ledger.json" "$PROJ_DIR/verify/" 2>/dev/null || true
           # Re-check evidence gate
           GATE_RESULT=$(python3 "$TOOLS/research_quality_gate.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || echo '{"pass":false}')
           if ! GATE_PASS=$(echo "$GATE_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('pass') else 0, end='')" 2>/dev/null); then GATE_PASS=0; fi
