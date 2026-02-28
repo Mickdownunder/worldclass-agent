@@ -107,7 +107,8 @@ def _outline_sections(question: str, clusters: list[list[int]], playbook_instruc
     cluster_summaries = [f"Cluster {i+1}: {len(c)} findings" for i, c in enumerate(clusters)]
     extra = f"\nPlaybook instructions: {playbook_instructions}" if playbook_instructions else ""
     system = """You are a research analyst. Given the research question and cluster summary, propose section titles for the deep analysis.
-Return JSON: {"sections": ["Section Title One", "Section Title Two", ...]} with one title per cluster, in order."""
+Return JSON: {"sections": ["Section Title One", "Section Title Two", ...]} with one title per cluster, in order.
+If the research question clearly involves drug pricing, PBMs, list prices, or manufacturer duopoly, set the last section title to exactly: 'Historischer Praezedenz (historical precedent)'."""
     user = f"QUESTION: {question}\n\nCLUSTERS: {json.dumps(cluster_summaries)}{extra}\n\nReturn only valid JSON."
     try:
         result = llm_call(_model(), system, user, project_id=project_id)
@@ -271,7 +272,8 @@ Avoid dramatic qualifiers like "fundamental", "irreversible", "massive", "unprec
 CRITICAL RULES:
 - Every sentence MUST be complete. Never end mid-sentence.
 - Do NOT create tables or matrices with "TBD", "N/A", or empty cells. If you lack data for a comparison, write prose explaining what is known and what is missing instead.
-- Do NOT promise data you do not have. If country-specific or granular data is absent from the findings, say so explicitly rather than creating placeholder structures."""
+- Do NOT promise data you do not have. If country-specific or granular data is absent from the findings, say so explicitly rather than creating placeholder structures.
+At the end of the section, add a short block '**Key findings:**' with 2–3 bullet points that summarize the main evidence-based conclusions of this section."""
     if previous_sections_summary:
         system += "\n\nAlready covered in previous sections (do not repeat):\n- " + "\n- ".join(previous_sections_summary[:15])
         system += "\n\nCRITICAL: Do NOT restate these specific data points even to introduce context. Refer to them with 'as noted above' if absolutely necessary, max once per section."
@@ -478,6 +480,24 @@ Return JSON: {"conclusions": "markdown text 300-500 words", "next_steps": "markd
         return out.get("conclusions", ""), out.get("next_steps", "")
     except Exception:
         return thesis.get("current", ""), "1. [HIGH] Run additional verification.\n2. [MEDIUM] Expand source set."
+
+
+def _evidence_summary_line(claim_ledger: list[dict]) -> str:
+    """One-line evidence summary: X von Y verifiziert (Z authoritative), N unverifiziert. No LLM."""
+    if not claim_ledger:
+        return "**Evidence summary:** 0 claims (no claim ledger)."
+    verified_only = 0
+    authoritative = 0
+    for c in claim_ledger:
+        tier = (c.get("verification_tier") or "").strip().upper()
+        if tier == "AUTHORITATIVE":
+            authoritative += 1
+        elif c.get("is_verified") or tier == "VERIFIED":
+            verified_only += 1
+    total_verified = verified_only + authoritative
+    unver = len(claim_ledger) - total_verified
+    total = len(claim_ledger)
+    return f"**Evidence summary:** {total_verified} von {total} Kernclaims verifiziert ({authoritative} authoritative), {unver} unverifiziert/contested."
 
 
 def _key_numbers(findings: list[dict], claim_ledger: list[dict], project_id: str = "") -> str:
@@ -755,7 +775,8 @@ def run_synthesis(project_id: str) -> str:
 
     parts = []
     parts.append(f"# Research Report\n\n**Report as of: {report_date}**  \nProject: `{project_id}`  \nQuestion: {question}\n")
-    parts.append("\n## KEY NUMBERS\n\n")
+    parts.append("\n" + _evidence_summary_line(claim_ledger) + "\n\n")
+    parts.append("## KEY NUMBERS\n\n")
     parts.append(_key_numbers(findings, claim_ledger, project_id))
     parts.append("\n\n---\n\n")
 
