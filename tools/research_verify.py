@@ -93,7 +93,7 @@ Score: 0.3 = low/unreliable, 0.5 = unknown, 0.7+ = decent, 0.9+ = high trust. Co
     if principles_block:
         system += "\n\n" + principles_block
     user = f"SOURCES:\n{payload}\n\nRate each source. Return only valid JSON."
-    out = _llm_json(system, user, project_id=project_id)
+    out = _llm_json(system, user, project_id=project_id, model=_verify_model())
     if isinstance(out, dict) and "sources" in out:
         return out
     return {"sources": out if isinstance(out, list) else []}
