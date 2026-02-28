@@ -118,7 +118,7 @@ def read_state(project_id: str) -> ConductorState:
     current = budget_info.get("current_spend", 0.0)
     budget_spent_pct = min(1.0, round(current / limit, 4)) if limit else 0.0
 
-    # steps_taken: phase_history length or conductor_step_count
+    # steps_taken: phase_history length, conductor_state, or sum of conductor_overrides
     phase_history = project.get("phase_history") or []
     steps_taken = len(phase_history)
     conductor_file = proj / "conductor_state.json"
@@ -126,6 +126,13 @@ def read_state(project_id: str) -> ConductorState:
         try:
             cdata = json.loads(conductor_file.read_text())
             steps_taken = int(cdata.get("steps_taken", steps_taken))
+        except Exception:
+            pass
+    overrides_path = proj / "conductor_overrides.json"
+    if overrides_path.exists():
+        try:
+            ov = json.loads(overrides_path.read_text())
+            steps_taken = sum(ov.values()) if isinstance(ov, dict) else steps_taken
         except Exception:
             pass
 
@@ -269,11 +276,13 @@ def gate_check(project_id: str, proposed_next: str) -> str:
         return proposed_next
     project = load_project(proj)
     current_phase = (project.get("phase") or "explore").strip().lower()
+    if proposed_next == "done":
+        return proposed_next
     state = read_state(project_id)
     if state.budget_spent_pct >= 0.8:
         return proposed_next
     key = f"{current_phase}->{proposed_next}"
-    if _load_overrides(project_id).get(key, 0) >= 1:
+    if _load_overrides(project_id).get(key, 0) >= 2:
         return proposed_next
     question = (project.get("question") or "")[:2000]
     compressed = ""

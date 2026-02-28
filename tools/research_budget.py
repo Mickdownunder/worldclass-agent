@@ -61,6 +61,11 @@ def track_usage(project_id: str, model: str, input_tokens: int, output_tokens: i
     proj_path = project_dir(project_id)
     data = load_project(proj_path)
     data["current_spend"] = round(data.get("current_spend", 0.0) + added, 8)
+    data.setdefault("spend_breakdown", {})
+    llm_key = f"llm_{model}"
+    data["spend_breakdown"][llm_key] = round(
+        data["spend_breakdown"].get(llm_key, 0.0) + added, 8
+    )
     save_project(proj_path, data)
     return data["current_spend"]
 

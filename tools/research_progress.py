@@ -201,6 +201,7 @@ def done(project_id: str) -> None:
         data = _read_progress(progress_file)
         if data:
             data["alive"] = False
+            data["phase"] = "done"
             data["heartbeat"] = _now_iso()
             data["step"] = "Done"
             _write_progress(progress_file, data)

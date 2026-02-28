@@ -59,8 +59,8 @@ def main() -> None:
             url = (url or "").strip()
             if not url:
                 continue
-            domain = url_to_domain.get(url)
-            if not domain:
+            domain = url_to_domain.get(url) or (urlparse(url).netloc if url else "")
+            if not domain or domain not in domain_stats:
                 continue
             if c.get("is_verified"):
                 domain_stats[domain]["verified"] += 1

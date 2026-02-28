@@ -1310,7 +1310,7 @@ PY
       CRITIC_THRESHOLD="0.50"
     fi
     MAX_REVISE_ROUNDS="${RESEARCH_MEMORY_REVISE_ROUNDS:-2}"
-    progress_step "Running critic"
+    progress_step "Running quality critic"
     python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$PWD/log.txt" || true
     SCORE=0.5
     if [ -f "$ART/critique.json" ]; then
@@ -1353,6 +1353,7 @@ except Exception:
       python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$PWD/log.txt" || true
       SCORE=$(python3 -c "import json; d=json.load(open('$ART/critique.json')); print(d.get('score', 0.5), end='')" 2>/dev/null || echo "0.5")
     done
+    progress_step "Critic done — score: $SCORE"
     if python3 -c "exit(0 if float('$SCORE') < float('$CRITIC_THRESHOLD') else 1)" 2>/dev/null; then
       log "Quality gate failed (score $SCORE, threshold $CRITIC_THRESHOLD) — status failed_quality_gate"
       python3 - "$PROJ_DIR" "$ART" "$SCORE" <<'QF_FAIL'
@@ -1435,15 +1436,17 @@ if manifest_path.exists():
 MANIFEST_UPDATE
     # Generate PDF report (non-fatal)
     log "Generating PDF report..."
-    progress_step "Generating PDF"
+    progress_step "Generating final PDF"
     if ! python3 "$OPERATOR_ROOT/tools/research_pdf_report.py" "$PROJECT_ID" 2>>"$PWD/log.txt"; then
       log "PDF generation failed (install weasyprint? pip install weasyprint); see log.txt for details"
     fi
+    progress_step "PDF generated"
     # Store verified findings in Memory DB for cross-domain learning (non-fatal)
     python3 "$OPERATOR_ROOT/tools/research_embed.py" "$PROJECT_ID" 2>>"$PWD/log.txt" || true
     # Update cross-project links (Brain/UI can show cross-links)
     python3 "$TOOLS/research_cross_domain.py" --threshold 0.75 --max-pairs 20 2>>"$PWD/log.txt" || true
     advance_phase "done"
+    progress_done
     # Telegram: Forschung abgeschlossen (only when passed)
     if [ -x "$TOOLS/send-telegram.sh" ]; then
       MSG_FILE=$(mktemp)

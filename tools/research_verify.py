@@ -311,6 +311,18 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
         except Exception:
             pass
     default_reliability = 0.65 if not rel_by_url else 0.5
+    existing_ledger_path = verify_dir / "claim_ledger.json"
+    prev_verified: dict[str, dict] = {}
+    if existing_ledger_path.exists():
+        try:
+            prev = json.loads(existing_ledger_path.read_text())
+            for pc in prev.get("claims", []):
+                if pc.get("is_verified"):
+                    key = (pc.get("text") or pc.get("claim") or "")[:100]
+                    if key:
+                        prev_verified[key] = pc
+        except Exception:
+            pass
     claims_out = []
     for i, c in enumerate(claims_in):
         try:
@@ -355,6 +367,14 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
             verification_tier = "UNVERIFIED"
             is_verified = False
             verification_reason = "not verified"
+        key = text[:100]
+        if not is_verified and key in prev_verified:
+            is_verified = True
+            verification_tier = prev_verified[key].get("verification_tier", "VERIFIED")
+            verification_reason = prev_verified[key].get("verification_reason", verification_reason)
+            supporting_source_ids = prev_verified[key].get("supporting_source_ids", supporting_source_ids)
+        total_checked = len(c.get("all_checked_sources", [])) or max(1, len(supporting_source_ids))
+        claim_support_rate = round(len(supporting_source_ids) / total_checked, 3)
         claims_out.append({
             "claim_id": claim_id,
             "text": text,
@@ -362,6 +382,7 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
             "is_verified": is_verified,
             "verification_tier": verification_tier,
             "verification_reason": verification_reason,
+            "claim_support_rate": claim_support_rate,
         })
     from tools.research_common import audit_log
     audit_log(proj_path, "claim_ledger_built", {
