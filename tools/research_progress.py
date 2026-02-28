@@ -3,8 +3,10 @@
 import sys
 import json
 import os
+import fcntl
 from pathlib import Path
 from datetime import datetime, timezone
+from contextlib import contextmanager
 
 EVENTS_FILE_NAME = "events.jsonl"
 STUCK_THRESHOLD_S = 300
@@ -13,6 +15,25 @@ HEARTBEAT_FRESH_S = 30
 def _get_progress_file(project_id: str) -> Path:
     from tools.research_common import project_dir
     return project_dir(project_id) / "progress.json"
+
+def _get_progress_lock_file(project_id: str) -> Path:
+    from tools.research_common import project_dir
+    return project_dir(project_id) / "progress.json.lock"
+
+@contextmanager
+def _progress_lock(project_id: str):
+    """Hold exclusive lock on progress so only one writer at a time."""
+    lock_file = _get_progress_lock_file(project_id)
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    f = open(lock_file, "a")
+    try:
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        finally:
+            f.close()
 
 def _get_events_file(project_id: str) -> Path:
     from tools.research_common import project_dir
@@ -46,86 +67,91 @@ def _append_event(project_id: str, event_type: str, payload: dict) -> None:
 
 def start(project_id: str, phase: str) -> None:
     progress_file = _get_progress_file(project_id)
-    now = _now_iso()
-    data = {
-        "pid": os.getpid(),
-        "alive": True,
-        "heartbeat": now,
-        "phase": phase,
-        "step": f"Starting {phase} phase...",
-        "step_started_at": now,
-        "step_index": 0,
-        "step_total": 0,
-        "steps_completed": [],
-        "started_at": now,
-    }
-    _write_progress(progress_file, data)
+    with _progress_lock(project_id):
+        now = _now_iso()
+        data = {
+            "pid": os.getpid(),
+            "alive": True,
+            "heartbeat": now,
+            "phase": phase,
+            "step": f"Starting {phase} phase...",
+            "step_started_at": now,
+            "step_index": 0,
+            "step_total": 0,
+            "steps_completed": [],
+            "started_at": now,
+        }
+        _write_progress(progress_file, data)
     _append_event(project_id, "phase_started", {"phase": phase})
 
 
 def step(project_id: str, message: str, index: int = None, total: int = None) -> None:
     progress_file = _get_progress_file(project_id)
-    data = _read_progress(progress_file)
-    if not data:
-        data = {
-            "pid": os.getpid(),
-            "alive": True,
-            "started_at": _now_iso(),
-            "steps_completed": [],
-        }
+    with _progress_lock(project_id):
+        data = _read_progress(progress_file)
+        if not data:
+            data = {
+                "pid": os.getpid(),
+                "alive": True,
+                "started_at": _now_iso(),
+                "steps_completed": [],
+            }
 
-    now = _now_iso()
-    prev_step = data.get("step")
-    prev_heartbeat = data.get("heartbeat", data.get("started_at", now))
+        now = _now_iso()
+        prev_step = data.get("step")
+        prev_heartbeat = data.get("heartbeat", data.get("started_at", now))
 
-    if prev_step:
-        try:
-            t1 = datetime.strptime(prev_heartbeat, "%Y-%m-%dT%H:%M:%SZ")
-            t2 = datetime.strptime(now, "%Y-%m-%dT%H:%M:%SZ")
-            duration = int((t2 - t1).total_seconds())
-        except Exception:
-            duration = 0
-        data.setdefault("steps_completed", []).append({
-            "ts": prev_heartbeat,
-            "step": prev_step,
-            "duration_s": max(0, duration),
-        })
-        data["steps_completed"] = data["steps_completed"][-10:]
-        _append_event(project_id, "step_done", {"step": prev_step, "duration_s": duration})
+        if prev_step:
+            try:
+                t1 = datetime.strptime(prev_heartbeat, "%Y-%m-%dT%H:%M:%SZ")
+                t2 = datetime.strptime(now, "%Y-%m-%dT%H:%M:%SZ")
+                duration = int((t2 - t1).total_seconds())
+            except Exception:
+                duration = 0
+            data.setdefault("steps_completed", []).append({
+                "ts": prev_heartbeat,
+                "step": prev_step,
+                "duration_s": max(0, duration),
+            })
+            data["steps_completed"] = data["steps_completed"][-10:]
+            _append_event(project_id, "step_done", {"step": prev_step, "duration_s": duration})
 
-    data["alive"] = True
-    data["heartbeat"] = now
-    data["step"] = message
-    data["step_started_at"] = now
-    if index is not None:
-        data["step_index"] = index
-    if total is not None:
-        data["step_total"] = total
-    _write_progress(progress_file, data)
+        data["alive"] = True
+        data["heartbeat"] = now
+        data["step"] = message
+        data["step_started_at"] = now
+        if index is not None:
+            data["step_index"] = index
+        if total is not None:
+            data["step_total"] = total
+        _write_progress(progress_file, data)
     _append_event(project_id, "step_started", {"step": message, "step_index": index, "step_total": total})
 
 
 def done(project_id: str) -> None:
     progress_file = _get_progress_file(project_id)
-    data = _read_progress(progress_file)
+    with _progress_lock(project_id):
+        data = _read_progress(progress_file)
+        if data:
+            data["alive"] = False
+            data["heartbeat"] = _now_iso()
+            data["step"] = "Done"
+            _write_progress(progress_file, data)
     if data:
-        data["alive"] = False
-        data["heartbeat"] = _now_iso()
-        data["step"] = "Done"
-        _write_progress(progress_file, data)
         _append_event(project_id, "phase_done", {"phase": data.get("phase", "")})
 
 
 def error(project_id: str, code: str, message: str) -> None:
     """Record an error for this run (updates progress.json last_error and appends to events)."""
     progress_file = _get_progress_file(project_id)
-    data = _read_progress(progress_file)
-    if not data:
-        data = {"pid": os.getpid(), "started_at": _now_iso(), "steps_completed": []}
-    now = _now_iso()
-    data["last_error"] = {"code": code, "message": (message or "")[:500], "at": now}
-    data["heartbeat"] = now
-    _write_progress(progress_file, data)
+    with _progress_lock(project_id):
+        data = _read_progress(progress_file)
+        if not data:
+            data = {"pid": os.getpid(), "started_at": _now_iso(), "steps_completed": []}
+        now = _now_iso()
+        data["last_error"] = {"code": code, "message": (message or "")[:500], "at": now}
+        data["heartbeat"] = now
+        _write_progress(progress_file, data)
     _append_event(project_id, "error", {"code": code, "message": (message or "")[:500]})
 
 if __name__ == "__main__":

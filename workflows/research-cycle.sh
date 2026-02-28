@@ -4,6 +4,7 @@
 set -euo pipefail
 
 OPERATOR_ROOT="${OPERATOR_ROOT:-/root/operator}"
+export OPERATOR_ROOT
 TOOLS="$OPERATOR_ROOT/tools"
 RESEARCH="$OPERATOR_ROOT/research"
 ART="$PWD/artifacts"
@@ -117,6 +118,14 @@ case "$_STATUS" in
     exit 0
     ;;
 esac
+
+# ── Project-level lock: only one research-cycle per project at a time ──
+CYCLE_LOCK="$PROJ_DIR/.cycle.lock"
+exec 9>"$CYCLE_LOCK"
+if ! flock -n 9; then
+  log "Another research-cycle is already running for $PROJECT_ID — skipping."
+  exit 0
+fi
 
 progress_start() { python3 "$TOOLS/research_progress.py" start "$PROJECT_ID" "$1" 2>/dev/null || true; }
 progress_step() { python3 "$TOOLS/research_progress.py" step "$PROJECT_ID" "$1" "${2:-}" "${3:-}" 2>/dev/null || true; }
@@ -537,10 +546,11 @@ FILTER_READ_URLS
     cp "$ART/coverage_round1.json" "$PROJ_DIR/coverage_round1.json"
     COVERAGE_PASS=$(python3 -c "import json; print(json.load(open('$ART/coverage_round1.json')).get('pass', False), end='')" 2>/dev/null || echo "False")
 
-    progress_step "Planner Round 2: precision queries"
-    python3 "$TOOLS/research_planner.py" --refinement-queries "$ART/coverage_round1.json" "$PROJECT_ID" > "$ART/refinement_queries.json" 2>> "$PWD/log.txt" || true
-    REFINEMENT_COUNT=$(python3 -c "import json; d=json.load(open('$ART/refinement_queries.json')) if __import__('pathlib').Path('$ART/refinement_queries.json').exists() else {}; print(len(d.get('queries', [])), end='')" 2>/dev/null || echo "0")
-    if [ "$REFINEMENT_COUNT" -gt 0 ]; then
+    if [ "$COVERAGE_PASS" != "True" ]; then
+      progress_step "Planner Round 2: precision queries"
+      python3 "$TOOLS/research_planner.py" --refinement-queries "$ART/coverage_round1.json" "$PROJECT_ID" > "$ART/refinement_queries.json" 2>> "$PWD/log.txt" || true
+      REFINEMENT_COUNT=$(python3 -c "import json; d=json.load(open('$ART/refinement_queries.json')) if __import__('pathlib').Path('$ART/refinement_queries.json').exists() else {}; print(len(d.get('queries', [])), end='')" 2>/dev/null || echo "0")
+      if [ "$REFINEMENT_COUNT" -gt 0 ]; then
       python3 "$TOOLS/research_web_search.py" --queries-file "$ART/refinement_queries.json" --max-per-query 5 > "$ART/refinement_search.json" 2>> "$PWD/log.txt" || true
       python3 - "$PROJ_DIR" "$ART/refinement_search.json" <<'SAVE_REFINEMENT'
 import json, sys, hashlib
@@ -572,7 +582,6 @@ Path('$ART/refinement_urls_to_read.txt').write_text('\n'.join(urls[:10]))
       fi
     fi
 
-    if [ "$COVERAGE_PASS" != "True" ]; then
       progress_step "Filling coverage gaps (Round 2)"
       python3 "$TOOLS/research_planner.py" --gap-fill "$ART/coverage_round1.json" "$PROJECT_ID" > "$ART/gap_queries.json"
       python3 "$TOOLS/research_web_search.py" --queries-file "$ART/gap_queries.json" --max-per-query 8 > "$ART/gap_search_round2.json" 2>> "$PWD/log.txt" || true
@@ -606,15 +615,14 @@ Path('$ART/gap_urls_to_read.txt').write_text('\n'.join(urls[:10]))
       fi
       python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round2.json"
       cp "$ART/coverage_round2.json" "$PROJ_DIR/coverage_round2.json"
-    fi
 
-    THIN_TOPICS=$(python3 -c "import json; d=json.load(open('$ART/coverage_round2.json')) if __import__('pathlib').Path('$ART/coverage_round2.json').exists() else json.load(open('$ART/coverage_round1.json')); print(json.dumps(d.get('thin_priority_topics', [])), end='')" 2>/dev/null || echo "[]")
-    if [ "$THIN_TOPICS" != "[]" ]; then
-      progress_step "Deep-diving thin topics (Round 3)"
-      echo "$THIN_TOPICS" > "$ART/thin_topics.json"
-      python3 "$TOOLS/research_planner.py" --perspective-rotate "$ART/thin_topics.json" "$PROJECT_ID" > "$ART/depth_queries.json"
-      python3 "$TOOLS/research_web_search.py" --queries-file "$ART/depth_queries.json" --max-per-query 5 > "$ART/depth_search_round3.json" 2>> "$PWD/log.txt" || true
-      python3 - "$PROJ_DIR" "$ART/depth_search_round3.json" <<'SAVE_DEPTH'
+      THIN_TOPICS=$(python3 -c "import json; d=json.load(open('$ART/coverage_round2.json')) if __import__('pathlib').Path('$ART/coverage_round2.json').exists() else json.load(open('$ART/coverage_round1.json')); print(json.dumps(d.get('thin_priority_topics', [])), end='')" 2>/dev/null || echo "[]")
+      if [ "$THIN_TOPICS" != "[]" ]; then
+        progress_step "Deep-diving thin topics (Round 3)"
+        echo "$THIN_TOPICS" > "$ART/thin_topics.json"
+        python3 "$TOOLS/research_planner.py" --perspective-rotate "$ART/thin_topics.json" "$PROJECT_ID" > "$ART/depth_queries.json"
+        python3 "$TOOLS/research_web_search.py" --queries-file "$ART/depth_queries.json" --max-per-query 5 > "$ART/depth_search_round3.json" 2>> "$PWD/log.txt" || true
+        python3 - "$PROJ_DIR" "$ART/depth_search_round3.json" <<'SAVE_DEPTH'
 import json, sys, hashlib
 from pathlib import Path
 proj_dir, in_path = Path(sys.argv[1]), Path(sys.argv[2])
@@ -625,7 +633,7 @@ for item in (data if isinstance(data, list) else []):
     sid = hashlib.sha256(u.encode()).hexdigest()[:12]
     (proj_dir / "sources" / f"{sid}.json").write_text(json.dumps(item))
 SAVE_DEPTH
-      python3 -c "
+        python3 -c "
 import json
 from pathlib import Path
 p = Path('$ART/depth_search_round3.json')
@@ -638,12 +646,15 @@ if p.exists():
             urls.append(u)
 Path('$ART/depth_urls_to_read.txt').write_text('\n'.join(urls[:8]))
 "
-      if [ -s "$ART/depth_urls_to_read.txt" ]; then
-        progress_step "Reading depth sources"
-        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/depth_urls_to_read.txt" --read-limit 8 --workers 4 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
+        if [ -s "$ART/depth_urls_to_read.txt" ]; then
+          progress_step "Reading depth sources"
+          python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/depth_urls_to_read.txt" --read-limit 8 --workers 4 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
+        fi
+        python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round3.json"
+        cp "$ART/coverage_round3.json" "$PROJ_DIR/coverage_round3.json"
       fi
-      python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round3.json"
-      cp "$ART/coverage_round3.json" "$PROJ_DIR/coverage_round3.json"
+    else
+      log "Coverage passed after Round 1 — skipping Rounds 2-3"
     fi
 
     progress_step "Extracting findings"

@@ -48,7 +48,21 @@ export function ActivityFeed({
   const state = (progress?.state ?? "IDLE") as RuntimeState;
   const data = progress?.data;
   const stepsCompleted = (data?.steps_completed ?? []) as Step[];
-  const reversedSteps = [...stepsCompleted].reverse().slice(0, 8);
+  const readingSourceRe = /Reading source (\d+)\/(\d+)/;
+  const sortedSteps = [...stepsCompleted].sort((a, b) => {
+    const ma = a.step.match(readingSourceRe);
+    const mb = b.step.match(readingSourceRe);
+    if (ma && mb) {
+      const totalA = parseInt(ma[2], 10);
+      const totalB = parseInt(mb[2], 10);
+      if (totalA !== totalB) return totalA - totalB;
+      return parseInt(ma[1], 10) - parseInt(mb[1], 10);
+    }
+    if (ma) return 1;
+    if (mb) return -1;
+    return new Date(a.ts).getTime() - new Date(b.ts).getTime();
+  });
+  const reversedSteps = sortedSteps.slice(-8).reverse();
   const displayPhase = data?.phase ?? currentPhase ?? "—";
   const step = progress?.step ?? data?.step;
   const lastError = progress?.last_error;
