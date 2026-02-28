@@ -62,9 +62,10 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 4. Antwort: „Nächste Phase wird gestartet (Job läuft).“
 5. Nach Refresh siehst du ggf. neue Phase, mehr Findings, neuen Report.
 
-**Tabs: Report | Findings | Sources | History | Audit**
+**Tabs: Report | Critique | Findings | Sources | History | Audit**
 
-- **Report:** Neuester Report als Markdown (aus `research/proj-…/reports/*.md`). Download als .md möglich. Wenn ein Report existiert, aber keine PDF: Button **„Generate PDF“** (erzeugt PDF nachträglich per `research_pdf_report.py`, z. B. wenn WeasyPrint im Job fehlte). Wenn PDF vorhanden: **„Download PDF“**.
+- **Report:** Neuester Report als Markdown (aus `research/proj-…/reports/*.md`). Download als .md möglich. Wenn ein Report existiert, aber keine PDF: Button **„Generate PDF“** (erzeugt PDF nachträglich per `research_pdf_report.py`, z. B. wenn WeasyPrint im Job fehlte). Wenn PDF vorhanden: **„Download PDF“**. Unter der Quality-Score-Zeile: aufklappbare **Critic Weaknesses** (erste 2) mit Link „View full critique“ → wechselt zum Critique-Tab.
+- **Critique:** Bewertung des Critics aus `research/proj-…/verify/critique.json` (Score, Weaknesses, Suggestions, ggf. Strengths). Lazy-Load über `GET /api/research/projects/[id]/critique`; 404 wenn noch keine Kritik.
 - **Findings:** Liste aus `GET /api/research/projects/[id]/findings` (findings/*.json). Pro Finding: Feedback-Buttons (Excellent, Irrelevant, Falsch, Tiefer graben) → `POST /api/research/feedback`.
 - **Sources:** Liste aus `GET /api/research/projects/[id]/sources` (sources).
 - **History:** Liste aller Reports (Dateinamen + Inhalt) aus `GET /api/research/projects/[id]/reports`.

@@ -1,6 +1,14 @@
 /** Shared types for research detail tabs and tab components. */
 
-export type TabId = "report" | "findings" | "sources" | "verlauf" | "audit";
+export type TabId = "report" | "critique" | "findings" | "sources" | "verlauf" | "audit";
+
+export interface Critique {
+  score: number;
+  weaknesses: string[];
+  suggestions: string[];
+  strengths?: string[];
+  pass?: boolean;
+}
 
 export interface Finding {
   id: string;

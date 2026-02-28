@@ -591,6 +591,32 @@ export async function getAudit(projectId: string): Promise<AuditData | null> {
   }
 }
 
+export interface CritiqueData {
+  score: number;
+  weaknesses: string[];
+  suggestions: string[];
+  strengths?: string[];
+  pass?: boolean;
+}
+
+/** Read critic assessment from research/{projectId}/verify/critique.json. Returns null if file missing. */
+export async function getCritique(projectId: string): Promise<CritiqueData | null> {
+  const projPath = safeProjectPath(projectId);
+  const critiquePath = path.join(projPath, "verify", "critique.json");
+  try {
+    const raw = await readFile(critiquePath, "utf8");
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    const score = typeof data.score === "number" ? data.score : 0;
+    const weaknesses = Array.isArray(data.weaknesses) ? (data.weaknesses as string[]) : [];
+    const suggestions = Array.isArray(data.suggestions) ? (data.suggestions as string[]) : [];
+    const strengths = Array.isArray(data.strengths) ? (data.strengths as string[]) : undefined;
+    const pass = typeof data.pass === "boolean" ? data.pass : undefined;
+    return { score, weaknesses, suggestions, strengths, pass };
+  } catch {
+    return null;
+  }
+}
+
 export async function getAuditLog(
   projectId: string
 ): Promise<Array<{ ts: string; event: string; detail?: Record<string, unknown> }>> {

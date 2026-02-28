@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { VerifiedClaimSlideover } from "@/components/VerifiedClaimSlideover";
-import type { TabId, Finding, Source, ReportEntry, AuditClaim, ProjectForReport } from "./types";
+import type { TabId, Finding, Source, ReportEntry, AuditClaim, Critique, ProjectForReport } from "./types";
 import { ReportTab } from "./tabs/ReportTab";
+import { CritiqueTab } from "./tabs/CritiqueTab";
 import { FindingsTab } from "./tabs/FindingsTab";
 import { SourcesTab } from "./tabs/SourcesTab";
 import { HistoryTab } from "./tabs/HistoryTab";
@@ -25,8 +26,10 @@ export function ResearchDetailTabs({
   const [sources, setSources] = useState<Source[] | null>(null);
   const [reports, setReports] = useState<ReportEntry[] | null>(null);
   const [auditClaims, setAuditClaims] = useState<AuditClaim[] | null>(null);
+  const [critique, setCritique] = useState<Critique | null>(null);
   const [loading, setLoading] = useState<Record<TabId, boolean>>({
     report: false,
+    critique: false,
     findings: false,
     sources: false,
     verlauf: false,
@@ -65,8 +68,16 @@ export function ResearchDetailTabs({
         .catch(() => setAuditClaims([]))
         .finally(() => setLoading((l) => ({ ...l, audit: false })));
     }
+    if (activeTab === "critique" && critique === null) {
+      setLoading((l) => ({ ...l, critique: true }));
+      fetch(`/api/research/projects/${projectId}/critique`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => setCritique(d))
+        .catch(() => setCritique(null))
+        .finally(() => setLoading((l) => ({ ...l, critique: false })));
+    }
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [activeTab, projectId, findings, sources, reports, auditClaims]);
+  }, [activeTab, projectId, findings, sources, reports, auditClaims, critique]);
 
   async function sendFeedback(findingId: string, type: string) {
     try {
@@ -90,6 +101,7 @@ export function ResearchDetailTabs({
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "report", label: "Report" },
+    { id: "critique", label: "Critique" },
     { id: "findings", label: "Findings" },
     { id: "sources", label: "Sources" },
     { id: "verlauf", label: "History" },
@@ -129,7 +141,11 @@ export function ResearchDetailTabs({
             project={project}
             onVerifiedClick={(claimId) => setSlideoverTarget({ open: true, claimId })}
             loading={loading.report}
+            onSwitchToCritique={() => setActiveTab("critique")}
           />
+        )}
+        {activeTab === "critique" && (
+          <CritiqueTab critique={critique} loading={loading.critique} />
         )}
         {activeTab === "findings" && (
           <FindingsTab

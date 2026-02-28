@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MarkdownView } from "@/components/MarkdownView";
 import { LoadingSpinner } from "@/components/LoadingSpinner";
 import type { ProjectForReport } from "../types";
@@ -12,6 +12,7 @@ interface ReportTabProps {
   project?: ProjectForReport | null;
   onVerifiedClick: (claimId: string | undefined) => void;
   loading: boolean;
+  onSwitchToCritique?: () => void;
 }
 
 export function ReportTab({
@@ -21,9 +22,24 @@ export function ReportTab({
   project,
   onVerifiedClick,
   loading,
+  onSwitchToCritique,
 }: ReportTabProps) {
   const [pdfMessage, setPdfMessage] = useState<string | null>(null);
   const [pdfGenerating, setPdfGenerating] = useState(false);
+  const [critiquePreview, setCritiquePreview] = useState<{ weaknesses: string[] } | null>(null);
+  const [critiqueExpanded, setCritiqueExpanded] = useState(false);
+
+  useEffect(() => {
+    if (project?.quality_gate?.critic_score == null) return;
+    let cancelled = false;
+    fetch(`/api/research/projects/${projectId}/critique`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!cancelled && d?.weaknesses?.length) setCritiquePreview({ weaknesses: d.weaknesses });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [projectId, project?.quality_gate?.critic_score]);
   if (loading) return <LoadingSpinner />;
   if (!initialMarkdown) {
     return (
@@ -54,6 +70,38 @@ export function ReportTab({
         <div>Sources: <span style={{ color: "var(--tron-text)" }}>{project?.quality_gate?.evidence_gate?.metrics?.unique_source_count ?? "—"}</span></div>
         <div>Spend: <span style={{ color: "var(--tron-text)" }}>{project?.current_spend != null ? `$${project.current_spend.toFixed(2)}` : "—"}</span></div>
         <div>Verified: <span style={{ color: "var(--tron-text)" }}>{project?.quality_gate?.evidence_gate?.metrics?.verified_claim_count != null ? String(project.quality_gate.evidence_gate?.metrics?.verified_claim_count) : "—"}</span></div>
+        {critiquePreview && critiquePreview.weaknesses.length > 0 && (
+          <div className="col-span-2 sm:col-span-3 lg:col-span-6 mt-1">
+            <button
+              type="button"
+              onClick={() => setCritiqueExpanded((e) => !e)}
+              className="text-left w-full rounded border py-1.5 px-2 text-[11px] font-mono flex items-center justify-between gap-2"
+              style={{ borderColor: "var(--tron-border)", background: "var(--tron-bg-panel)", color: "var(--tron-text-muted)" }}
+            >
+              <span>Critic weaknesses (first {Math.min(2, critiquePreview.weaknesses.length)})</span>
+              <span style={{ color: "var(--tron-accent)" }}>{critiqueExpanded ? "▼" : "▶"}</span>
+            </button>
+            {critiqueExpanded && (
+              <ul className="mt-1 space-y-0.5 pl-2 text-[11px] border-l-2" style={{ color: "var(--tron-text-dim)", borderColor: "var(--tron-error, #e53e3e)" }}>
+                {critiquePreview.weaknesses.slice(0, 2).map((w, i) => (
+                  <li key={i} className="truncate max-w-full" title={w}>{w}</li>
+                ))}
+                {onSwitchToCritique && (
+                  <li className="mt-1">
+                    <button
+                      type="button"
+                      onClick={onSwitchToCritique}
+                      className="font-semibold hover:underline"
+                      style={{ color: "var(--tron-accent)" }}
+                    >
+                      View full critique →
+                    </button>
+                  </li>
+                )}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
       <div className="mb-3 flex items-center justify-between gap-3">
         <p className="text-[11px] font-mono" style={{ color: "var(--tron-text-dim)" }}>
