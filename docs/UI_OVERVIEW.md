@@ -83,7 +83,7 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 - Die UI pollt `GET /api/research/projects/[id]/progress`. Der Endpoint liefert einen **berechneten Laufzeit-Status** (nicht nur „Running/Idle“):
   - **RUNNING:** Heartbeat frisch (< 30s), Step wird ausgeführt.
   - **IDLE:** Kein laufender Prozess, wartet auf Trigger.
-  - **STUCK:** Kein Fortschritt seit 5 Min (gleicher Step), Prozess hängt.
+  - **STUCK:** Kein Fortschritt seit 5 Min (gleicher Step), Prozess hängt. Bei aktiven Parallel-Workern (`active_steps`) zählt das jüngste Worker-`started_at` als Fortschritt, um False Positives zu vermeiden.
   - **ERROR_LOOP:** Gleicher Fehlercode mehrfach in 5 Min (z. B. Proxy/OpenAI-Fehler).
   - **FAILED / DONE:** Projekt-Status fehlgeschlagen bzw. abgeschlossen.
 - Zusätzlich: **Phase**, **aktueller Step**, **letzte Aktivität**, **letzter Fehler** (Code + Meldung), **Ereignis-Timeline** (events.jsonl). So erkennst du zuverlässig, ob gearbeitet wird, ein Fehler-Loop läuft oder du (z. B. mit „Nächste Phase starten“ oder Abbrechen) reagieren solltest.

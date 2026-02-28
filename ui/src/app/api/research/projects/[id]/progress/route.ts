@@ -109,7 +109,18 @@ function computeState(
 
   const heartbeatMs = new Date(progress.heartbeat).getTime();
   const heartbeatAgeMs = nowMs - heartbeatMs;
-  const stepStartedAt = progress.step_started_at || progress.heartbeat;
+  let stepStartedAt = progress.step_started_at || progress.heartbeat;
+  const activeSteps = progress.active_steps;
+  if (Array.isArray(activeSteps) && activeSteps.length > 0) {
+    const latestActive = activeSteps
+      .map((s) => s?.started_at)
+      .filter(Boolean)
+      .sort()
+      .pop();
+    if (latestActive && latestActive > stepStartedAt) {
+      stepStartedAt = latestActive;
+    }
+  }
   const stepStartedMs = new Date(stepStartedAt).getTime();
   const stepAgeMs = nowMs - stepStartedMs;
 
