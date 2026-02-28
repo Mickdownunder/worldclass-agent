@@ -42,8 +42,15 @@ def _load_report(proj_path: Path, art_path: Path | None) -> str:
 def _llm_json(system: str, user: str, project_id: str = "") -> dict:
     """Call LLM for JSON output with retry and optional budget tracking."""
     import re
+    from tools.research_common import audit_log
     model = _model()
-    result = llm_call(model, system, user, project_id=project_id)
+    try:
+        result = llm_call(model, system, user, project_id=project_id)
+    except Exception as e:
+        proj = project_dir(project_id) if project_id else None
+        if proj:
+            audit_log(proj, "critic_llm_failed", {"error": str(e), "model": model})
+        return {"score": 0.0, "error": str(e), "weaknesses": [], "suggestions": [], "pass": False, "dimensions": []}
     text = (result.text or "").strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)

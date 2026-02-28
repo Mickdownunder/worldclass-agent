@@ -13,7 +13,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import load_secrets, project_dir, load_project, ensure_project_layout
+import re
+from tools.research_common import project_dir, load_project, ensure_project_layout, llm_call
 
 
 def _model():
@@ -30,20 +31,16 @@ def _load_findings(proj_path: Path, max_items: int = 50) -> list[dict]:
     return findings[:max_items]
 
 
-def _llm_json(system: str, user: str) -> dict | list:
-    from openai import OpenAI
-    secrets = load_secrets()
-    client = OpenAI(api_key=secrets.get("OPENAI_API_KEY"))
-    resp = client.responses.create(model=_model(), instructions=system, input=user)
-    text = (resp.output_text or "").strip()
+def _llm_json(system: str, user: str, project_id: str = "") -> dict | list:
+    result = llm_call(_model(), system, user, project_id=project_id)
+    text = (result.text or "").strip()
     if text.startswith("```"):
-        import re
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
     return json.loads(text)
 
 
-def extract_entities(text: str) -> list[dict]:
+def extract_entities(text: str, project_id: str = "") -> list[dict]:
     """LLM-based entity extraction. Returns list of {name, type, properties}."""
     if not (text or "").strip():
         return []
@@ -53,7 +50,7 @@ Return JSON: [{"name": "...", "type": "person|org|tech|concept|event", "properti
 Use short canonical names. type must be one of: person, org, tech, concept, event."""
     user = f"TEXT:\n{text}\n\nExtract entities. Return only valid JSON array."
     try:
-        out = _llm_json(system, user)
+        out = _llm_json(system, user, project_id=project_id)
     except Exception:
         return []
     if not isinstance(out, list):
@@ -61,7 +58,7 @@ Use short canonical names. type must be one of: person, org, tech, concept, even
     return [x for x in out if isinstance(x, dict) and x.get("name") and x.get("type")]
 
 
-def extract_relations(entities: list[dict], text: str) -> list[dict]:
+def extract_relations(entities: list[dict], text: str, project_id: str = "") -> list[dict]:
     """Extract relations between entities. Returns list of {from, to, relation}."""
     if not entities or not (text or "").strip():
         return []
@@ -72,7 +69,7 @@ Return JSON: [{"from": "entity name", "to": "entity name", "relation": "uses|com
 Only use entity names from the list. relation should be a short verb phrase."""
     user = f"ENTITIES: {json.dumps(names)}\n\nTEXT:\n{text}\n\nExtract relations. Return only valid JSON array."
     try:
-        out = _llm_json(system, user)
+        out = _llm_json(system, user, project_id=project_id)
     except Exception:
         return []
     if not isinstance(out, list):
@@ -110,7 +107,7 @@ def run_for_project(project_id: str) -> dict:
     done = 0
     with ThreadPoolExecutor(max_workers=10) as executor:
         future_to_item = {
-            executor.submit(extract_entities, excerpt): (i, f, excerpt)
+            executor.submit(extract_entities, excerpt, project_id): (i, f, excerpt)
             for i, f, excerpt in work
         }
         for future in as_completed(future_to_item):
@@ -147,7 +144,7 @@ def run_for_project(project_id: str) -> dict:
     entities_list = list(name_to_id.keys())
     if entities_list:
         progress_step(project_id, "Knowledge graph: extracting relations between entities")
-        rels = extract_relations([{"name": n} for n in entities_list], combined)
+        rels = extract_relations([{"name": n} for n in entities_list], combined, project_id=project_id)
         for r in rels:
             a, b = name_to_id.get(r["from"]), name_to_id.get(r["to"])
             if a and b:

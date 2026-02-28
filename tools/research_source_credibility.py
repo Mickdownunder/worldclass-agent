@@ -70,6 +70,9 @@ def main() -> None:
         from lib.memory import Memory
         mem = Memory()
         for domain, stats in domain_stats.items():
+            if not domain or (domain or "").strip() in ("", "?"):
+                continue
+            domain = (domain or "").strip()
             mem.update_source_credibility(
                 domain,
                 times_used=stats["used"],

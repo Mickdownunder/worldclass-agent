@@ -311,6 +311,11 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
         except Exception:
             pass
     default_reliability = 0.65 if not rel_by_url else 0.5
+    sources_dir = proj_path / "sources"
+    total_project_sources = (
+        len([f for f in sources_dir.glob("*.json") if not f.name.endswith("_content.json")])
+        if sources_dir.exists() else 1
+    )
     existing_ledger_path = verify_dir / "claim_ledger.json"
     prev_verified: dict[str, dict] = {}
     if existing_ledger_path.exists():
@@ -373,8 +378,8 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
             verification_tier = prev_verified[key].get("verification_tier", "VERIFIED")
             verification_reason = prev_verified[key].get("verification_reason", verification_reason)
             supporting_source_ids = prev_verified[key].get("supporting_source_ids", supporting_source_ids)
-        total_checked = len(c.get("all_checked_sources", [])) or max(1, len(supporting_source_ids))
-        claim_support_rate = round(len(supporting_source_ids) / total_checked, 3)
+        total_checked = len(c.get("all_checked_sources", [])) or total_project_sources
+        claim_support_rate = round(len(supporting_source_ids) / max(1, total_checked), 3)
         claims_out.append({
             "claim_id": claim_id,
             "text": text,

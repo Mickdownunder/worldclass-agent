@@ -1312,6 +1312,12 @@ PY
     MAX_REVISE_ROUNDS="${RESEARCH_MEMORY_REVISE_ROUNDS:-2}"
     progress_step "Running quality critic"
     python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$PWD/log.txt" || true
+    if [ ! -s "$ART/critique.json" ]; then
+      log "Critic output empty — retrying in 15s"
+      sleep 15
+      python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$PWD/log.txt" || true
+    fi
+    [ -s "$ART/critique.json" ] && cp "$ART/critique.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     SCORE=0.5
     if [ -f "$ART/critique.json" ]; then
       SCORE=$(python3 -c "import json; d=json.load(open('$ART/critique.json')); print(d.get('score', 0.5), end='')" 2>/dev/null || echo "0.5")
