@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Parallel URL reader for research: fetch multiple URLs with 3-5 workers, apply relevance gate, save to project.
+Parallel URL reader for research: fetch multiple URLs with 1-12 workers (default 8), apply relevance gate, save to project.
 Replaces sequential bash while-read loops in research-cycle.sh.
 
 Usage:
@@ -9,7 +9,7 @@ Usage:
   mode: explore | focus | counter | recovery
   input-file: path to file with one URL or one path-to-source-JSON per line
   read-limit: max URLs to read (default: mode-dependent)
-  workers: 3-5 (default 4)
+  workers: 1-12 (default 8)
 """
 import json
 import os
@@ -77,7 +77,8 @@ def _save_result(
     title = data.get("title", "")
     relevant = True
     rel_score = 10.0
-    if text and question:
+    skip_gate = os.environ.get("RESEARCH_SKIP_RELEVANCE_GATE", "").lower() in ("1", "true", "yes")
+    if text and question and not skip_gate:
         try:
             from tools.research_relevance_gate import check_relevance
             gate = check_relevance(question, title, text, project_id="")
@@ -115,12 +116,19 @@ def _run_worker(
     source_label: str,
     lock: threading.Lock,
     results: list,
+    total: int,
 ) -> None:
     idx, line = item
     url = _get_url_from_line(line, proj_dir)
     if not url:
         results.append((idx, -1, 0))  # skipped (not an attempt)
         return
+    step_msg = f"Reading source {idx + 1}/{total}"
+    try:
+        from tools.research_progress import step_start
+        step_start(project_id, step_msg, idx + 1, total)
+    except Exception:
+        pass
     data = _read_one_url(url, project_id)
     text = (data.get("text") or data.get("abstract") or "").strip()
     err = (data.get("error") or "").strip()
@@ -128,6 +136,11 @@ def _run_worker(
     saved = False
     if success:
         saved = _save_result(proj_dir, url, data, question, mode, rel_threshold, source_label, lock)
+    try:
+        from tools.research_progress import step_finish
+        step_finish(project_id, step_msg)
+    except Exception:
+        pass
     results.append((idx, 1 if success else 0, 1 if saved else 0))
 
 
@@ -156,11 +169,11 @@ def main() -> None:
         read_limit = min(read_limit, 9)
     elif mode == "recovery":
         read_limit = min(read_limit, 10)
-    workers = 4
+    workers = 8
     if "--workers" in sys.argv:
         widx = sys.argv.index("--workers") + 1
         if widx < len(sys.argv):
-            workers = max(1, min(5, int(sys.argv[widx])))
+            workers = max(1, min(12, int(sys.argv[widx])))
     workers = min(workers, read_limit)
 
     from tools.research_common import project_dir
@@ -185,9 +198,9 @@ def main() -> None:
     lock = threading.Lock()
     results: list[tuple[int, int, int]] = []
     try:
-        from tools.research_progress import step as progress_step
+        from tools.research_progress import step_summary
     except Exception:
-        progress_step = lambda _pid, _msg, _cur, _tot: None
+        step_summary = lambda _pid, _msg, _cur, _tot: None
 
     from concurrent.futures import ThreadPoolExecutor, as_completed
     total = len(lines)
@@ -206,13 +219,14 @@ def main() -> None:
             source_label,
             lock,
             results,
+            total,
         ): i for i, line in enumerate(lines)}
         completed = 0
         for future in as_completed(futures):
             try:
                 future.result()
                 completed += 1
-                progress_step(project_id, f"Reading source {completed}/{total}", completed, total)
+                step_summary(project_id, f"Reading source {completed}/{total}", completed, total)
             except Exception as e:
                 print(f"WARN: parallel read worker failed: {e}", file=sys.stderr)
     # Results list is appended by workers; sort by idx and aggregate

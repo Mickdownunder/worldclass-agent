@@ -48,10 +48,13 @@ export function ActivityFeed({
   const state = (progress?.state ?? "IDLE") as RuntimeState;
   const data = progress?.data;
   const stepsCompleted = (data?.steps_completed ?? []) as Step[];
-  const readingSourceRe = /Reading source (\d+)\/(\d+)/;
-  const sortedSteps = [...stepsCompleted].sort((a, b) => {
-    const ma = a.step.match(readingSourceRe);
-    const mb = b.step.match(readingSourceRe);
+  const activeSteps = (data?.active_steps ?? []).map((a) =>
+    typeof a === "string" ? { step: a, started_at: "" } : { step: a.step, started_at: a.started_at ?? "" }
+  );
+  const indexedStepRe = /(\d+)\/(\d+)/;
+  const sortByIndexed = (a: Step & { _current?: boolean }, b: Step & { _current?: boolean }) => {
+    const ma = a.step.match(indexedStepRe);
+    const mb = b.step.match(indexedStepRe);
     if (ma && mb) {
       const totalA = parseInt(ma[2], 10);
       const totalB = parseInt(mb[2], 10);
@@ -60,9 +63,40 @@ export function ActivityFeed({
     }
     if (ma) return 1;
     if (mb) return -1;
-    return new Date(a.ts).getTime() - new Date(b.ts).getTime();
+    return new Date(a.ts || 0).getTime() - new Date(b.ts || 0).getTime();
+  };
+  const hasFinalStepInCompleted = stepsCompleted.some((s) => {
+    const m = s.step.match(indexedStepRe);
+    return m && parseInt(m[1], 10) === parseInt(m[2], 10);
   });
-  const reversedSteps = sortedSteps.slice(-8).reverse();
+  /** Only treat "Reading source N/N" as phase complete; avoid "Extracting claims batch 4/4" in verify (more steps/recovery follow). */
+  const hasReadingSourceFinal = stepsCompleted.some((s) => {
+    const m = s.step.match(/Reading source (\d+)\/(\d+)/);
+    return m && parseInt(m[1], 10) === parseInt(m[2], 10);
+  });
+  let sortedSteps: (Step & { _current?: boolean })[] = [...stepsCompleted].sort(sortByIndexed);
+  for (const a of activeSteps) {
+    const already = sortedSteps.some((s) => s.step === a.step);
+    if (!already) sortedSteps.push({ ts: a.started_at, step: a.step, duration_s: 0, _current: true });
+  }
+  sortedSteps = sortedSteps.sort(sortByIndexed);
+  const currentStep = progress?.step ?? data?.step;
+  const showStaleStepAsCurrent = state === "RUNNING" || !hasFinalStepInCompleted;
+  if (currentStep && typeof currentStep === "string" && showStaleStepAsCurrent && activeSteps.length === 0) {
+    const m = currentStep.match(indexedStepRe);
+    if (m) {
+      const curI = parseInt(m[1], 10);
+      const curT = parseInt(m[2], 10);
+      const hasCurrent = sortedSteps.some((s) => {
+        const n = s.step.match(indexedStepRe);
+        return n && parseInt(n[1], 10) === curI && parseInt(n[2], 10) === curT;
+      });
+      if (!hasCurrent) {
+        sortedSteps = [...sortedSteps, { ts: "", step: currentStep, duration_s: 0, _current: true }].sort(sortByIndexed);
+      }
+    }
+  }
+  const reversedSteps = sortedSteps.slice(-12).reverse();
   const displayPhase = data?.phase ?? currentPhase ?? "—";
   const step = progress?.step ?? data?.step;
   const lastError = progress?.last_error;
@@ -123,8 +157,8 @@ export function ActivityFeed({
           )}
         </p>
 
-        {/* Current step */}
-        {(state === "RUNNING" || (step && step !== "Done")) && step && (
+        {/* Current step: hide when active_steps is set (multi-worker shows list only); avoids redundant e.g. "Reading source 8/15" above the list */}
+        {activeSteps.length === 0 && showStaleStepAsCurrent && (state === "RUNNING" || (step && step !== "Done")) && step && (
           <div className="flex items-center gap-3">
             <span
               className="h-2 w-2 shrink-0 rounded-full animate-pulse"
@@ -167,8 +201,8 @@ export function ActivityFeed({
           </div>
         )}
 
-        {/* Phase completed */}
-        {state !== "RUNNING" && hasProgressData && step === "Done" && (
+        {/* Phase completed: either step is "Done" or completed list has final step (e.g. 20/20) so we don't show stale "13/20" */}
+        {state !== "RUNNING" && hasProgressData && (step === "Done" || hasReadingSourceFinal) && (
           <div className="flex items-center gap-3">
             <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: "var(--tron-success)" }} />
             <span className="text-sm font-mono" style={{ color: "var(--tron-success)" }}>
@@ -201,16 +235,20 @@ export function ActivityFeed({
             <span className="text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-dim)" }}>
               Abgeschlossene Schritte
             </span>
-            {reversedSteps.map((s, i) => (
-              <div key={i} className="flex items-start gap-3">
-                <span className="text-xs font-mono mt-0.5" style={{ color: "var(--tron-text-dim)", minWidth: "45px" }}>
-                  {s.duration_s}s
-                </span>
-                <span className="text-xs font-mono" style={{ color: "var(--tron-text-muted)" }}>
-                  {s.step}
-                </span>
-              </div>
-            ))}
+            {reversedSteps.map((s, i) => {
+              const isCurrent = (s as Step & { _current?: boolean })._current;
+              return (
+                <div key={i} className="flex items-start gap-3">
+                  <span className="text-xs font-mono mt-0.5" style={{ color: "var(--tron-text-dim)", minWidth: "45px" }}>
+                    {isCurrent ? "—" : `${s.duration_s}s`}
+                  </span>
+                  <span className="text-xs font-mono" style={{ color: isCurrent ? "var(--tron-accent)" : "var(--tron-text-muted)" }}>
+                    {s.step}
+                    {isCurrent && " (läuft)"}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
 

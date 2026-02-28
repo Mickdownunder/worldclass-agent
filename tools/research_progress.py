@@ -79,10 +79,76 @@ def start(project_id: str, phase: str) -> None:
             "step_index": 0,
             "step_total": 0,
             "steps_completed": [],
+            "active_steps": [],
             "started_at": now,
         }
         _write_progress(progress_file, data)
     _append_event(project_id, "phase_started", {"phase": phase})
+
+
+def step_start(project_id: str, message: str, index: int = None, total: int = None) -> None:
+    """Register a step as started (e.g. one parallel worker). No duplicate same message."""
+    progress_file = _get_progress_file(project_id)
+    with _progress_lock(project_id):
+        data = _read_progress(progress_file)
+        if not data:
+            data = {"pid": os.getpid(), "alive": True, "started_at": _now_iso(), "steps_completed": [], "active_steps": []}
+        now = _now_iso()
+        data.setdefault("active_steps", [])
+        if not any((e.get("step") == message) for e in data["active_steps"]):
+            data["active_steps"].append({"step": message, "started_at": now})
+        data["alive"] = True
+        data["heartbeat"] = now
+        _write_progress(progress_file, data)
+    _append_event(project_id, "step_started", {"step": message, "step_index": index, "step_total": total})
+
+
+def step_finish(project_id: str, message: str) -> None:
+    """Remove step from active_steps, append to steps_completed with duration."""
+    progress_file = _get_progress_file(project_id)
+    duration = 0
+    with _progress_lock(project_id):
+        data = _read_progress(progress_file)
+        if not data:
+            return
+        now = _now_iso()
+        active = data.get("active_steps") or []
+        for i, e in enumerate(active):
+            if e.get("step") == message:
+                started = e.get("started_at") or now
+                try:
+                    t1 = datetime.strptime(started, "%Y-%m-%dT%H:%M:%SZ")
+                    t2 = datetime.strptime(now, "%Y-%m-%dT%H:%M:%SZ")
+                    duration = int((t2 - t1).total_seconds())
+                except Exception:
+                    duration = 0
+                data.setdefault("steps_completed", []).append({
+                    "ts": started,
+                    "step": message,
+                    "duration_s": max(0, duration),
+                })
+                data["steps_completed"] = data["steps_completed"][-50:]
+                data["active_steps"] = active[:i] + active[i + 1:]
+                break
+        data["alive"] = True
+        data["heartbeat"] = now
+        _write_progress(progress_file, data)
+    _append_event(project_id, "step_done", {"step": message, "duration_s": duration})
+
+
+def step_summary(project_id: str, message: str, completed: int, total: int) -> None:
+    """Set aggregate step text and index/total without touching steps_completed or active_steps."""
+    progress_file = _get_progress_file(project_id)
+    with _progress_lock(project_id):
+        data = _read_progress(progress_file)
+        if not data:
+            return
+        data["alive"] = True
+        data["heartbeat"] = _now_iso()
+        data["step"] = message
+        data["step_index"] = completed
+        data["step_total"] = total
+        _write_progress(progress_file, data)
 
 
 def step(project_id: str, message: str, index: int = None, total: int = None) -> None:
@@ -120,6 +186,7 @@ def step(project_id: str, message: str, index: int = None, total: int = None) ->
         data["heartbeat"] = now
         data["step"] = message
         data["step_started_at"] = now
+        data["active_steps"] = []  # clear so other phases don't show stale reading steps
         if index is not None:
             data["step_index"] = index
         if total is not None:
@@ -172,6 +239,18 @@ if __name__ == "__main__":
         idx = int(sys.argv[4]) if len(sys.argv) >= 5 and sys.argv[4].isdigit() else None
         tot = int(sys.argv[5]) if len(sys.argv) >= 6 and sys.argv[5].isdigit() else None
         step(project_id, msg, idx, tot)
+    elif cmd == "step_start" and len(sys.argv) >= 4:
+        msg = sys.argv[3]
+        idx = int(sys.argv[4]) if len(sys.argv) >= 5 and sys.argv[4].isdigit() else None
+        tot = int(sys.argv[5]) if len(sys.argv) >= 6 and sys.argv[5].isdigit() else None
+        step_start(project_id, msg, idx, tot)
+    elif cmd == "step_finish" and len(sys.argv) >= 4:
+        step_finish(project_id, sys.argv[3])
+    elif cmd == "step_summary" and len(sys.argv) >= 6:
+        msg = sys.argv[3]
+        completed = int(sys.argv[4])
+        total = int(sys.argv[5])
+        step_summary(project_id, msg, completed, total)
     elif cmd == "done":
         done(project_id)
     elif cmd == "error" and len(sys.argv) >= 5:

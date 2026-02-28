@@ -17,6 +17,7 @@ export interface ProgressApiResponse {
     step_index?: number;
     step_total?: number;
     steps_completed?: Array<{ ts: string; step: string; duration_s: number }>;
+    active_steps?: Array<{ step: string; started_at: string }>;
     heartbeat?: string;
     started_at?: string;
     last_error?: { code: string; message: string; at: string };
