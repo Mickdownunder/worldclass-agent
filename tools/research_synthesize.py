@@ -266,12 +266,15 @@ Use inline citations as [1], [2] etc. to match the reference list provided. Writ
 State confidence where relevant (e.g. "HIGH confidence (3 sources)" or "LOW (single source)").
 Do not repeat URLs in the body; use only [N] references.
 Do not repeat information already covered in previous sections.
+Use measured, professional language appropriate for an institutional research report.
+Avoid dramatic qualifiers like "fundamental", "irreversible", "massive", "unprecedented", "unwiderruflich", "unausweichlich". State impact precisely with data, not rhetoric.
 CRITICAL RULES:
 - Every sentence MUST be complete. Never end mid-sentence.
 - Do NOT create tables or matrices with "TBD", "N/A", or empty cells. If you lack data for a comparison, write prose explaining what is known and what is missing instead.
 - Do NOT promise data you do not have. If country-specific or granular data is absent from the findings, say so explicitly rather than creating placeholder structures."""
     if previous_sections_summary:
         system += "\n\nAlready covered in previous sections (do not repeat):\n- " + "\n- ".join(previous_sections_summary[:15])
+        system += "\n\nCRITICAL: Do NOT restate these specific data points even to introduce context. Refer to them with 'as noted above' if absolutely necessary, max once per section."
     if claim_block:
         system += """
 For every factual claim or finding you state, you MUST cite the claim from the CLAIM LEDGER by including exactly one [claim_ref: claim_id@version] in that sentence. Example: "The effect was significant [claim_ref: cl_1@1]." Use only claim_refs from the CLAIM LEDGER list below. Do not introduce new claims; only cite existing ledger claims."""
@@ -342,7 +345,8 @@ def _synthesize_decision_matrix(
 2) Conditions under which each conclusion flips (when would the answer change?)
 3) Overall recommendation with confidence (HIGH/MEDIUM/LOW)
 
-Be specific and concise. No filler."""
+Be specific and concise. No filler.
+Use measured, professional language appropriate for an institutional research report. Avoid dramatic qualifiers like "fundamental", "irreversible", "massive", "unprecedented". State impact precisely with data, not rhetoric."""
     claims_text = json.dumps(
         [{"text": (c.get("text") or "")[:150], "tier": c.get("verification_tier", "UNVERIFIED")} for c in claim_ledger[:30]],
         ensure_ascii=False,
@@ -374,16 +378,90 @@ Each row: specific evidence that could be found, and what it would resolve. Be c
         return ""
 
 
-def _synthesize_exec_summary(full_report_body: str, question: str, project_id: str) -> str:
-    """Generate executive summary last (300–500 words)."""
-    system = """You are a research analyst. Write an Executive Summary (300–500 words) that stands alone and answers the research question.
-Include confidence level and key takeaways. Do not use citations [N] in the summary."""
-    user = f"RESEARCH QUESTION: {question}\n\nFULL REPORT (excerpt):\n{full_report_body[:12000]}\n\nWrite only the Executive Summary section (no heading)."
+def _synthesize_scenario_matrix(
+    question: str,
+    claim_ledger: list[dict],
+    thesis: dict,
+    tipping_text: str,
+    project_id: str,
+) -> str:
+    """Scenario matrix: Base / Aggressive / Regulatory with probabilities and implications."""
+    system = """You are a research strategist. Given verified claims, thesis, and tipping conditions, produce a Scenario Matrix with exactly 3 rows:
+
+| Scenario | Probability | Key Driver | Implication |
+| --- | --- | --- | --- |
+| Base Case | X% | ... | ... |
+| Aggressive / Bull | Y% | ... | ... |
+| Regulatory Block / Bear | Z% | ... | ... |
+
+Probabilities must sum to ~100%. Be specific to the actual market dynamics. No generic scenarios. Return only the markdown table (no heading)."""
+    claims_text = json.dumps(
+        [{"text": (c.get("text") or "")[:150], "tier": c.get("verification_tier", "UNVERIFIED")} for c in claim_ledger[:25]],
+        ensure_ascii=False,
+    )[:5000]
+    thesis_text = json.dumps(thesis, ensure_ascii=False)[:1500] if thesis else "{}"
+    user = f"QUESTION: {question}\n\nCLAIMS:\n{claims_text}\n\nTHESIS:\n{thesis_text}\n\nTIPPING CONDITIONS:\n{(tipping_text or '')[:2000]}\n\nWrite the Scenario Matrix table only."
     try:
         result = llm_call(_model(), system, user, project_id=project_id)
         return (result.text or "").strip()
     except Exception:
         return ""
+
+
+def _synthesize_exec_summary(full_report_body: str, question: str, project_id: str) -> str:
+    """Generate a one-page Executive Brief (max 400 words) for C-level readers."""
+    system = """You are a research analyst. Write a one-page Executive Brief (max 400 words) that a C-level executive can read in 2 minutes. Structure:
+(1) Bottom Line (2 sentences)
+(2) Key Evidence (3–4 bullet points with numbers)
+(3) Risk Assessment (1 sentence)
+(4) Recommended Action (1 sentence)
+
+Do not use citations [N] in the brief.
+Use measured, professional language appropriate for an institutional report. Avoid dramatic qualifiers like "fundamental", "irreversible", "massive", "unprecedented". State impact precisely with data, not rhetoric."""
+    user = f"RESEARCH QUESTION: {question}\n\nFULL REPORT (excerpt):\n{full_report_body[:12000]}\n\nWrite only the Executive Brief (no heading, max 400 words)."
+    try:
+        result = llm_call(_model(), system, user, project_id=project_id)
+        return (result.text or "").strip()
+    except Exception:
+        return ""
+
+
+def _normalize_sentence(s: str) -> str:
+    """Lowercase, collapse whitespace, strip."""
+    return " ".join((s or "").lower().split()).strip()
+
+
+def _sentence_overlap(a: str, b: str) -> float:
+    """Word-set overlap: len(a & b) / min(len(a), len(b)). Returns 0–1."""
+    wa = set(re.findall(r"\b[a-z0-9]{2,}\b", a.lower()))
+    wb = set(re.findall(r"\b[a-z0-9]{2,}\b", b.lower()))
+    if not wa or not wb:
+        return 0.0
+    inter = len(wa & wb)
+    return inter / min(len(wa), len(wb))
+
+
+def _deduplicate_sections(parts: list[str]) -> list[str]:
+    """Remove sentences that are >80% identical to a sentence in an earlier section. Lightweight, no LLM."""
+    if not parts:
+        return parts
+    SENTENCE_RE = re.compile(r"[^.!?]+[.!?]|\S[^.!?]*$")
+    out: list[str] = []
+    all_previous: list[str] = []
+    for body in parts:
+        sentences = [s.strip() for s in SENTENCE_RE.findall(body) if len(s.strip()) > 20]
+        kept: list[str] = []
+        for sent in sentences:
+            norm = _normalize_sentence(sent)
+            if not norm or len(norm) < 15:
+                kept.append(sent)
+                continue
+            is_dup = any(_sentence_overlap(norm, _normalize_sentence(p)) >= 0.8 for p in all_previous)
+            if not is_dup:
+                kept.append(sent)
+                all_previous.append(sent)
+        out.append(" ".join(kept) if kept else body)
+    return out
 
 
 def _synthesize_conclusions_next_steps(thesis: dict, contradictions: list, question: str, project_id: str) -> tuple[str, str]:
@@ -737,6 +815,8 @@ def run_synthesis(project_id: str) -> str:
         checkpoint_bodies.append(body)
         deep_parts.append(f"## {title}\n\n{body}")
         _save_checkpoint(proj_path, clusters, section_titles, checkpoint_bodies)
+    checkpoint_bodies = _deduplicate_sections(checkpoint_bodies)
+    deep_parts = [f"## {section_titles[start_index + j]}\n\n{checkpoint_bodies[j]}" for j in range(len(checkpoint_bodies))]
     parts.append("\n\n".join(deep_parts))
     parts.append("\n\n---\n\n")
 
@@ -801,6 +881,18 @@ def run_synthesis(project_id: str) -> str:
         parts.append(tipping)
         parts.append("\n\n")
 
+    # Scenario Matrix (Base / Aggressive / Regulatory)
+    try:
+        from tools.research_progress import step as progress_step
+        progress_step(project_id, "Generating Scenario Matrix")
+    except Exception:
+        pass
+    scenario = _synthesize_scenario_matrix(question, claim_ledger, thesis, tipping, project_id)
+    if scenario:
+        parts.append("## Scenario Matrix\n\n")
+        parts.append(scenario)
+        parts.append("\n\n")
+
     # Conclusions & Next Steps
     concl, next_steps = _synthesize_conclusions_next_steps(thesis, contradictions, question, project_id)
     parts.append("## Conclusions & Thesis\n\n")
@@ -809,21 +901,25 @@ def run_synthesis(project_id: str) -> str:
     parts.append(next_steps)
     parts.append("\n\n---\n\n")
 
-    # Executive Summary (generated last, inserted after KEY NUMBERS)
+    # Executive Summary: one-pager after KEY NUMBERS, before Executive Decision Synthesis
     _clear_checkpoint(proj_path)
     full_so_far = "\n".join(parts)
     exec_summary = _synthesize_exec_summary(full_so_far, question, project_id)
-    insert_idx = full_so_far.find("## Methodology")
-    if insert_idx > 0 and exec_summary:
+    idx_after_key = full_so_far.find("\n\n---\n\n")
+    if idx_after_key >= 0:
+        idx_after_key += len("\n\n---\n\n")
+    else:
+        idx_after_key = 0
+    if exec_summary:
         report_body = (
-            full_so_far[:insert_idx] +
-            "\n## Executive Summary\n\n" + exec_summary + "\n\n---\n\n" +
-            full_so_far[insert_idx:]
+            full_so_far[:idx_after_key] +
+            "## Executive Summary\n\n" + exec_summary + "\n\n---\n\n" +
+            full_so_far[idx_after_key:]
         )
     else:
         report_body = full_so_far
 
-    # Executive Decision Synthesis at top (after header, before KEY NUMBERS)
+    # Executive Decision Synthesis (after Executive Summary, before Methodology)
     try:
         from tools.research_progress import step as progress_step
         progress_step(project_id, "Generating Executive Decision Synthesis")
@@ -831,13 +927,21 @@ def run_synthesis(project_id: str) -> str:
         pass
     decision_matrix = _synthesize_decision_matrix(question, claim_ledger, thesis, tipping, project_id)
     if decision_matrix:
-        first_section = report_body.find("\n## ")
-        if first_section >= 0:
+        methodology_idx = report_body.find("## Methodology")
+        if methodology_idx >= 0:
             report_body = (
-                report_body[:first_section] +
-                "\n\n## Executive Decision Synthesis\n\n" + decision_matrix + "\n\n---\n\n" +
-                report_body[first_section:]
+                report_body[:methodology_idx] +
+                "## Executive Decision Synthesis\n\n" + decision_matrix + "\n\n---\n\n" +
+                report_body[methodology_idx:]
             )
+        else:
+            first_section = report_body.find("\n## ")
+            if first_section >= 0:
+                report_body = (
+                    report_body[:first_section] +
+                    "\n\n## Executive Decision Synthesis\n\n" + decision_matrix + "\n\n---\n\n" +
+                    report_body[first_section:]
+                )
 
     # Claim Evidence Registry (claim → source → URL → date → tier)
     registry_md = _build_claim_source_registry(claim_ledger, sources, ref_list)
