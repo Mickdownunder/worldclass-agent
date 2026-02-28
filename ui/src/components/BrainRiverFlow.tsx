@@ -56,7 +56,7 @@ function getPhaseState(
 function getPhaseText(phaseId: string, tracePhases: TracePhase[], highestIndex: number): string {
   const found = tracePhases.find((t) => t.phase?.toLowerCase() === phaseId);
   if (found) {
-    const r = (found.reasoning || found.decision || "").slice(0, 120);
+    const r = (found.reasoning || found.decision || "").slice(0, 300);
     return r || "Abgeschlossen";
   }
   const idx = PHASES.findIndex((p) => p.id === phaseId);
@@ -307,7 +307,7 @@ export function BrainRiverFlow({ latestTrace, totalCycles, totalReflections, avg
                 schließen
               </button>
             </div>
-            <p style={{ color: "var(--tron-text-muted)" }}>
+            <p className="break-words" style={{ color: "var(--tron-text-muted)" }}>
               {getPhaseText(expandedPhase, latestTrace, activeIndex)}
             </p>
           </div>

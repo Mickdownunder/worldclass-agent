@@ -482,12 +482,16 @@ class Memory:
         recent_failures = self._conn.execute(
             "SELECT * FROM reflections WHERE quality < 0.4 ORDER BY ts DESC LIMIT 3"
         ).fetchall()
+        total_principles = self._conn.execute("SELECT COUNT(*) as c FROM strategic_principles").fetchone()["c"]
+        total_outcomes = self.count_project_outcomes()
         return {
             "totals": {
                 "episodes": total_episodes,
                 "decisions": total_decisions,
                 "reflections": total_reflections,
                 "avg_quality": round(avg_q, 3),
+                "principles": total_principles,
+                "outcomes": total_outcomes,
             },
             "recent_episodes": [{"kind": e["kind"], "content": e["content"][:120], "ts": e["ts"]} for e in recent_eps],
             "recent_reflections": [
