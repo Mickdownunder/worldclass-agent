@@ -57,8 +57,8 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 **„Nächste Phase starten“:**
 
 1. UI sendet `POST /api/research/projects/[id]/cycle`.
-2. Backend prüft: Projekt vorhanden, nicht „done“. Ruft `runWorkflow("research-cycle", projectId)` auf.
-3. Wie oben: `op job new --workflow research-cycle --request "<projectId>"`, dann `op run` im Hintergrund.
+2. Backend prüft: Projekt vorhanden, nicht „done“. Prüft **Projekt-Level-Lock** (progress.json `alive` oder bereits laufender Cycle): wenn ein Cycle für dieses Projekt läuft → **409 Conflict** mit Meldung „Ein Cycle läuft bereits für dieses Projekt.“
+3. Sonst: `runWorkflow("research-cycle", projectId)` → `op job new` + `op run`. In `research-cycle.sh` hält ein **flock** auf `research/proj-…/.cycle.lock` den zweiten gleichzeitigen Cycle für dasselbe Projekt ab (sofortiger Exit 0).
 4. Antwort: „Nächste Phase wird gestartet (Job läuft).“
 5. Nach Refresh siehst du ggf. neue Phase, mehr Findings, neuen Report.
 
