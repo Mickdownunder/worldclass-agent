@@ -41,6 +41,7 @@ export function VerifiedClaimSlideover({
     if (!isOpen) return;
     if (fetchedRef.current) return;
     fetchedRef.current = true;
+    /* eslint-disable-next-line react-hooks/set-state-in-effect -- start fetch when slideover opens */
     setLoading(true);
     setError(null);
 

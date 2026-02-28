@@ -2,15 +2,33 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { Pagination } from "./Pagination";
 
+interface EntityRow {
+  id?: string;
+  name?: string;
+  type?: string;
+  first_seen_project?: string;
+}
+interface PlaybookRow {
+  domain: string;
+  strategy: string;
+  success_rate: number;
+}
+interface OutcomeRow {
+  project_id?: string;
+  domain?: string;
+  critic_score?: number;
+  user_verdict?: string;
+}
+
 export function KnowledgeTab({ 
   entities, 
   playbooks, 
   outcomes, 
   loading 
-}: { 
-  entities: any[] | null; 
-  playbooks: any[]; 
-  outcomes: any[] | null; 
+}: {
+  entities: unknown[] | null;
+  playbooks: PlaybookRow[];
+  outcomes: unknown[] | null;
   loading: { entities: boolean; outcomes: boolean };
 }) {
   const [entityPage, setEntityPage] = useState(1);
@@ -52,13 +70,16 @@ export function KnowledgeTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {displayedEntities.map((e, i) => (
-                    <tr key={e.id ?? i} className="border-b border-tron-border/50 interactive-row">
-                      <td className="py-2 pr-4 font-mono text-tron-text">{e.name ?? "—"}</td>
-                      <td className="py-2 pr-4 text-tron-muted">{e.type ?? "—"}</td>
-                      <td className="py-2 text-tron-dim">{e.first_seen_project ?? "—"}</td>
-                    </tr>
-                  ))}
+                  {displayedEntities.map((e, i) => {
+                    const row = e as EntityRow;
+                    return (
+                      <tr key={row.id ?? i} className="border-b border-tron-border/50 interactive-row">
+                        <td className="py-2 pr-4 font-mono text-tron-text">{row.name ?? "—"}</td>
+                        <td className="py-2 pr-4 text-tron-muted">{row.type ?? "—"}</td>
+                        <td className="py-2 text-tron-dim">{row.first_seen_project ?? "—"}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
               {allEntities.length === 0 && <p className="text-tron-dim mt-2">Noch keine Entities.</p>}
@@ -104,24 +125,27 @@ export function KnowledgeTab({
             <>
               <div className="flex-1">
                 <ul className="space-y-2">
-                  {displayedOutcomes.map((o, i) => (
-                    <li key={i} className="flex flex-wrap items-center gap-2 text-sm border-b border-tron-border/30 pb-2 last:border-0 last:pb-0">
-                      <Link href={`/research/${o.project_id ?? ""}`} className="font-mono text-tron-accent hover:underline">
-                        {o.project_id ?? "—"}
-                      </Link>
-                      <span className="text-tron-dim text-[11px]">{o.domain ?? ""}</span>
-                      <span className="text-tron-muted text-[11px]">critic: {(o.critic_score ?? 0).toFixed(2)}</span>
-                      <span 
-                        className="rounded px-1.5 py-0.5 text-[10px] font-bold" 
-                        style={{ 
-                          background: "var(--tron-bg)", 
-                          color: o.user_verdict === "accepted" ? "var(--tron-success)" : o.user_verdict === "rejected" ? "var(--tron-error)" : "var(--tron-text-muted)" 
-                        }}
-                      >
-                        {o.user_verdict ?? "—"}
-                      </span>
-                    </li>
-                  ))}
+                  {displayedOutcomes.map((o, i) => {
+                    const out = o as OutcomeRow;
+                    return (
+                      <li key={i} className="flex flex-wrap items-center gap-2 text-sm border-b border-tron-border/30 pb-2 last:border-0 last:pb-0">
+                        <Link href={`/research/${out.project_id ?? ""}`} className="font-mono text-tron-accent hover:underline">
+                          {out.project_id ?? "—"}
+                        </Link>
+                        <span className="text-tron-dim text-[11px]">{out.domain ?? ""}</span>
+                        <span className="text-tron-muted text-[11px]">critic: {(out.critic_score ?? 0).toFixed(2)}</span>
+                        <span
+                          className="rounded px-1.5 py-0.5 text-[10px] font-bold"
+                          style={{
+                            background: "var(--tron-bg)",
+                            color: out.user_verdict === "accepted" ? "var(--tron-success)" : out.user_verdict === "rejected" ? "var(--tron-error)" : "var(--tron-text-muted)",
+                          }}
+                        >
+                          {out.user_verdict ?? "—"}
+                        </span>
+                      </li>
+                    );
+                  })}
                 </ul>
                 {allOutcomes.length === 0 && <p className="text-tron-dim text-sm mt-2">Noch keine Outcomes.</p>}
               </div>

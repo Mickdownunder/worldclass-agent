@@ -1,16 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { execFile } from "child_process";
+import { execFile as _execFile } from "child_process";
 
-function execFileSuccess(
-  _c: unknown,
-  _a: unknown,
-  optsOrCb: unknown,
-  cb?: (err: Error | null, stdout?: string) => void
-) {
-  const done = (typeof optsOrCb === "function" ? optsOrCb : cb) as (err: Error | null, stdout?: string) => void;
-  if (done) setImmediate(() => done(null, JSON.stringify({ healthy: true, jobs_total: 0 })));
-  return {} as ReturnType<typeof execFile>;
-}
 function execFileError(
   _c: unknown,
   _a: unknown,

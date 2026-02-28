@@ -1,12 +1,24 @@
 import React, { useState } from "react";
 import { Pagination } from "./Pagination";
 
+interface EpisodeRow {
+  kind: string;
+  content: string;
+  ts: string;
+}
+interface ReflectionRow {
+  job_id?: string;
+  quality: number;
+  learnings?: string;
+  ts: string;
+}
+
 export function ActivityTab({
   episodes,
   reflections,
 }: {
-  episodes: any[];
-  reflections: any[];
+  episodes: EpisodeRow[];
+  reflections: ReflectionRow[];
 }) {
   const [episodePage, setEpisodePage] = useState(1);
   const [reflectionPage, setReflectionPage] = useState(1);
@@ -29,7 +41,7 @@ export function ActivityTab({
         <h2 className="mb-4 text-lg font-medium text-tron-muted">Letzte Ereignisse</h2>
         <div className="flex-1">
           <ul className="space-y-2">
-            {displayedEpisodes.map((e, i) => (
+            {displayedEpisodes.map((e: EpisodeRow, i: number) => (
               <li key={i} className="flex gap-3 text-sm">
                 <span className="text-tron-dim shrink-0">{e.ts}</span>
                 <span className="text-tron-accent">{e.kind}</span>
@@ -50,7 +62,7 @@ export function ActivityTab({
         <h2 className="mb-4 text-lg font-medium text-tron-muted">Was das System gelernt hat (Reflections)</h2>
         <div className="flex-1">
           <ul className="space-y-3">
-            {displayedReflections.map((r, i) => (
+            {displayedReflections.map((r: ReflectionRow, i: number) => (
               <li key={i} className="border-l-2 border-tron-accent/30 pl-3 text-sm">
                 <span className="text-tron-dim">{r.ts}</span>
                 <span className="ml-2 text-tron-success">Q: {r.quality}</span>

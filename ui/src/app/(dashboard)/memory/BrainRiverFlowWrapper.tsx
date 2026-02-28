@@ -45,6 +45,14 @@ export function BrainRiverFlowWrapper({
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cycleStartTraceRef = useRef<string | null>(null);
 
+  const stopPolling = useCallback(() => {
+    setPolling(false);
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
+
   const fetchStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/brain-cycle-status");
@@ -78,15 +86,7 @@ export function BrainRiverFlowWrapper({
     } catch {
       // silent
     }
-  }, [polling]);
-
-  function stopPolling() {
-    setPolling(false);
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
-  }
+  }, [polling, stopPolling]);
 
   function startPolling() {
     stopPolling();

@@ -43,28 +43,10 @@ function IconClipboard() {
     </svg>
   );
 }
-function IconSettings() {
-  return (
-    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-      <circle cx="7.5" cy="7.5" r="2.5" />
-      <path d="M7.5 1v1.5M7.5 12v1.5M1 7.5h1.5M12 7.5h1.5M2.64 2.64l1.06 1.06M11.3 11.3l1.06 1.06M11.3 3.7l-1.06 1.06M3.7 11.3l-1.06 1.06" />
-    </svg>
-  );
-}
 function IconBolt() {
   return (
     <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9 1L3 8.5h5.5L6 14l6-7H7L9 1z" />
-    </svg>
-  );
-}
-function IconUsers() {
-  return (
-    <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-      <circle cx="5.5" cy="5" r="2.5" />
-      <path d="M1 13c0-2.5 2-4 4.5-4s4.5 1.5 4.5 4" />
-      <circle cx="11" cy="5" r="2" />
-      <path d="M14 12c0-2-1.2-3.5-3-3.5" />
     </svg>
   );
 }

@@ -36,7 +36,16 @@ function ConfidenceRing({ value }: { value: number }) {
   );
 }
 
-export function BrainTab({ decisions, loading }: { decisions: any[] | null; loading: boolean }) {
+interface MemoryDecision {
+  id?: string;
+  trace_id?: string;
+  phase?: string;
+  ts?: string;
+  reasoning?: string;
+  confidence?: number;
+}
+
+export function BrainTab({ decisions, loading }: { decisions: unknown[] | null; loading: boolean }) {
   const [page, setPage] = useState(1);
   const itemsPerPage = 5;
 
@@ -44,21 +53,22 @@ export function BrainTab({ decisions, loading }: { decisions: any[] | null; load
     return <div className="text-tron-dim p-4">Lade Cognitive Traces…</div>;
   }
 
-  const grouped: Record<string, any[]> = {};
-  const ungrouped: any[] = [];
+  const grouped: Record<string, MemoryDecision[]> = {};
+  const ungrouped: MemoryDecision[] = [];
 
-  (decisions ?? []).forEach((d) => {
-    if (d.trace_id) {
-      if (!grouped[d.trace_id]) grouped[d.trace_id] = [];
-      grouped[d.trace_id].push(d);
+  (decisions ?? []).forEach((d: unknown) => {
+    const dec = d as MemoryDecision;
+    if (dec.trace_id) {
+      if (!grouped[dec.trace_id]) grouped[dec.trace_id] = [];
+      grouped[dec.trace_id].push(dec);
     } else {
-      ungrouped.push(d);
+      ungrouped.push(dec);
     }
   });
 
   const traceGroups = Object.entries(grouped);
 
-  const allItems: { type: "trace" | "single"; id: string; data: any }[] = [
+  const allItems: { type: "trace" | "single"; id: string; data: MemoryDecision | MemoryDecision[] }[] = [
     ...traceGroups.map(([traceId, traceDecisions]) => ({
       type: "trace" as const,
       id: traceId,
@@ -74,8 +84,8 @@ export function BrainTab({ decisions, loading }: { decisions: any[] | null; load
   const totalPages = Math.ceil(allItems.length / itemsPerPage);
   const displayedItems = allItems.slice((page - 1) * itemsPerPage, page * itemsPerPage);
 
-  const renderDecision = (d: any, i: number) => {
-    const meta = PHASE_META[d.phase?.toLowerCase()] || { icon: "●", color: "var(--tron-dim)" };
+  const renderDecision = (d: MemoryDecision, i: number) => {
+    const meta = PHASE_META[d.phase?.toLowerCase() ?? ""] || { icon: "●", color: "var(--tron-dim)" };
 
     return (
       <li key={d.id ?? i} className="relative pl-10 pb-4">
@@ -148,8 +158,8 @@ export function BrainTab({ decisions, loading }: { decisions: any[] | null; load
                   </span>
                   {/* Mini flow indicator */}
                   <div className="flex items-center gap-0.5 ml-auto">
-                    {(item.data as any[]).map((d: any, i: number) => {
-                      const m = PHASE_META[d.phase?.toLowerCase()] || { color: "var(--tron-dim)" };
+                    {(item.data as MemoryDecision[]).map((d: MemoryDecision, i: number) => {
+                      const m = PHASE_META[d.phase?.toLowerCase() ?? ""] || { color: "var(--tron-dim)" };
                       return (
                         <React.Fragment key={i}>
                           <div
@@ -157,7 +167,7 @@ export function BrainTab({ decisions, loading }: { decisions: any[] | null; load
                             style={{ background: m.color }}
                             title={d.phase}
                           />
-                          {i < (item.data as any[]).length - 1 && (
+                          {i < (item.data as MemoryDecision[]).length - 1 && (
                             <div className="w-3 h-px" style={{ background: "var(--tron-border)" }} />
                           )}
                         </React.Fragment>
@@ -171,14 +181,14 @@ export function BrainTab({ decisions, loading }: { decisions: any[] | null; load
                   style={{ background: "var(--tron-border)" }}
                 />
                 <ul className="space-y-3">
-                  {(item.data as any[]).map((d: any, i: number) => renderDecision(d, i))}
+                  {(item.data as MemoryDecision[]).map((d: MemoryDecision, i: number) => renderDecision(d, i))}
                 </ul>
               </div>
             );
           } else {
             return (
               <ul key={item.id} className="space-y-3">
-                {renderDecision(item.data, 0)}
+                {renderDecision(item.data as MemoryDecision, 0)}
               </ul>
             );
           }

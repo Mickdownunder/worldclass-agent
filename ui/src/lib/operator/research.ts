@@ -102,6 +102,8 @@ export interface MemoryAppliedInfo {
   confidence_drivers?: {
     strategy_score?: number;
     query_overlap?: number;
+    causal_score?: number;
+    what_hurt_penalty?: boolean;
     similar_episode_count?: number;
     similar_recency_weight?: number;
   };
@@ -112,6 +114,7 @@ export interface MemoryAppliedInfo {
     domain?: string;
     score?: number;
     confidence?: number;
+    selection_confidence?: number;
     policy?: {
       preferred_query_types?: Record<string, number>;
       domain_rank_overrides?: Record<string, number>;
@@ -469,7 +472,7 @@ export interface Source {
 export async function getSources(projectId: string): Promise<Source[]> {
   const projPath = safeProjectPath(projectId);
   const sourcesDir = path.join(projPath, "sources");
-  let reliabilityByUrl: Record<string, number> = {};
+  const reliabilityByUrl: Record<string, number> = {};
   try {
     const verifyPath = path.join(projPath, "verify", "source_reliability.json");
     const raw = await readFile(verifyPath, "utf8");

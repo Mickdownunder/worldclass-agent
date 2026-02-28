@@ -4,7 +4,7 @@ import { ConfirmDialog } from "../ConfirmDialog";
 
 describe("ConfirmDialog", () => {
   it("renders nothing when open is false", () => {
-    const { container } = render(
+    render(
       <ConfirmDialog
         open={false}
         title="Title"

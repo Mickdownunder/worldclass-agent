@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-02-27T11:06:37.935390Z",
+  "generated_at": "2026-02-28T08:00:43.818913Z",
   "clients": {
     "demo": {
       "client": {
@@ -24,6 +24,20 @@
       },
       "matches": [
         {
+          "id": "opp_02368be86753",
+          "title": "OpenAI raises $110B on $730B pre-money valuation",
+          "score": 1.0,
+          "topics": [
+            "growth",
+            "funding"
+          ],
+          "summary": "OpenAI has secured a massive $110 billion funding round, indicating strong market confidence and substantial growth potential in the AI sector.",
+          "evidence": [
+            "https://techcrunch.com/2026/02/27/openai-raises-110b-in-one-of-the-largest-private-funding-rounds-in-history/"
+          ],
+          "source": "auto_discover"
+        },
+        {
           "id": "opp_99f4146f0f65",
           "title": "Following 35% growth, solar has passed hydro on US grid",
           "score": 0.9,
@@ -39,6 +53,21 @@
           "source": "auto_discover"
         },
         {
+          "id": "opp_b8dc71e05144",
+          "title": "How do I cancel my ChatGPT subscription?",
+          "score": 0.9,
+          "topics": [
+            "churn",
+            "marketing",
+            "pricing"
+          ],
+          "summary": "This article explains how users can cancel their ChatGPT subscription, highlighting potential churn risks and customer experience pain points regarding subscription management.",
+          "evidence": [
+            "https://help.openai.com/en/articles/7232927-how-do-i-cancel-my-chatgpt-subscription"
+          ],
+          "source": "auto_discover"
+        },
+        {
           "id": "opp_6aeb3b526932",
           "title": "Danish government agency to ditch Microsoft software (2025)",
           "score": 0.8,
@@ -49,6 +78,20 @@
           "summary": "A government agency in Denmark plans to move away from Microsoft software by 2025, indicating a significant competitor move and potential churn from a dominant vendor.",
           "evidence": [
             "https://therecord.media/denmark-digital-agency-microsoft-digital-independence"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_48486ac7153f",
+          "title": "OpenAI agrees with Dept. of War to deploy models in their classified network",
+          "score": 0.8,
+          "topics": [
+            "competitors",
+            "growth"
+          ],
+          "summary": "OpenAI's collaboration with a government department to deploy AI models in classified networks signals strategic growth and competitive positioning in secure AI applications.",
+          "evidence": [
+            "https://twitter.com/sama/status/2027578652477821175"
           ],
           "source": "auto_discover"
         },
@@ -203,6 +246,20 @@
       },
       "matches": [
         {
+          "id": "opp_02368be86753",
+          "title": "OpenAI raises $110B on $730B pre-money valuation",
+          "score": 1.0,
+          "topics": [
+            "growth",
+            "funding"
+          ],
+          "summary": "OpenAI has secured a massive $110 billion funding round, indicating strong market confidence and substantial growth potential in the AI sector.",
+          "evidence": [
+            "https://techcrunch.com/2026/02/27/openai-raises-110b-in-one-of-the-largest-private-funding-rounds-in-history/"
+          ],
+          "source": "auto_discover"
+        },
+        {
           "id": "opp_99f4146f0f65",
           "title": "Following 35% growth, solar has passed hydro on US grid",
           "score": 0.9,
@@ -214,6 +271,35 @@
           "summary": "Solar energy's rapid growth surpassing hydro signals a major market shift, representing opportunities for growth investments and competitor strategy adjustments in clean energy markets.",
           "evidence": [
             "https://arstechnica.com/science/2026/02/final-2025-data-is-in-us-energy-use-is-up-as-solar-passes-hydro/"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_b8dc71e05144",
+          "title": "How do I cancel my ChatGPT subscription?",
+          "score": 0.9,
+          "topics": [
+            "churn",
+            "marketing",
+            "pricing"
+          ],
+          "summary": "This article explains how users can cancel their ChatGPT subscription, highlighting potential churn risks and customer experience pain points regarding subscription management.",
+          "evidence": [
+            "https://help.openai.com/en/articles/7232927-how-do-i-cancel-my-chatgpt-subscription"
+          ],
+          "source": "auto_discover"
+        },
+        {
+          "id": "opp_48486ac7153f",
+          "title": "OpenAI agrees with Dept. of War to deploy models in their classified network",
+          "score": 0.8,
+          "topics": [
+            "competitors",
+            "growth"
+          ],
+          "summary": "OpenAI's collaboration with a government department to deploy AI models in classified networks signals strategic growth and competitive positioning in secure AI applications.",
+          "evidence": [
+            "https://twitter.com/sama/status/2027578652477821175"
           ],
           "source": "auto_discover"
         },
@@ -301,49 +387,6 @@
           "summary": "Recent layoffs at Block may indicate challenges in growth or financial restructuring, offering insights into market pressures or competitor repositioning.",
           "evidence": [
             "https://twitter.com/jack/status/2027129697092731343"
-          ],
-          "source": "auto_discover"
-        },
-        {
-          "id": "opp_50320af6a55b",
-          "title": "Nano Banana 2: Google's latest AI image generation model",
-          "score": 0.7,
-          "topics": [
-            "competitors",
-            "growth",
-            "marketing"
-          ],
-          "summary": "Google has launched Nano Banana 2, an advanced AI image generation model, demonstrating competitive innovation that could impact marketing and product growth strategies.",
-          "evidence": [
-            "https://blog.google/innovation-and-ai/technology/ai/nano-banana-2/"
-          ],
-          "source": "auto_discover"
-        },
-        {
-          "id": "opp_002",
-          "title": "SaaS complaining about churn in forum thread",
-          "score": 0.68,
-          "topics": [
-            "churn",
-            "growth"
-          ],
-          "summary": "Founder mentions churn spike and retention issues.",
-          "evidence": [
-            "https://example.com/churn-thread"
-          ],
-          "source": "demo"
-        },
-        {
-          "id": "opp_d065142ab0fe",
-          "title": "Mac mini will be made at a new facility in Houston",
-          "score": 0.65,
-          "topics": [
-            "competitors",
-            "growth"
-          ],
-          "summary": "Apple is accelerating US-based manufacturing by producing the Mac mini in Houston, potentially impacting supply chain dynamics and competitive growth in hardware markets.",
-          "evidence": [
-            "https://www.apple.com/newsroom/2026/02/apple-accelerates-us-manufacturing-with-mac-mini-production/"
           ],
           "source": "auto_discover"
         }

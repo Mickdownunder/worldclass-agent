@@ -28,6 +28,7 @@ export function LiveRefresh({
 
   useEffect(() => {
     if (!enabled) {
+      /* eslint-disable-next-line react-hooks/set-state-in-effect -- clear when disabled */
       setProgress(null);
       if (intervalRef.current) {
         clearInterval(intervalRef.current);

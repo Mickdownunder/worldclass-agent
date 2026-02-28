@@ -82,6 +82,7 @@ export function BrainRiverFlow({ latestTrace, totalCycles, totalReflections, avg
 
   useEffect(() => {
     if (targetIndex < 0) {
+      /* eslint-disable-next-line react-hooks/set-state-in-effect -- sync reset when no phase */
       setAnimatedIndex(-1);
       prevIndexRef.current = -1;
       return;

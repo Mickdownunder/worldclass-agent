@@ -49,7 +49,6 @@ const phaseColors: Record<PhaseStatus, { node: string; text: string; connector: 
 export function ExecutionTree({
   currentPhase,
   status,
-  phaseHistory,
   phaseTimings,
 }: ExecutionTreeProps) {
   return (

@@ -386,10 +386,10 @@ function MemoryAppliedPanel({ project }: { project: ResearchProjectDetail }) {
     return null;
   }
   const confidence =
-    typeof selected?.confidence === "number"
-      ? selected.confidence
-      : typeof memory?.confidence === "number"
-        ? memory.confidence
+    typeof selected?.selection_confidence === "number"
+      ? selected.selection_confidence
+      : typeof selected?.confidence === "number"
+        ? selected.confidence
         : 0;
   const confidencePct = Math.max(0, Math.min(100, Math.round(confidence * 100)));
   const policy = selected?.policy || {};

@@ -1,7 +1,15 @@
 import React, { useState } from "react";
 import { Pagination } from "./Pagination";
 
-export function SourcesTab({ credibility, loading }: { credibility: any[] | null; loading: boolean }) {
+interface CredibilityRow {
+  domain?: string;
+  times_used?: number;
+  verified_count?: number;
+  failed_verification_count?: number;
+  learned_credibility?: number;
+}
+
+export function SourcesTab({ credibility, loading }: { credibility: unknown[] | null; loading: boolean }) {
   const [page, setPage] = useState(1);
   const itemsPerPage = 10;
 
@@ -31,14 +39,15 @@ export function SourcesTab({ credibility, loading }: { credibility: any[] | null
           </thead>
           <tbody>
             {displayedCredibility.map((c, i) => {
-              const cred = c.learned_credibility ?? 0;
+              const row = c as CredibilityRow;
+              const cred = row.learned_credibility ?? 0;
               const credColor = cred >= 0.7 ? "var(--tron-success)" : cred >= 0.4 ? "var(--tron-warning, #f59e0b)" : "var(--tron-error)";
               return (
-                <tr key={c.domain ?? i} className="border-b border-tron-border/50 interactive-row">
-                  <td className="py-2 pr-4 font-mono text-tron-text">{c.domain}</td>
-                  <td className="py-2 pr-4 text-tron-muted">{c.times_used ?? 0}</td>
-                  <td className="py-2 pr-4 text-tron-muted">{c.verified_count ?? 0}</td>
-                  <td className="py-2 pr-4 text-tron-muted">{c.failed_verification_count ?? 0}</td>
+                <tr key={row.domain ?? i} className="border-b border-tron-border/50 interactive-row">
+                  <td className="py-2 pr-4 font-mono text-tron-text">{row.domain}</td>
+                  <td className="py-2 pr-4 text-tron-muted">{row.times_used ?? 0}</td>
+                  <td className="py-2 pr-4 text-tron-muted">{row.verified_count ?? 0}</td>
+                  <td className="py-2 pr-4 text-tron-muted">{row.failed_verification_count ?? 0}</td>
                   <td className="py-2 font-semibold" style={{ color: credColor }}>{(cred * 100).toFixed(0)}%</td>
                 </tr>
               );

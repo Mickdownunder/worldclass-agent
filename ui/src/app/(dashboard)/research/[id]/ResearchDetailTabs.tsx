@@ -35,6 +35,7 @@ export function ResearchDetailTabs({
   const [slideoverTarget, setSlideoverTarget] = useState<{ open: boolean; claimId?: string }>({ open: false });
 
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- lazy-load per tab */
     if (activeTab === "findings" && findings === null) {
       setLoading((l) => ({ ...l, findings: true }));
       fetch(`/api/research/projects/${projectId}/findings`)
@@ -64,6 +65,7 @@ export function ResearchDetailTabs({
         .catch(() => setAuditClaims([]))
         .finally(() => setLoading((l) => ({ ...l, audit: false })));
     }
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [activeTab, projectId, findings, sources, reports, auditClaims]);
 
   async function sendFeedback(findingId: string, type: string) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import type { MemorySummary } from "@/lib/operator/memory";
 import { ActivityTab } from "./tabs/ActivityTab";
 import { PrinciplesTab } from "./tabs/PrinciplesTab";
 import { SourcesTab } from "./tabs/SourcesTab";
@@ -10,14 +11,14 @@ import { PlumberTab } from "./tabs/PlumberTab";
 
 type TabId = "activity" | "principles" | "sources" | "brain" | "plumber" | "knowledge";
 
-export function BrainTabs({ memorySummary }: { memorySummary: any }) {
+export function BrainTabs({ memorySummary }: { memorySummary: MemorySummary | null }) {
   const [activeTab, setActiveTab] = useState<TabId>("activity");
-  
-  const [principles, setPrinciples] = useState<any[] | null>(null);
-  const [credibility, setCredibility] = useState<any[] | null>(null);
-  const [decisions, setDecisions] = useState<any[] | null>(null);
-  const [entities, setEntities] = useState<any[] | null>(null);
-  const [outcomes, setOutcomes] = useState<any[] | null>(null);
+
+  const [principles, setPrinciples] = useState<unknown[] | null>(null);
+  const [credibility, setCredibility] = useState<unknown[] | null>(null);
+  const [decisions, setDecisions] = useState<unknown[] | null>(null);
+  const [entities, setEntities] = useState<unknown[] | null>(null);
+  const [outcomes, setOutcomes] = useState<unknown[] | null>(null);
   
   const [loading, setLoading] = useState<Record<TabId, boolean>>({
     activity: false,
@@ -29,11 +30,12 @@ export function BrainTabs({ memorySummary }: { memorySummary: any }) {
   });
 
   useEffect(() => {
+    /* eslint-disable react-hooks/set-state-in-effect -- lazy-load per tab: set loading then fetch */
     if (activeTab === "principles" && principles === null) {
       setLoading((l) => ({ ...l, principles: true }));
       fetch("/api/memory/principles")
         .then((r) => r.json())
-        .then((d) => setPrinciples(d.principles ?? d ?? []))
+        .then((d) => setPrinciples((d as { principles?: unknown[] }).principles ?? (d as unknown[]) ?? []))
         .catch(() => setPrinciples([]))
         .finally(() => setLoading((l) => ({ ...l, principles: false })));
     }
@@ -41,7 +43,7 @@ export function BrainTabs({ memorySummary }: { memorySummary: any }) {
       setLoading((l) => ({ ...l, sources: true }));
       fetch("/api/memory/credibility")
         .then((r) => r.json())
-        .then((d) => setCredibility(d.credibility ?? d ?? []))
+        .then((d) => setCredibility((d as { credibility?: unknown[] }).credibility ?? (d as unknown[]) ?? []))
         .catch(() => setCredibility([]))
         .finally(() => setLoading((l) => ({ ...l, sources: false })));
     }
@@ -49,7 +51,7 @@ export function BrainTabs({ memorySummary }: { memorySummary: any }) {
       setLoading((l) => ({ ...l, brain: true }));
       fetch("/api/memory/decisions")
         .then((r) => r.json())
-        .then((d) => setDecisions(d.decisions ?? d ?? []))
+        .then((d) => setDecisions((d as { decisions?: unknown[] }).decisions ?? (d as unknown[]) ?? []))
         .catch(() => setDecisions([]))
         .finally(() => setLoading((l) => ({ ...l, brain: false })));
     }
@@ -60,8 +62,8 @@ export function BrainTabs({ memorySummary }: { memorySummary: any }) {
         fetch("/api/memory/outcomes").then((r) => r.json()),
       ])
         .then(([entData, outData]) => {
-          setEntities(entData.entities ?? entData ?? []);
-          setOutcomes(outData.outcomes ?? outData ?? []);
+          setEntities((entData as { entities?: unknown[] }).entities ?? (entData as unknown[]) ?? []);
+          setOutcomes((outData as { outcomes?: unknown[] }).outcomes ?? (outData as unknown[]) ?? []);
         })
         .catch(() => {
           setEntities([]);
@@ -69,6 +71,7 @@ export function BrainTabs({ memorySummary }: { memorySummary: any }) {
         })
         .finally(() => setLoading((l) => ({ ...l, knowledge: false })));
     }
+    /* eslint-enable react-hooks/set-state-in-effect */
   }, [activeTab, principles, credibility, decisions, entities, outcomes]);
 
   const tabs: { id: TabId; label: string }[] = [
@@ -80,7 +83,7 @@ export function BrainTabs({ memorySummary }: { memorySummary: any }) {
     { id: "knowledge", label: "Knowledge" },
   ];
 
-  const { recent_episodes, recent_reflections, playbooks } = memorySummary ?? {};
+  const { recent_episodes = [], recent_reflections = [], playbooks = [] } = memorySummary ?? {};
 
   return (
     <div className="space-y-0 mt-6">
@@ -109,8 +112,8 @@ export function BrainTabs({ memorySummary }: { memorySummary: any }) {
       <div className="pt-6">
         {activeTab === "activity" && (
           <ActivityTab
-            episodes={recent_episodes ?? []}
-            reflections={recent_reflections ?? []}
+            episodes={recent_episodes}
+            reflections={recent_reflections}
           />
         )}
         {activeTab === "principles" && (
@@ -126,7 +129,7 @@ export function BrainTabs({ memorySummary }: { memorySummary: any }) {
         {activeTab === "knowledge" && (
           <KnowledgeTab
             entities={entities}
-            playbooks={playbooks ?? []}
+            playbooks={playbooks}
             outcomes={outcomes}
             loading={{ entities: loading.knowledge, outcomes: loading.knowledge }}
           />

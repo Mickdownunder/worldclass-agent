@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
   if (target) args.push("--target", target);
 
   try {
-    const { stdout, stderr } = await run(
+    const { stdout } = await run(
       `${BRAIN} ${args.join(" ")}`,
       { timeout: 30_000 },
     );

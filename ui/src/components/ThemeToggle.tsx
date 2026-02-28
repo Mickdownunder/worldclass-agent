@@ -33,6 +33,7 @@ export function ThemeToggle() {
   useEffect(() => {
     const stored = getStoredTheme();
     const initial = stored ?? getSystemTheme();
+    /* eslint-disable-next-line react-hooks/set-state-in-effect -- hydrate theme from storage */
     setThemeState(initial);
     applyTheme(initial);
   }, []);

@@ -85,7 +85,7 @@ function computeState(
   progress: ProgressData | null,
   nowMs: number,
   errorCounts5m: Record<string, number>,
-  events: LogEvent[]
+  _events: LogEvent[]
 ): {
   state: RuntimeState;
   stuck_reason: string | null;
@@ -114,7 +114,7 @@ function computeState(
 
   // Error loop: same error code >= ERROR_LOOP_COUNT in last 5 min
   const loopEntry = Object.entries(errorCounts5m).find(
-    ([_, n]) => n >= ERROR_LOOP_COUNT
+    ([, n]) => n >= ERROR_LOOP_COUNT
   );
   const loop_signature = loopEntry ? loopEntry[0] : null;
   if (loop_signature) {
