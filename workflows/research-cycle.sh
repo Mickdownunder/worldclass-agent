@@ -247,6 +247,7 @@ advance_phase() {
     if [ -n "$conductor_next" ] && [ "$conductor_next" != "$next_phase" ]; then
       log "Conductor override: $next_phase -> $conductor_next (re-running phase)"
       next_phase="$conductor_next"
+      progress_step "Conductor: weitere ${next_phase}-Runde"
     fi
   fi
   python3 "$TOOLS/research_advance_phase.py" "$PROJ_DIR" "$next_phase"

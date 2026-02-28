@@ -159,18 +159,25 @@ export function ActivityFeed({
 
         {/* Current step: hide when active_steps is set (multi-worker shows list only); avoids redundant e.g. "Reading source 8/15" above the list */}
         {activeSteps.length === 0 && showStaleStepAsCurrent && (state === "RUNNING" || (step && step !== "Done")) && step && (
-          <div className="flex items-center gap-3">
-            <span
-              className="h-2 w-2 shrink-0 rounded-full animate-pulse"
-              style={{ background: "var(--tron-accent)" }}
-            />
-            <span className="text-sm font-mono" style={{ color: "var(--tron-text)" }}>
-              {step}
-            </span>
-            {data?.step_total != null && (
-              <span className="text-xs font-mono ml-auto" style={{ color: "var(--tron-text-dim)" }}>
-                [{data.step_index ?? 0}/{data.step_total}]
+          <div className="space-y-1">
+            <div className="flex items-center gap-3">
+              <span
+                className="h-2 w-2 shrink-0 rounded-full animate-pulse"
+                style={{ background: "var(--tron-accent)" }}
+              />
+              <span className="text-sm font-mono" style={{ color: "var(--tron-text)" }}>
+                {step}
               </span>
+              {data?.step_total != null && (
+                <span className="text-xs font-mono ml-auto" style={{ color: "var(--tron-text-dim)" }}>
+                  [{data.step_index ?? 0}/{data.step_total}]
+                </span>
+              )}
+            </div>
+            {typeof step === "string" && step.startsWith("Conductor:") && (
+              <p className="text-[11px] pl-5" style={{ color: "var(--tron-text-muted)" }}>
+                Conductor hat eine weitere Runde gestartet.
+              </p>
             )}
           </div>
         )}
