@@ -20,6 +20,7 @@ import { LiveRefresh } from "@/components/LiveRefresh";
 import { LiveElapsedTimer } from "@/components/LiveElapsedTimer";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { ResearchDetailTabs } from "./ResearchDetailTabs";
+import { PreferredDomainsTabs } from "@/components/PreferredDomainsTabs";
 
 export const dynamic = "force-dynamic";
 
@@ -384,7 +385,7 @@ function MemoryAppliedPanel({ project }: { project: ResearchProjectDetail }) {
   const confidencePct = Math.max(0, Math.min(100, Math.round(confidence * 100)));
   const policy = selected?.policy || {};
   const preferredTypes = Object.entries(policy.preferred_query_types || {});
-  const preferredDomains = Object.entries(policy.domain_rank_overrides || {}).slice(0, 5);
+  const domainOverrides = policy.domain_rank_overrides || {};
   const modeColor =
     mode === "v2_applied"
       ? "var(--tron-success)"
@@ -451,17 +452,7 @@ function MemoryAppliedPanel({ project }: { project: ResearchProjectDetail }) {
         </div>
         <div className="px-5 py-3">
           <div className="metric-label mb-1">Preferred Domains</div>
-          {preferredDomains.length === 0 ? (
-            <div className="text-[11px]" style={{ color: "var(--tron-text-dim)" }}>No overrides</div>
-          ) : (
-            <div className="space-y-1">
-              {preferredDomains.map(([domain, rank]) => (
-                <div key={domain} className="text-[11px] font-mono" style={{ color: "var(--tron-text)" }}>
-                  {domain}: {rank}
-                </div>
-              ))}
-            </div>
-          )}
+          <PreferredDomainsTabs domainOverrides={domainOverrides} />
         </div>
       </div>
     </div>
