@@ -34,7 +34,7 @@ def load_secrets() -> dict:
                 k, v = line.split("=", 1)
                 secrets[k.strip()] = v.strip()
     for k, v in os.environ.items():
-        if k.startswith("OPENAI_") or k in ("BRAVE_API_KEY", "SERPER_API_KEY", "JINA_API_KEY", "GEMINI_API_KEY"):
+        if k.startswith("OPENAI_") or k in ("BRAVE_API_KEY", "SERPER_API_KEY", "JINA_API_KEY", "GEMINI_API_KEY", "NCBI_API_KEY", "SEMANTIC_SCHOLAR_API_KEY"):
             secrets[k] = v
     return secrets
 

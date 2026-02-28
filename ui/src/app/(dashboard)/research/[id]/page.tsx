@@ -17,6 +17,7 @@ import { ReviewPanel } from "@/components/ReviewPanel";
 import { CancelRunButton } from "@/components/CancelRunButton";
 import { ExecutionTree } from "@/components/ExecutionTree";
 import { LiveRefresh } from "@/components/LiveRefresh";
+import { LiveElapsedTimer } from "@/components/LiveElapsedTimer";
 import { ActivityFeed } from "@/components/ActivityFeed";
 import { ResearchDetailTabs } from "./ResearchDetailTabs";
 
@@ -31,20 +32,6 @@ function formatDate(iso: string): string {
     }).format(new Date(iso));
   } catch {
     return iso;
-  }
-}
-
-function elapsed(from: string, to?: string): string {
-  if (!from) return "—";
-  try {
-    const start = new Date(from).getTime();
-    const end = to ? new Date(to).getTime() : Date.now();
-    const ms = end - start;
-    if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-    if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
-    return `${(ms / 3_600_000).toFixed(1)}h`;
-  } catch {
-    return "—";
   }
 }
 
@@ -139,10 +126,13 @@ export default async function ResearchProjectPage({
             {
               label: "Runtime",
               value: (
-                <span className="font-mono text-sm font-semibold"
-                  style={{ color: "var(--tron-text)" }}>
-                  {elapsed(project.created_at, completedAt)}
-                </span>
+                <LiveElapsedTimer
+                  created_at={project.created_at ?? ""}
+                  completed_at={completedAt}
+                  isActive={isActive}
+                  className="font-mono text-sm font-semibold"
+                  style={{ color: "var(--tron-text)" }}
+                />
               ),
             },
             {

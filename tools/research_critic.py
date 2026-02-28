@@ -132,8 +132,14 @@ def revise_report(proj_path: Path, critique: dict, art_path: Path | None = None,
     weaknesses = critique.get("weaknesses", [])
     suggestions = critique.get("suggestions", [])
     system = """You are a research analyst. Revise the report to address the listed weaknesses and suggestions.
-Output only the revised markdown report. Keep the same structure (Executive Summary, Key Findings, etc.)."""
-    user = f"CURRENT REPORT:\n{report[:14000]}\n\nWEAKNESSES TO ADDRESS: {json.dumps(weaknesses)}\n\nSUGGESTIONS: {json.dumps(suggestions)}\n\nProduce the revised markdown only."
+CRITICAL RULES:
+- Output the COMPLETE revised markdown report. Do NOT omit or drop any sections.
+- Keep ALL existing sections. Only modify the content within sections that need improvement.
+- If a section is fine, include it unchanged.
+- The revised report must have AT LEAST as many sections as the original.
+- Never create tables with "TBD" or empty placeholders. Use prose instead."""
+    report_text = report[:50000]
+    user = f"CURRENT REPORT:\n{report_text}\n\nWEAKNESSES TO ADDRESS: {json.dumps(weaknesses)}\n\nSUGGESTIONS: {json.dumps(suggestions)}\n\nProduce the COMPLETE revised markdown. Include ALL sections from the original."
     return _llm_text(system, user, project_id=project_id)
 
 

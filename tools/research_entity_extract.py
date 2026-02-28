@@ -88,14 +88,20 @@ def run_for_project(project_id: str) -> dict:
     findings = _load_findings(proj_path)
     if not findings:
         return {"entities": 0, "relations": 0, "mentions": 0}
+    try:
+        from tools.research_progress import step as progress_step
+    except Exception:
+        progress_step = lambda _pid, _msg, _idx=None, _tot=None: None
     from lib.memory import Memory
     mem = Memory()
     name_to_id: dict[str, str] = {}
     all_text = []
-    for f in findings:
+    total_findings = len(findings)
+    for i, f in enumerate(findings):
         excerpt = (f.get("excerpt") or "")[:8000]
         if not excerpt:
             continue
+        progress_step(project_id, f"Knowledge graph: entities from finding {i + 1}/{total_findings}", i + 1, total_findings)
         all_text.append(excerpt)
         entities = extract_entities(excerpt)
         finding_key = (f.get("url") or "")[:200]
@@ -113,6 +119,7 @@ def run_for_project(project_id: str) -> dict:
     combined = "\n\n".join(all_text)[:20000]
     entities_list = list(name_to_id.keys())
     if entities_list:
+        progress_step(project_id, "Knowledge graph: extracting relations between entities")
         rels = extract_relations([{"name": n} for n in entities_list], combined)
         for r in rels:
             a, b = name_to_id.get(r["from"]), name_to_id.get(r["to"])

@@ -136,7 +136,9 @@ def cmd_job_new(args: list[str]):
     timeout = DEFAULT_TIMEOUT
     if "--timeout" in args:
         timeout = int(args[args.index("--timeout") + 1])
-    elif workflow in ("research-cycle", "research-init"):
+    elif workflow == "research-cycle":
+        timeout = None  # no limit — let explore/read phases finish
+    elif workflow == "research-init":
         timeout = 900
 
     wf = WFS / f"{workflow}.sh"
@@ -248,7 +250,7 @@ def run_job(d: Path, timeout_override: int | None = None) -> dict:
             return job
 
         policy = load_policy()
-        timeout = timeout_override or job.get("timeout_s", DEFAULT_TIMEOUT)
+        timeout = timeout_override if timeout_override is not None else job.get("timeout_s", DEFAULT_TIMEOUT)
         attempt = job.get("attempt", 0) + 1
 
         job["status"] = "RUNNING"
@@ -256,9 +258,10 @@ def run_job(d: Path, timeout_override: int | None = None) -> dict:
         job["started_at"] = utcnow()
         job["error"] = None
         save_job(d, job)
-        log_event(d, f"START workflow={job['workflow_id']} policy={policy} attempt={attempt} timeout={timeout}s")
+        log_event(d, f"START workflow={job['workflow_id']} policy={policy} attempt={attempt} timeout={'none' if timeout is None else f'{timeout}s'}")
 
         env = dict(os.environ)
+        env["OPERATOR_ROOT"] = str(BASE)
         env["JOB_POLICY"] = policy
         env["JOB_ID"] = job["id"]
         env["JOB_DIR"] = str(d)
@@ -276,14 +279,10 @@ def run_job(d: Path, timeout_override: int | None = None) -> dict:
 
         try:
             with open(d / "log.txt", "a") as logf:
-                p = subprocess.run(
-                    ["bash", str(wf)],
-                    cwd=str(d),
-                    stdout=logf,
-                    stderr=logf,
-                    env=env,
-                    timeout=timeout,
-                )
+                run_kw = {"cwd": str(d), "stdout": logf, "stderr": logf, "env": env}
+                if timeout is not None:
+                    run_kw["timeout"] = timeout
+                p = subprocess.run(["bash", str(wf)], **run_kw)
             exit_code = p.returncode
             error_msg = None
         except subprocess.TimeoutExpired:

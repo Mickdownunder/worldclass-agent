@@ -265,7 +265,11 @@ def _synthesize_section(
 Use inline citations as [1], [2] etc. to match the reference list provided. Write 500–1500 words.
 State confidence where relevant (e.g. "HIGH confidence (3 sources)" or "LOW (single source)").
 Do not repeat URLs in the body; use only [N] references.
-Do not repeat information already covered in previous sections."""
+Do not repeat information already covered in previous sections.
+CRITICAL RULES:
+- Every sentence MUST be complete. Never end mid-sentence.
+- Do NOT create tables or matrices with "TBD", "N/A", or empty cells. If you lack data for a comparison, write prose explaining what is known and what is missing instead.
+- Do NOT promise data you do not have. If country-specific or granular data is absent from the findings, say so explicitly rather than creating placeholder structures."""
     if previous_sections_summary:
         system += "\n\nAlready covered in previous sections (do not repeat):\n- " + "\n- ".join(previous_sections_summary[:15])
     if claim_block:
@@ -294,7 +298,12 @@ Write the section markdown (no title repeated; start with body). Every sentence 
         user += "\nWrite the section markdown (no title repeated; start with body)."
     try:
         result = llm_call(_model(), system, user, project_id=project_id)
-        return (result.text or "").strip()
+        text = (result.text or "").strip()
+        if text and len(text) > 100:
+            last_line = text.rstrip().splitlines()[-1].strip()
+            if last_line and len(last_line) > 20 and last_line[-1] not in '.!?:)]*>"–':
+                text += "\n\n*[Note: This section may have been truncated during generation.]*"
+        return text
     except Exception as e:
         return f"*Section synthesis failed: {e}*"
 

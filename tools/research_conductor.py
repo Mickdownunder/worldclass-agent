@@ -373,7 +373,7 @@ def run_cycle(project_id: str) -> bool:
             if read_list:
                 order_file = proj / "conductor_read_order.txt"
                 order_file.write_text("\n".join(read_list[:15]))
-                _run_tool(project_id, "research_parallel_reader.py", project_id, "explore", "--input-file", str(order_file), "--read-limit", "10", "--workers", "4")
+                _run_tool(project_id, "research_parallel_reader.py", project_id, "explore", "--input-file", str(order_file), "--read-limit", "10", "--workers", "8")
             _run_tool(project_id, "research_deep_extract.py")
             try:
                 add_compressed_batch(project_id)

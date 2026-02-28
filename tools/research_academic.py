@@ -82,12 +82,18 @@ def arxiv(query: str, max_results: int = 10) -> list[dict]:
         return []
 
 
+def _ncbi_api_key_param() -> str:
+    """Return '&api_key=...' if NCBI_API_KEY is configured, else empty string."""
+    key = os.environ.get("NCBI_API_KEY") or load_secrets().get("NCBI_API_KEY", "")
+    return f"&api_key={key}" if key else ""
+
+
 def _pubmed_fetch_abstracts(id_list: list[str]) -> dict[str, str]:
     """Fetch abstracts for PubMed IDs via efetch XML API."""
     if not id_list:
         return {}
     base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
-    url = f"{base}/efetch.fcgi?db=pubmed&id={','.join(id_list)}&rettype=abstract&retmode=xml"
+    url = f"{base}/efetch.fcgi?db=pubmed&id={','.join(id_list)}&rettype=abstract&retmode=xml{_ncbi_api_key_param()}"
     abstracts: dict[str, str] = {}
     try:
         import xml.etree.ElementTree as ET
@@ -117,12 +123,13 @@ def _pubmed_fetch_abstracts(id_list: list[str]) -> dict[str, str]:
 def pubmed(query: str, max_results: int = 10) -> list[dict]:
     base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
     try:
-        search_url = f"{base}/esearch.fcgi?db=pubmed&term={quote(query)}&retmax={min(max_results, 50)}&retmode=json&sort=relevance"
+        api_key = _ncbi_api_key_param()
+        search_url = f"{base}/esearch.fcgi?db=pubmed&term={quote(query)}&retmax={min(max_results, 50)}&retmode=json&sort=relevance{api_key}"
         search_data = fetch_json(search_url)
         id_list = search_data.get("esearchresult", {}).get("idlist", [])[:max_results]
         if not id_list:
             return []
-        summary_url = f"{base}/esummary.fcgi?db=pubmed&id={','.join(id_list)}&retmode=json"
+        summary_url = f"{base}/esummary.fcgi?db=pubmed&id={','.join(id_list)}&retmode=json{api_key}"
         sum_data = fetch_json(summary_url)
         abstracts = _pubmed_fetch_abstracts(id_list)
         results = []

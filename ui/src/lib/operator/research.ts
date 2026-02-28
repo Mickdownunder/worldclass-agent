@@ -294,7 +294,7 @@ export async function deleteResearchProject(projectId: string): Promise<void> {
   await rm(projPath, { recursive: true, force: true });
 }
 
-/** Approve or reject a project in pending_review. Approve: set status=active, phase=synthesize. Reject: set status=failed_rejected_by_reviewer. */
+/** Approve or reject a project in pending_review. Approve: set status=active, phase=synthesize and sync progress.json so UI shows correct phase. */
 export async function approveProject(
   projectId: string,
   action: "approve" | "reject"
@@ -310,6 +310,45 @@ export async function approveProject(
     data.status = "failed_rejected_by_reviewer";
   }
   await writeFile(projectJsonPath, JSON.stringify(data, null, 2), "utf8");
+
+  if (action === "approve") {
+    const progressPath = path.join(projPath, "progress.json");
+    const now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+    try {
+      const progressRaw = await readFile(progressPath, "utf8");
+      const progress = JSON.parse(progressRaw) as Record<string, unknown>;
+      progress.phase = "synthesize";
+      progress.step = "Starting synthesize phase...";
+      progress.step_started_at = now;
+      progress.heartbeat = now;
+      progress.step_index = 0;
+      progress.step_total = 0;
+      progress.alive = false;
+      await writeFile(progressPath, JSON.stringify(progress, null, 2), "utf8");
+    } catch {
+      await writeFile(
+        progressPath,
+        JSON.stringify(
+          {
+            phase: "synthesize",
+            step: "Starting synthesize phase...",
+            step_started_at: now,
+            heartbeat: now,
+            step_index: 0,
+            step_total: 0,
+            steps_completed: [],
+            active_steps: [],
+            started_at: now,
+            alive: false,
+          },
+          null,
+          2
+        ),
+        "utf8"
+      );
+    }
+  }
+
   return {
     status: data.status as string,
     phase: data.phase as string | undefined,

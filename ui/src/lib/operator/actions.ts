@@ -55,7 +55,7 @@ export async function runWorkflow(workflowId: string, request = ""): Promise<{ o
       env: { ...process.env },
     });
     const jobId = jobDir.trim().split("/").pop() ?? jobDir.trim();
-    const runArgs = workflowId === "research-cycle" ? ["run", jobId, "--timeout", "900"] : ["run", jobId];
+    const runArgs = ["run", jobId];
     spawn(OP_BIN, runArgs, { env: process.env, stdio: "ignore", detached: true }).unref();
     await audit("run-workflow", { workflowId, request, jobId }, { ok: true });
     await notifyTelegram(`[UI] Started workflow: ${workflowId} → job ${jobId}`);

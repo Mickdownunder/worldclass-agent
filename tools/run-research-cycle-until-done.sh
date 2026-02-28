@@ -57,7 +57,7 @@ while [ $run -lt $MAX_RUNS ]; do
   echo "[Run $run] Phase: $phase, Status: $status — starting cycle job..."
   job_dir=$($OP job new --workflow research-cycle --request "$PROJECT_ID")
   run_exit=0
-  $OP run "$job_dir" --timeout 1800 || run_exit=$?
+  $OP run "$job_dir" || run_exit=$?
   if [ "$run_exit" -ne 0 ]; then
     echo "[Run $run] Job exited with $run_exit — continuing next run (phase may have advanced)." >&2
   else
