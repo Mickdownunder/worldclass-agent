@@ -240,6 +240,15 @@ log_v2_mode_for_cycle
 
 advance_phase() {
   local next_phase="$1"
+  # Conductor hybrid gate: ask conductor if we should really advance (unless gate disabled or conductor is master)
+  if [ -f "$TOOLS/research_conductor.py" ] && [ "${RESEARCH_CONDUCTOR_GATE:-1}" != "0" ] && [ "${RESEARCH_USE_CONDUCTOR:-0}" != "1" ]; then
+    local conductor_next
+    conductor_next=$(python3 "$TOOLS/research_conductor.py" gate "$PROJECT_ID" "$next_phase" 2>>/dev/null) || true
+    if [ -n "$conductor_next" ] && [ "$conductor_next" != "$next_phase" ]; then
+      log "Conductor override: $next_phase -> $conductor_next (re-running phase)"
+      next_phase="$conductor_next"
+    fi
+  fi
   python3 "$TOOLS/research_advance_phase.py" "$PROJ_DIR" "$next_phase"
 }
 
@@ -1142,6 +1151,7 @@ AEM_BLOCK
     export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
     # Multi-pass section-by-section synthesis (research-firm-grade report)
     python3 "$TOOLS/research_synthesize.py" "$PROJECT_ID" > "$ART/report.md" 2>> "$PWD/log.txt" || true
+    progress_step "Saving report & applying citations"
     python3 - "$PROJ_DIR" "$ART" "$OPERATOR_ROOT" <<'PY'
 import json, os, sys
 from pathlib import Path

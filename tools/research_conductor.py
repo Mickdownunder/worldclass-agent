@@ -216,6 +216,86 @@ Reply with exactly one word: search_more, read_more, verify, or synthesize. No e
     return _deterministic_fallback(state, phase)
 
 
+# Phase-transition gate: proposed_next -> action conductor should want to proceed
+PHASE_TO_ACTION = {
+    "explore": "search_more",
+    "focus": "read_more",
+    "connect": "verify",
+    "synthesize": "synthesize",
+    "done": "synthesize",
+}
+ACTION_TO_PHASE = {
+    "search_more": "explore",
+    "read_more": "focus",
+    "verify": "verify",
+    "synthesize": "synthesize",
+}
+
+
+def _load_overrides(project_id: str) -> dict[str, int]:
+    """Load conductor override counts per transition (current_phase->proposed_next)."""
+    proj = project_dir(project_id)
+    path = proj / "conductor_overrides.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_override(project_id: str, key: str) -> None:
+    """Increment override count for this transition (max 1 override per transition)."""
+    overrides = _load_overrides(project_id)
+    overrides[key] = overrides.get(key, 0) + 1
+    proj = project_dir(project_id)
+    proj.mkdir(parents=True, exist_ok=True)
+    (proj / "conductor_overrides.json").write_text(
+        json.dumps(overrides, indent=2)
+    )
+
+
+def gate_check(project_id: str, proposed_next: str) -> str:
+    """
+    Hybrid gate: conductor advises whether to proceed or repeat a phase.
+    Returns proposed_next if we should advance, or alternative phase to run again.
+    Safety: RESEARCH_CONDUCTOR_GATE=0 disables; budget_spent_pct >= 0.8 or max-1-override force proceed.
+    """
+    if os.environ.get("RESEARCH_CONDUCTOR_GATE", "1") == "0":
+        return proposed_next
+    proj = project_dir(project_id)
+    if not proj.exists():
+        return proposed_next
+    project = load_project(proj)
+    current_phase = (project.get("phase") or "explore").strip().lower()
+    state = read_state(project_id)
+    if state.budget_spent_pct >= 0.8:
+        return proposed_next
+    key = f"{current_phase}->{proposed_next}"
+    if _load_overrides(project_id).get(key, 0) >= 1:
+        return proposed_next
+    question = (project.get("question") or "")[:2000]
+    compressed = ""
+    try:
+        from tools.research_context_manager import get_compressed_context
+        compressed = get_compressed_context(project_id) or ""
+    except Exception:
+        pass
+    action = decide_action(
+        state, question, compressed, phase=current_phase, project_id=project_id
+    )
+    log_shadow_decision(project_id, current_phase, state, action)
+    expected = PHASE_TO_ACTION.get(proposed_next, proposed_next)
+    if action == expected:
+        return proposed_next
+    if action == "synthesize" and proposed_next in ("synthesize", "done"):
+        return proposed_next
+    override_phase = ACTION_TO_PHASE.get(action, proposed_next)
+    _save_override(project_id, key)
+    return override_phase
+
+
 def log_shadow_decision(project_id: str, phase: str, state: ConductorState, action: str) -> None:
     """Append one shadow decision to conductor_decisions.json (per run / per project)."""
     proj = project_dir(project_id)
@@ -420,7 +500,10 @@ def advance_phase(proj: Path, next_phase: str) -> None:
 
 def main() -> None:
     if len(sys.argv) < 3:
-        print("Usage: research_conductor.py <shadow|run|run_cycle> <project_id> [phase] [artifacts_dir]", file=sys.stderr)
+        print(
+            "Usage: research_conductor.py <shadow|run|run_cycle|gate> <project_id> [phase|proposed_next] [artifacts_dir]",
+            file=sys.stderr,
+        )
         sys.exit(2)
     mode = sys.argv[1].lower()
     project_id = sys.argv[2]
@@ -430,6 +513,14 @@ def main() -> None:
     if not project_id or not project_dir(project_id).exists():
         print(f"Project not found: {project_id}", file=sys.stderr)
         sys.exit(1)
+
+    if mode == "gate":
+        if not phase:
+            print("Usage: research_conductor.py gate <project_id> <proposed_next_phase>", file=sys.stderr)
+            sys.exit(2)
+        result_phase = gate_check(project_id, phase.strip().lower())
+        print(result_phase)
+        sys.exit(0)
 
     if mode == "shadow":
         action = run_shadow(project_id, phase, art_path)
