@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 
 const PHASE_ORDER = ["explore", "focus", "connect", "verify", "synthesize"];
 function phaseProgress(phase: string): number {
+  if (phase.toLowerCase() === "done") return 100;
   const i = PHASE_ORDER.indexOf(phase.toLowerCase());
   if (i < 0) return 0;
   return Math.round(((i + 1) / PHASE_ORDER.length) * 100);
