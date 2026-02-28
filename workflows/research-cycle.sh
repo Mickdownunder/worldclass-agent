@@ -383,6 +383,21 @@ with Memory() as mem:
 MEMORY_V2_EPISODE
 }
 
+# Phase C: Conductor as master when RESEARCH_USE_CONDUCTOR=1 (bash pipeline remains fallback when 0)
+if [ "${RESEARCH_USE_CONDUCTOR:-0}" = "1" ] && [ -f "$TOOLS/research_conductor.py" ]; then
+  if python3 "$TOOLS/research_conductor.py" run_cycle "$PROJECT_ID" 2>> "$PWD/log.txt"; then
+    log "Conductor run_cycle completed."
+    echo "done"
+    exit 0
+  fi
+  log "Conductor run_cycle failed or incomplete — falling back to bash pipeline."
+fi
+
+# Shadow conductor: log what conductor would decide at this phase (no execution control)
+if [ -f "$TOOLS/research_conductor.py" ] && [ "${RESEARCH_USE_CONDUCTOR:-0}" != "1" ]; then
+  python3 "$TOOLS/research_conductor.py" shadow "$PROJECT_ID" "$PHASE" >> "$PROJ_DIR/conductor_shadow.log" 2>> "$PWD/log.txt" || true
+fi
+
 case "$PHASE" in
   explore)
     log "Phase: EXPLORE — 3-round adaptive planning/search/read/coverage"

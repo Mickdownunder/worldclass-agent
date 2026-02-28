@@ -23,7 +23,7 @@ Projects with these statuses do not reach `done`; they remain in a failed state 
 |-----|--------|--------|
 | **admission_reject_rate** | Not too low (gate must be meaningful) | Policy in `research_memory_policy.py`; events in `memory_admission_events` |
 | **unsupported_claim_rate** | Low (most claims verified) | `research_eval.py` → `claim_support_rate` |
-| **avg_report_quality** | ≥ 0.6 (critic score) | `quality_gate.critic_score` in project.json; `research_eval` scorecard |
+| **avg_report_quality** | ≥ 0.6 (critic score) | `quality_gate.critic_score` in project.json; `research_eval` scorecard. Critic 6-D: coverage, depth, accuracy, novelty, coherence, citation_quality in `research_critic.py` (dimensions + remediation_action). |
 | **time_to_verified_report** | Tracked per project | Phase history + last_phase_at |
 
 ## Runtime enforcement

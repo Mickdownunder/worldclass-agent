@@ -43,6 +43,8 @@ cd /root/operator
 **Erfolg:** Projekt wird angelegt, Phasen laufen automatisch, Report erscheint.  
 **Schrott:** Init schlägt fehl, Phase bleibt hängen, kein Report, viele Fehler in `jobs/*/log.txt`.
 
+**Conductor (Shadow):** Pro Cycle wird `tools/research_conductor.py shadow <project_id> <phase>` aufgerufen. Log: `research/proj-*/conductor_shadow.log`, Entscheidungen: `research/proj-*/conductor_decisions.json`. Bei `RESEARCH_USE_CONDUCTOR=1` übernimmt der Conductor die Steuerung (`run_cycle`).
+
 **PDF-Reports:** Die Pipeline erzeugt nach dem Report eine PDF (WeasyPrint). Wenn WeasyPrint fehlt, steht im Job-Log „PDF generation failed (install weasyprint? …)“ und es wird keine PDF geschrieben. Dann: `pip install weasyprint` (oder `pip install -r requirements-research.txt`). Anschließend im Report-Tab **„Generate PDF“** klicken, um die PDF nachträglich zu erzeugen.
 
 **AEM (Full AEM):** Nach Verify (Evidence Gate bestanden) läuft optional das AEM-Settlement (`research_aem_settlement.py`). Artefakte liegen unter `research/proj-*/claims/`, `attacks/`, `questions/`, `market/`, `portfolio/`, `policy/`. Fehler im AEM-Block blockieren Synthese nur bei `AEM_ENFORCEMENT_MODE=strict`.

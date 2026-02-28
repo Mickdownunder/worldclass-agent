@@ -58,32 +58,67 @@ def _llm_text(system: str, user: str, project_id: str = "") -> str:
     return (result.text or "").strip()
 
 
+# Multi-dimensional critic: each dimension has score + remediation_action for conductor
+CRITIC_DIMENSIONS = [
+    "coverage",         # topic/source coverage -> search_more on weak topics
+    "depth",            # substantive vs superficial -> read_more / deep-read
+    "accuracy",         # factuality, verification -> verify
+    "novelty",          # non-obvious insights -> search_more / read_more
+    "coherence",        # logical flow, contradictions -> revise sections
+    "citation_quality", # proper sourcing -> verify / add citations
+]
+
+
 def critique_report(proj_path: Path, project: dict, art_path: Path | None = None, project_id: str = "") -> dict:
-    """LLM evaluates the report: completeness, source coverage, consistency, depth, actionability."""
+    """LLM evaluates the report: single score + 6 dimensions with remediation actions."""
     ensure_project_layout(proj_path)
     report = _load_report(proj_path, art_path)
     if not report:
-        return {"score": 0.0, "weaknesses": ["No report found"], "suggestions": [], "pass": False}
+        return {
+            "score": 0.0, "weaknesses": ["No report found"], "suggestions": [], "pass": False,
+            "dimensions": [{"dimension": d, "score": 0.0, "remediation_action": "synthesize"} for d in CRITIC_DIMENSIONS],
+        }
     question = project.get("question", "")
     thresh = _threshold()
-    system = f"""You are a research quality reviewer. Evaluate the report and return JSON only:
-{{"score": 0.0-1.0, "weaknesses": ["list of specific weaknesses"], "suggestions": ["list of concrete improvements"], "pass": true/false}}
+    system = f"""You are a research quality reviewer. Evaluate the report and return JSON only.
 
-Calibration: Score 0.6 = adequate report that answers the research question with cited sources and no major flaws. Use scores below 0.5 only for missing content, major contradictions, or no/fake sources. A solid frontier-style report with good coverage should get 0.65-0.85.
+1) Overall: "score" (0.0-1.0), "weaknesses" (list), "suggestions" (list), "pass" (true if score >= {thresh:.2f}).
 
-Criteria: completeness (answers the question?), source coverage (diverse sources?), logical consistency (contradictions?), depth (substantial vs superficial?), actionability (clear next steps?).
-pass = true if score >= {thresh:.2f}."""
+2) Per-dimension (array "dimensions"): for each dimension give "dimension", "score" (0-1), "remediation_action" (exactly one of: search_more, read_more, verify, synthesize).
+Dimensions and suggested actions:
+- coverage: topic/source coverage; low -> search_more
+- depth: substantive vs superficial; low -> read_more
+- accuracy: factuality/verification; low -> verify
+- novelty: non-obvious insights; low -> search_more or read_more
+- coherence: logical flow, no contradictions; low -> synthesize (rewrite sections)
+- citation_quality: proper sourcing; low -> verify
+
+Calibration: Overall 0.6 = adequate report. Use scores below 0.5 for major flaws.
+Return only valid JSON with keys: score, weaknesses, suggestions, pass, dimensions (array of {{dimension, score, remediation_action}})."""
     user = f"RESEARCH QUESTION: {question}\n\nREPORT:\n{report[:12000]}\n\nEvaluate and return only valid JSON."
     out = _llm_json(system, user, project_id=project_id)
     if not isinstance(out, dict):
-        return {"score": 0.5, "weaknesses": [], "suggestions": [], "pass": False}
+        return {"score": 0.5, "weaknesses": [], "suggestions": [], "pass": False, "dimensions": []}
     out.setdefault("score", 0.5)
     out.setdefault("pass", out["score"] >= _threshold())
+    if "dimensions" not in out or not isinstance(out["dimensions"], list):
+        out["dimensions"] = [
+            {"dimension": d, "score": out.get("score", 0.5), "remediation_action": "synthesize"}
+            for d in CRITIC_DIMENSIONS
+        ]
+    # Normalize remediation_action to conductor actions
+    for dim in out["dimensions"]:
+        if isinstance(dim, dict):
+            dim.setdefault("remediation_action", "synthesize")
+            a = str(dim.get("remediation_action", "")).lower()
+            if a not in ("search_more", "read_more", "verify", "synthesize"):
+                dim["remediation_action"] = "synthesize"
     from tools.research_common import audit_log
     audit_log(proj_path, "critic_evaluation", {
         "score": out.get("score", 0),
         "passed": out.get("pass", False),
         "weaknesses_count": len(out.get("weaknesses", [])),
+        "dimensions": len(out.get("dimensions", [])),
     })
     return out
 

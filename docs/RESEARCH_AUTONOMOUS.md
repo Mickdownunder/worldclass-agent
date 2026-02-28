@@ -39,6 +39,11 @@ Wenn du **mehrere** Research-Projekte hast (z. B. mehrere „Suggested Next Step
    - Projekt C: „Regulatorik Batterietechnologien“
 2. **Scheduler** führt für **jedes** Projekt mit Phase ≠ done **einen** research-cycle aus – z. B. alle 6 Stunden.
 
+**Conductor (Next Level Architecture):**
+
+- **Shadow Mode (Standard):** Bei jedem research-cycle wird der **Research Conductor** parallel ausgeführt. Er liest den aktuellen State (6 Metriken), entscheidet per LLM die nächste Aktion (`search_more`, `read_more`, `verify`, `synthesize`) und schreibt die Entscheidung in `research/proj-*/conductor_decisions.json`. Die Bash-Pipeline bleibt Master; der Conductor loggt nur.
+- **Conductor als Master (Phase C):** `RESEARCH_USE_CONDUCTOR=1` — dann steuert der Conductor den Ablauf (max 25 Schritte, 4 Aktionen, Context Manager + Supervisor). Bash-Pipeline ist Fallback mit `RESEARCH_USE_CONDUCTOR=0`.
+
 **Skript:** `tools/run-scheduled-research.sh`
 
 - Durchläuft alle `research/proj-*/` mit gültigem `project.json`.
