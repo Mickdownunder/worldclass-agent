@@ -13,6 +13,7 @@ Usage:
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -61,6 +62,34 @@ def _read_one_url(url: str, project_id: str) -> dict:
     return {"url": url, "title": "", "text": "", "error": "read_failed", "error_code": "parallel_read_error"}
 
 
+def _word_set(text: str) -> set[str]:
+    """Tokenize to words (3+ alnum) for Jaccard."""
+    return set(re.findall(r"\b[a-z0-9\-\.%]{3,}\b", (text or "").lower()))
+
+
+def _compute_novelty(new_excerpt: str, existing_findings: list[dict]) -> float:
+    """Jaccard novelty vs existing excerpts: 1.0 = new, 0.0 = duplicate. No LLM."""
+    if not new_excerpt or not existing_findings:
+        return 1.0
+    new_w = _word_set(new_excerpt[:4000])
+    if not new_w:
+        return 1.0
+    max_sim = 0.0
+    for f in existing_findings:
+        ex = (f.get("excerpt") or "")[:4000]
+        if not ex:
+            continue
+        w = _word_set(ex)
+        if not w:
+            continue
+        inter = len(new_w & w)
+        union = len(new_w | w)
+        sim = inter / union if union else 0.0
+        if sim > max_sim:
+            max_sim = sim
+    return 1.0 - max_sim
+
+
 def _save_result(
     proj_dir: Path,
     url: str,
@@ -99,10 +128,28 @@ def _save_result(
         if text:
             confidence = min(0.9, 0.4 + rel_score * 0.05) if mode != "counter" else min(0.8, 0.3 + rel_score * 0.05)
             fid = hashlib.sha256((url + text[:200]).encode()).hexdigest()[:12]
-            (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps({
+            finding_id = f"f_{fid}"
+            search_query = os.environ.get("RESEARCH_SEARCH_QUERY", "")
+            findings_dir = proj_dir / "findings"
+            existing_findings: list[dict] = []
+            if findings_dir.exists():
+                paths = sorted(findings_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+                for p in paths[:50]:
+                    try:
+                        d = json.loads(p.read_text())
+                        existing_findings.append({"excerpt": d.get("excerpt", "")})
+                    except Exception:
+                        pass
+            novelty = _compute_novelty(text[:4000], existing_findings)
+            if novelty < 0.15:
+                print(f"LOW_NOVELTY (score={novelty:.2f}): {url[:80]}", file=sys.stderr)
+            finding_payload = {
                 "url": url, "title": title, "excerpt": text[:4000], "source": source_label,
                 "confidence": confidence, "relevance_score": rel_score,
-            }, ensure_ascii=False))
+                "finding_id": finding_id, "search_query": search_query, "read_phase": mode,
+                "novelty_score": round(novelty, 4),
+            }
+            (proj_dir / "findings" / f"{fid}.json").write_text(json.dumps(finding_payload, ensure_ascii=False))
     return True
 
 

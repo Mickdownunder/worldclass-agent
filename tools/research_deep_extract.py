@@ -54,6 +54,16 @@ def run(project_id: str) -> int:
     sources_dir = proj_path / "sources"
     findings_dir = proj_path / "findings"
     findings_dir.mkdir(parents=True, exist_ok=True)
+    url_to_finding_id: dict[str, str] = {}
+    for ef in findings_dir.glob("*.json"):
+        try:
+            ed = json.loads(ef.read_text())
+            u = (ed.get("url") or "").strip()
+            fid_val = (ed.get("finding_id") or "").strip()
+            if u and fid_val:
+                url_to_finding_id[u] = fid_val
+        except Exception:
+            continue
     content_files = [f for f in sources_dir.glob("*_content.json")]
     q_context = f"\n\nResearch question for context: {question}" if question else ""
     system_tpl = """Extract 2-5 key facts or claims from the text that are RELEVANT to the research question. Return JSON: {{"facts": ["fact one", "fact two", ...]}}.
@@ -128,12 +138,15 @@ Each fact should be a single sentence or short paragraph. Be specific (numbers, 
             out_path = findings_dir / f"{fid}.json"
             if out_path.exists():
                 continue
+            parent_finding_id = url_to_finding_id.get(url, "")
             out_path.write_text(json.dumps({
                 "url": url,
                 "title": title,
                 "excerpt": fact.strip()[:4000],
                 "source": "deep_extract",
                 "confidence": 0.55,
+                "finding_id": f"f_{fid}",
+                "parent_finding_id": parent_finding_id,
             }, indent=2))
             added += 1
     return added

@@ -49,7 +49,7 @@ Projects with these statuses do not reach `done`; they remain in a failed state 
 
 - **Claim extraction:** Findings are batched (15–20 per LLM call) in `research_verify.py`; claims are merged and deduplicated.
 - **Parallel search:** Web search runs with 5–8 workers (`research_web_search.py` batch mode).
-- **Parallel reads:** URL reading uses `research_parallel_reader.py` (3–5 workers) instead of sequential bash loops.
+- **Parallel reads:** URL reading uses `research_parallel_reader.py` (3–5 workers) instead of sequential bash loops. Findings get `finding_id`, `search_query`, `read_phase`, and `novelty_score` (Jaccard vs. recent findings); low-novelty findings are logged. Saturation: `tools/research_saturation_check.py` runs after explore round 1; when ≥7 of last 10 findings have novelty &lt; 0.2 it exits 1 and `research-cycle.sh` **skips** refinement, gap-fill, and depth reads for that cycle.
 - **Adaptive search:** After round 1 reads, gap-fill and depth search results are read before "Extracting findings"; Planner Round 2 (`--refinement-queries`) adds precision queries from coverage.
 - **Hypothesis model:** `RESEARCH_HYPOTHESIS_MODEL` (default `gemini-3.1-pro-preview`) is used only for `hypothesis_formation` in `research_reason.py`.
 - **Source dedup (Memory v2):** Read URLs are stored per question; future runs skip already-read URLs (see `read_urls` table, `lib.memory`).

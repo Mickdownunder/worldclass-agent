@@ -149,6 +149,16 @@ def _build_claim_source_registry(
     return "\n".join(lines)
 
 
+def _build_provenance_appendix(claim_ledger: list[dict]) -> str:
+    """Tier 2a: Claim → source finding IDs for traceability. No LLM."""
+    lines = ["| Claim ID | Source finding IDs |", "| --- | --- |"]
+    for c in claim_ledger[:50]:
+        cid = (c.get("claim_id") or "").strip()
+        fids = c.get("source_finding_ids") or []
+        lines.append(f"| {cid} | {', '.join(fids[:15])}{' …' if len(fids) > 15 else ''} |")
+    return "\n".join(lines)
+
+
 def _build_ref_map(findings: list[dict], claim_ledger: list[dict]) -> tuple[dict[str, int], list[tuple[str, str]]]:
     """Build url -> ref number (1-based) and ordered list (url, title) for References."""
     cited = set()
@@ -191,7 +201,7 @@ If the section is well-supported, return {"gaps": []}. Output only valid JSON.""
 
 
 def _claim_ledger_block(claim_ledger: list[dict]) -> str:
-    """Build CLAIM LEDGER text for section prompt: one line per claim_ref with short text."""
+    """Build CLAIM LEDGER text for section prompt: one line per claim_ref with short text and epistemic status."""
     lines = []
     for c in claim_ledger[:40]:
         cid = (c.get("claim_id") or "").strip()
@@ -202,8 +212,11 @@ def _claim_ledger_block(claim_ledger: list[dict]) -> str:
             ver = int(ver)
         except (TypeError, ValueError):
             ver = 1
+        tier = (c.get("verification_tier") or "UNVERIFIED").strip().upper()
+        if c.get("is_verified") and tier not in ("VERIFIED", "AUTHORITATIVE"):
+            tier = "VERIFIED"
         text = (c.get("text") or "")[:120].replace("\n", " ")
-        lines.append(f"[claim_ref: {cid}@{ver}] {text}")
+        lines.append(f"[claim_ref: {cid}@{ver}] [{tier}] {text}")
     return "\n".join(lines) if lines else ""
 
 
@@ -222,6 +235,57 @@ def _extract_section_key_points(body: str, max_points: int = 5) -> list[str]:
     return points[:max_points]
 
 
+def _extract_used_claim_refs(text: str) -> set[str]:
+    """Extract all claim_ref IDs (e.g. 'cl_1@1') from section body text."""
+    return set(re.findall(r'\[claim_ref:\s*([^\]]+)\]', text or ""))
+
+
+def _epistemic_profile_from_ledger(claim_ledger: list[dict]) -> str:
+    """Tier distribution string for epistemic context in prompts. No LLM."""
+    tier_counts: dict[str, int] = {"AUTHORITATIVE": 0, "VERIFIED": 0, "TENTATIVE": 0, "UNVERIFIED": 0}
+    for c in claim_ledger:
+        tier = (c.get("verification_tier") or "UNVERIFIED").strip().upper()
+        if c.get("is_verified") and tier not in ("VERIFIED", "AUTHORITATIVE"):
+            tier = "VERIFIED"
+        tier_counts[tier] = tier_counts.get(tier, 0) + 1
+    return (
+        f"AUTHORITATIVE: {tier_counts['AUTHORITATIVE']}, "
+        f"VERIFIED: {tier_counts['VERIFIED']}, "
+        f"TENTATIVE: {tier_counts['TENTATIVE']}, "
+        f"UNVERIFIED: {tier_counts['UNVERIFIED']}"
+    )
+
+
+def _epistemic_reflect(body: str, claim_ledger: list[dict], project_id: str) -> str:
+    """Quick LLM check: does the section language match claim verification status? Fallback: return original."""
+    used_refs = re.findall(r'\[claim_ref:\s*([^\]]+)\]', body or "")
+    if not used_refs:
+        return body
+    ref_set = set(used_refs)
+    relevant: list[str] = []
+    for c in claim_ledger:
+        cid = (c.get("claim_id") or "").strip()
+        if not cid:
+            continue
+        ver = c.get("claim_version", 1)
+        ref_key = f"{cid}@{ver}"
+        if ref_key in ref_set or ref_key.split("@")[0] == cid:
+            tier = (c.get("verification_tier") or "UNVERIFIED").strip().upper()
+            relevant.append(f"{ref_key}: {tier}")
+    if not relevant:
+        return body
+    system = """You are an epistemic consistency reviewer. Check if the text uses language appropriate to each claim's verification status. Fix ONLY language violations (e.g. "confirms" for a TENTATIVE claim -> "suggests"). Do NOT change content, structure, citations, or claim_refs. Return the corrected text only, no explanations."""
+    user = f"CLAIM STATUS:\n" + "\n".join(relevant) + f"\n\nTEXT:\n{body}"
+    try:
+        result = llm_call("gemini-2.5-flash", system, user, project_id=project_id)
+        corrected = (result.text or "").strip()
+        if corrected and len(corrected) > len(body) * 0.5:
+            return corrected
+    except Exception:
+        pass
+    return body
+
+
 def _synthesize_section(
     section_title: str,
     findings_for_section: list[dict],
@@ -232,10 +296,13 @@ def _synthesize_section(
     rel_sources: dict,
     claim_ledger: list[dict] | None = None,
     previous_sections_summary: list[str] | None = None,
+    used_claim_refs: set[str] | None = None,
+    epistemic_profile: str = "",
 ) -> str:
     """One LLM call for one deep-analysis section (500–1500 words). When claim_ledger is provided, section must use [claim_ref: id@version] for every claim-bearing sentence."""
     claim_ledger = claim_ledger or []
     previous_sections_summary = previous_sections_summary or []
+    used_claim_refs = used_claim_refs or set()
     ref_lines = []
     for f in findings_for_section[:15]:
         url = (f.get("url") or "").strip()
@@ -274,12 +341,26 @@ CRITICAL RULES:
 - Do NOT create tables or matrices with "TBD", "N/A", or empty cells. If you lack data for a comparison, write prose explaining what is known and what is missing instead.
 - Do NOT promise data you do not have. If country-specific or granular data is absent from the findings, say so explicitly rather than creating placeholder structures.
 At the end of the section, add a short block '**Key findings:**' with 2–3 bullet points that summarize the main evidence-based conclusions of this section."""
+    if epistemic_profile:
+        system += f"""
+
+EPISTEMIC PROFILE OF THIS RESEARCH: {epistemic_profile}
+If TENTATIVE + UNVERIFIED > 60% of claims, your conclusions MUST be framed as "emerging patterns" or "structural tendencies", never as confirmed facts."""
     if previous_sections_summary:
         system += "\n\nAlready covered in previous sections (do not repeat):\n- " + "\n- ".join(previous_sections_summary[:15])
         system += "\n\nCRITICAL: Do NOT restate these specific data points even to introduce context. Refer to them with 'as noted above' if absolutely necessary, max once per section."
     if claim_block:
         system += """
-For every factual claim or finding you state, you MUST cite the claim from the CLAIM LEDGER by including exactly one [claim_ref: claim_id@version] in that sentence. Example: "The effect was significant [claim_ref: cl_1@1]." Use only claim_refs from the CLAIM LEDGER list below. Do not introduce new claims; only cite existing ledger claims."""
+For every factual claim or finding you state, you MUST cite the claim from the CLAIM LEDGER by including exactly one [claim_ref: claim_id@version] in that sentence. Example: "The effect was significant [claim_ref: cl_1@1]." Use only claim_refs from the CLAIM LEDGER list below. Do not introduce new claims; only cite existing ledger claims.
+
+EPISTEMIC LANGUAGE RULES (MANDATORY):
+Each claim in the CLAIM LEDGER has a verification status: [VERIFIED], [AUTHORITATIVE], [TENTATIVE], or [UNVERIFIED].
+You MUST match your language to the claim's status:
+- [VERIFIED]: Use definitive language ("confirms", "demonstrates", "establishes").
+- [AUTHORITATIVE]: Use strong but qualified language ("strongly indicates", "authoritatively reported").
+- [TENTATIVE]: Use hedging language ("suggests", "indicates", "appears to", "preliminary evidence points to"). NEVER use "confirms" or "proves" for TENTATIVE claims.
+- [UNVERIFIED]: Use cautious language ("reportedly", "unverified reports suggest", "claimed but not independently confirmed").
+If the majority of claims are TENTATIVE or UNVERIFIED, your conclusions MUST reflect this uncertainty. Use "structural tendency" or "emerging pattern" instead of definitive statements. Do NOT write "bestätigt" or "zwingend" for tentative findings."""
     user = f"""RESEARCH QUESTION: {question}
 
 SECTION TITLE: {section_title}
@@ -294,9 +375,12 @@ FULL SOURCE CONTENT (use for depth):
 {full_block[:20000]}
 """
     if claim_block:
+        already_cited_note = ""
+        if used_claim_refs:
+            already_cited_note = f"\n\nALREADY CITED IN PREVIOUS SECTIONS (avoid re-citing unless adding genuinely new analysis): {', '.join(sorted(used_claim_refs)[:30])}\nPrefer claims NOT yet cited. If you must reference an already-cited claim, add new analytical insight rather than restating what was said."
         user += f"""
 CLAIM LEDGER (you MUST use these exact refs for every claim-bearing sentence; include [claim_ref: id@version] in the same sentence as the claim):
-{claim_block}
+{claim_block}{already_cited_note}
 
 Write the section markdown (no title repeated; start with body). Every sentence that states a factual claim must contain [claim_ref: id@version] from the list above."""
     else:
@@ -410,7 +494,7 @@ Probabilities must sum to ~100%. Be specific to the actual market dynamics. No g
         return ""
 
 
-def _synthesize_exec_summary(full_report_body: str, question: str, project_id: str) -> str:
+def _synthesize_exec_summary(full_report_body: str, question: str, project_id: str, epistemic_profile: str = "") -> str:
     """Generate a one-page Executive Brief (max 400 words) for C-level readers."""
     system = """You are a research analyst. Write a one-page Executive Brief (max 400 words) that a C-level executive can read in 2 minutes. Structure:
 (1) Bottom Line (2 sentences)
@@ -421,6 +505,8 @@ def _synthesize_exec_summary(full_report_body: str, question: str, project_id: s
 Do not use citations [N] in the brief.
 Use measured, professional language appropriate for an institutional report. Avoid dramatic qualifiers like "fundamental", "irreversible", "massive", "unprecedented". State impact precisely with data, not rhetoric."""
     user = f"RESEARCH QUESTION: {question}\n\nFULL REPORT (excerpt):\n{full_report_body[:12000]}\n\nWrite only the Executive Brief (no heading, max 400 words)."
+    if epistemic_profile:
+        user += f"\n\nEPISTEMIC PROFILE: {epistemic_profile}. If TENTATIVE+UNVERIFIED > 60% of claims, frame as emerging patterns, not confirmed facts."
     try:
         result = llm_call(_model(), system, user, project_id=project_id)
         return (result.text or "").strip()
@@ -466,11 +552,13 @@ def _deduplicate_sections(parts: list[str]) -> list[str]:
     return out
 
 
-def _synthesize_conclusions_next_steps(thesis: dict, contradictions: list, question: str, project_id: str) -> tuple[str, str]:
+def _synthesize_conclusions_next_steps(thesis: dict, contradictions: list, question: str, project_id: str, epistemic_profile: str = "") -> tuple[str, str]:
     """Conclusions (300–500 words) and Recommended Next Steps (200–400 words)."""
     system = """You are a research analyst. Given thesis and contradictions, produce two sections.
 Return JSON: {"conclusions": "markdown text 300-500 words", "next_steps": "markdown text 200-400 words, prioritized list with [HIGH]/[MEDIUM]."}"""
     user = f"QUESTION: {question}\nTHESIS: {thesis.get('current', '')} (confidence: {thesis.get('confidence', 0)})\nCONTRADICTIONS: {json.dumps(contradictions)[:2000]}\n\nReturn only valid JSON."
+    if epistemic_profile:
+        user += f"\nEPISTEMIC PROFILE: {epistemic_profile}. If TENTATIVE+UNVERIFIED > 60% of claims, frame conclusions as emerging patterns, not confirmed facts."
     try:
         result = llm_call(_model(), system, user, project_id=project_id)
         text = (result.text or "").strip()
@@ -780,10 +868,13 @@ def run_synthesis(project_id: str) -> str:
     parts.append(_key_numbers(findings, claim_ledger, project_id))
     parts.append("\n\n---\n\n")
 
+    epistemic_profile = _epistemic_profile_from_ledger(claim_ledger)
     checkpoint_bodies = list(ck["bodies"]) if (ck and ck.get("bodies")) else []
     accumulated_summary: list[str] = []
+    accumulated_claim_refs: set[str] = set()
     for b in checkpoint_bodies:
         accumulated_summary.extend(_extract_section_key_points(b))
+        accumulated_claim_refs.update(_extract_used_claim_refs(b))
     for i in range(start_index, len(clusters)):
         cluster = clusters[i]
         title = section_titles[i] if i < len(section_titles) else f"Analysis: Topic {i+1}"
@@ -798,8 +889,10 @@ def run_synthesis(project_id: str) -> str:
             progress_step(project_id, f"Writing section {i+1}/{len(clusters)}: {title}", i+1, len(clusters))
         except Exception:
             pass
-        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger, previous_sections_summary=accumulated_summary)
+        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger, previous_sections_summary=accumulated_summary, used_claim_refs=accumulated_claim_refs, epistemic_profile=epistemic_profile)
+        body = _epistemic_reflect(body, claim_ledger, project_id)
         accumulated_summary.extend(_extract_section_key_points(body))
+        accumulated_claim_refs.update(_extract_used_claim_refs(body))
         if os.environ.get("RESEARCH_WARP_DEEPEN") == "1" and i == 0 and len(body) > 300:
             try:
                 from tools.research_progress import step as progress_step
@@ -828,7 +921,7 @@ def run_synthesis(project_id: str) -> str:
                                     if wr.get("text"):
                                         new_f = {"url": url, "title": wr.get("title", ""), "excerpt": (wr.get("text") or "")[:1500]}
                                         section_findings = section_findings + [new_f]
-                                        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger, previous_sections_summary=accumulated_summary)
+                                        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger, previous_sections_summary=accumulated_summary, used_claim_refs=accumulated_claim_refs, epistemic_profile=epistemic_profile)
                                 except Exception:
                                     pass
                 except Exception:
@@ -858,20 +951,18 @@ def run_synthesis(project_id: str) -> str:
             parts.append(f"- **{c.get('claim', c.get('topic', 'Unknown'))}**: {c.get('summary', c.get('description', ''))}\n")
         parts.append("\n")
 
-    # Verification Summary table (Tentative label for PASS_TENTATIVE per Spec §6.3)
+    # Verification Summary table -- prioritize verification_tier over falsification_status
+    # to stay consistent with _evidence_summary_line header counts
     parts.append("## Verification Summary\n\n| # | Claim | Status | Sources |\n| --- | --- | --- | ---|\n")
     for i, c in enumerate(claim_ledger[:50], 1):
         text = (c.get("text") or "")[:80].replace("|", " ")
-        fstatus = (c.get("falsification_status") or "").strip()
-        tier = c.get("verification_tier", "")
-        if fstatus == "PASS_TENTATIVE":
-            status = "TENTATIVE"
-        elif tier == "VERIFIED":
-            status = "VERIFIED"
-        elif tier == "AUTHORITATIVE":
+        tier = (c.get("verification_tier") or "").strip().upper()
+        if tier == "AUTHORITATIVE":
             status = "AUTHORITATIVE"
-        elif c.get("is_verified"):
+        elif tier == "VERIFIED" or c.get("is_verified"):
             status = "VERIFIED"
+        elif (c.get("falsification_status") or "").strip() == "PASS_TENTATIVE":
+            status = "TENTATIVE"
         else:
             status = "UNVERIFIED"
         n_src = len(c.get("supporting_source_ids") or [])
@@ -915,7 +1006,7 @@ def run_synthesis(project_id: str) -> str:
         parts.append("\n\n")
 
     # Conclusions & Next Steps
-    concl, next_steps = _synthesize_conclusions_next_steps(thesis, contradictions, question, project_id)
+    concl, next_steps = _synthesize_conclusions_next_steps(thesis, contradictions, question, project_id, epistemic_profile=epistemic_profile)
     parts.append("## Conclusions & Thesis\n\n")
     parts.append(concl)
     parts.append("\n\n## Recommended Next Steps\n\n")
@@ -925,7 +1016,7 @@ def run_synthesis(project_id: str) -> str:
     # Executive Summary: one-pager after KEY NUMBERS, before Executive Decision Synthesis
     _clear_checkpoint(proj_path)
     full_so_far = "\n".join(parts)
-    exec_summary = _synthesize_exec_summary(full_so_far, question, project_id)
+    exec_summary = _synthesize_exec_summary(full_so_far, question, project_id, epistemic_profile=epistemic_profile)
     idx_after_key = full_so_far.find("\n\n---\n\n")
     if idx_after_key >= 0:
         idx_after_key += len("\n\n---\n\n")
@@ -968,6 +1059,9 @@ def run_synthesis(project_id: str) -> str:
     registry_md = _build_claim_source_registry(claim_ledger, sources, ref_list)
     report_body += "\n\n## Claim Evidence Registry\n\n"
     report_body += registry_md
+    provenance_md = _build_provenance_appendix(claim_ledger)
+    report_body += "\n\n## Provenance\n\n"
+    report_body += provenance_md
     report_body += "\n\n## Appendix B: Methodology Details\n\n"
     report_body += f"- Synthesis model: {_model()}\n- Findings cap: {MAX_FINDINGS}\n- Report timestamp: {ts}\n\n"
     report_body += "## References\n\n"

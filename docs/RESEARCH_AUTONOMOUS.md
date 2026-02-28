@@ -99,6 +99,11 @@ export RESEARCH_MAX_FOLLOWUPS=3
 
 Wenn in der Umgebung **HTTP_PROXY/HTTPS_PROXY** gesetzt ist (z. B. Cursor/IDE), können OpenAI-Calls mit **403 Forbidden** fehlschlagen. Das Workflow-Skript **research-cycle.sh** setzt daher zu Beginn **NO_PROXY** für `api.openai.com` und `generativelanguage.googleapis.com`, sodass LLM-Traffic nicht über den Proxy läuft. Bei weiterhin 403: Proxy-Anbieter prüfen oder NO_PROXY vor dem Start setzen.
 
+## Pipeline Intelligence (Tier 2)
+
+- **Provenance:** Findings speichern `finding_id`, `search_query`, `read_phase`; Claims im Ledger haben `source_finding_ids`. Deep-Extract-Findings haben optional `parent_finding_id` (Verweis auf das Ursprungs-Finding derselben URL). Optional: `RESEARCH_SEARCH_QUERY` setzen, um den Suchkontext für gespeicherte Findings zu übergeben (wird in `research_parallel_reader.py` ausgewertet).
+- **Novelty & Saturation:** Jedes Finding erhält ein `novelty_score` (Jaccard vs. letzte 50 Findings). Nach der Explore-Runde 1 ruft `research-cycle.sh` `tools/research_saturation_check.py` auf. Bei **Saturation** (≥7 von 10 letzten Findings mit `novelty_score < 0.2`) werden **Refinement-, Gap- und Depth-Lese-Runden in dieser Explore-Phase übersprungen** (weniger redundante Reads, Exit-Code 1 vom Check).
+
 ## Memory v2 (optional, empfohlen)
 
 Feature-Flag und Verhalten:

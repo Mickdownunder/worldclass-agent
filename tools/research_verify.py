@@ -316,6 +316,18 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
         len([f for f in sources_dir.glob("*.json") if not f.name.endswith("_content.json")])
         if sources_dir.exists() else 1
     )
+    findings_dir = proj_path / "findings"
+    url_to_finding_ids: dict[str, list[str]] = {}
+    if findings_dir.exists():
+        for p in findings_dir.glob("*.json"):
+            try:
+                d = json.loads(p.read_text())
+                u = (d.get("url") or "").strip()
+                fid = (d.get("finding_id") or "").strip()
+                if u and fid:
+                    url_to_finding_ids.setdefault(u, []).append(fid)
+            except Exception:
+                pass
     existing_ledger_path = verify_dir / "claim_ledger.json"
     prev_verified: dict[str, dict] = {}
     if existing_ledger_path.exists():
@@ -347,7 +359,22 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
         dispute = (c.get("disputed") or c.get("verification_status", "") == "disputed" or
                    str(c.get("verification_status", "")).lower() == "disputed")
         authoritative_sources = [u for u in reliable_sources if _is_authoritative_source(u)]
-        if distinct_reliable >= 2 and not dispute:
+        research_mode = ((project.get("config") or {}).get("research_mode") or "standard").strip().lower()
+
+        if research_mode == "discovery":
+            if distinct_reliable >= 2 and not dispute:
+                verification_tier = "ESTABLISHED"
+                is_verified = True
+                verification_reason = f"{distinct_reliable} independent sources confirm"
+            elif len(set(supporting_source_ids)) >= 1 and not dispute:
+                verification_tier = "EMERGING"
+                is_verified = True
+                verification_reason = "single or limited sourcing, emerging concept"
+            else:
+                verification_tier = "SPECULATIVE"
+                is_verified = False
+                verification_reason = "speculative / opinion-based"
+        elif distinct_reliable >= 2 and not dispute:
             verification_tier = "VERIFIED"
             is_verified = True
             verification_reason = f"{distinct_reliable} reliable independent sources"
@@ -380,10 +407,15 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
             supporting_source_ids = prev_verified[key].get("supporting_source_ids", supporting_source_ids)
         total_checked = len(c.get("all_checked_sources", [])) or total_project_sources
         claim_support_rate = round(len(supporting_source_ids) / max(1, total_checked), 3)
+        source_finding_ids = []
+        for u in supporting_source_ids:
+            source_finding_ids.extend(url_to_finding_ids.get(u, []))
+        source_finding_ids = list(dict.fromkeys(source_finding_ids))[:50]
         claims_out.append({
             "claim_id": claim_id,
             "text": text,
             "supporting_source_ids": supporting_source_ids,
+            "source_finding_ids": source_finding_ids,
             "is_verified": is_verified,
             "verification_tier": verification_tier,
             "verification_reason": verification_reason,

@@ -549,6 +549,8 @@ FILTER_READ_URLS
     read_attempts=0
     read_successes=0
     [ -n "$READ_STATS" ] && read -r read_attempts read_successes <<< "$(echo "$READ_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null)" 2>/dev/null || true
+    SATURATION_DETECTED=0
+    python3 "$TOOLS/research_saturation_check.py" "$PROJ_DIR" 2>> "$PWD/log.txt" || SATURATION_DETECTED=1
 
     progress_step "Assessing source coverage"
     python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round1.json"
@@ -559,7 +561,7 @@ FILTER_READ_URLS
       progress_step "Planner Round 2: precision queries"
       python3 "$TOOLS/research_planner.py" --refinement-queries "$ART/coverage_round1.json" "$PROJECT_ID" > "$ART/refinement_queries.json" 2>> "$PWD/log.txt" || true
       REFINEMENT_COUNT=$(python3 -c "import json; d=json.load(open('$ART/refinement_queries.json')) if __import__('pathlib').Path('$ART/refinement_queries.json').exists() else {}; print(len(d.get('queries', [])), end='')" 2>/dev/null || echo "0")
-      if [ "$REFINEMENT_COUNT" -gt 0 ]; then
+      if [ "$REFINEMENT_COUNT" -gt 0 ] && [ "$SATURATION_DETECTED" != "1" ]; then
       python3 "$TOOLS/research_web_search.py" --queries-file "$ART/refinement_queries.json" --max-per-query 5 > "$ART/refinement_search.json" 2>> "$PWD/log.txt" || true
       python3 - "$PROJ_DIR" "$ART/refinement_search.json" <<'SAVE_REFINEMENT'
 import json, sys, hashlib
@@ -618,7 +620,7 @@ if p.exists():
             urls.append(u)
 Path('$ART/gap_urls_to_read.txt').write_text('\n'.join(urls[:10]))
 "
-      if [ -s "$ART/gap_urls_to_read.txt" ]; then
+      if [ -s "$ART/gap_urls_to_read.txt" ] && [ "$SATURATION_DETECTED" != "1" ]; then
         progress_step "Reading gap-fill sources"
         python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/gap_urls_to_read.txt" --read-limit 10 --workers 8 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
       fi
@@ -655,7 +657,7 @@ if p.exists():
             urls.append(u)
 Path('$ART/depth_urls_to_read.txt').write_text('\n'.join(urls[:8]))
 "
-        if [ -s "$ART/depth_urls_to_read.txt" ]; then
+        if [ -s "$ART/depth_urls_to_read.txt" ] && [ "$SATURATION_DETECTED" != "1" ]; then
           progress_step "Reading depth sources"
           python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/depth_urls_to_read.txt" --read-limit 8 --workers 8 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
         fi
@@ -1139,6 +1141,12 @@ d.setdefault("quality_gate", {})["aem_block_reason"] = reason
 AEM_BLOCK
         exit 0
       fi
+    fi
+    # Discovery Analysis (only in discovery mode, after evidence gate passes)
+    FM=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print((d.get('config') or {}).get('research_mode', 'standard'), end='')" 2>/dev/null || echo "standard")
+    if [ "$FM" = "discovery" ]; then
+      progress_step "Running Discovery Analysis"
+      python3 "$TOOLS/research_discovery_analysis.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
     fi
     # Evidence gate passed — advance to synthesize (no loop-back; gate already enforces evidence)
     advance_phase "synthesize"
