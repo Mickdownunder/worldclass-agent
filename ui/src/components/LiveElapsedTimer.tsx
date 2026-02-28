@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 
-function formatElapsed(from: string, to?: string | number): string {
+function formatElapsed(from: string, to?: string | number | null): string {
   if (!from) return "—";
   try {
     const start = new Date(from).getTime();
-    const end = typeof to === "number" ? to : (to ? new Date(to).getTime() : Date.now());
+    const end = to == null ? Date.now() : (typeof to === "number" ? to : new Date(to).getTime());
     const ms = end - start;
     if (ms < 0) return "0s";
     if (ms < 60_000) return `${Math.floor(ms / 1000)}s`;
@@ -40,11 +40,13 @@ export function LiveElapsedTimer({
   const [now, setNow] = useState(0);
 
   useEffect(() => {
+    /* eslint-disable-next-line react-hooks/set-state-in-effect -- mount guard for hydration */
     setMounted(true);
   }, []);
 
   useEffect(() => {
     if (!mounted || !isActive) return;
+    /* eslint-disable-next-line react-hooks/set-state-in-effect -- sync tick then interval */
     setNow(Date.now());
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);

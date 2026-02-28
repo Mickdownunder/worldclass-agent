@@ -298,11 +298,14 @@ def _synthesize_section(
     previous_sections_summary: list[str] | None = None,
     used_claim_refs: set[str] | None = None,
     epistemic_profile: str = "",
+    research_mode: str = "standard",
+    discovery_brief: dict | None = None,
 ) -> str:
     """One LLM call for one deep-analysis section (500–1500 words). When claim_ledger is provided, section must use [claim_ref: id@version] for every claim-bearing sentence."""
     claim_ledger = claim_ledger or []
     previous_sections_summary = previous_sections_summary or []
     used_claim_refs = used_claim_refs or set()
+    discovery_brief = discovery_brief or {}
     ref_lines = []
     for f in findings_for_section[:15]:
         url = (f.get("url") or "").strip()
@@ -329,7 +332,22 @@ def _synthesize_section(
     full_block = "\n\n".join(full_content) if full_content else "(no full content)"
 
     claim_block = _claim_ledger_block(claim_ledger)
-    system = """You are a research analyst. Write a single analytical section of a professional report.
+    if research_mode == "discovery":
+        system = """You are a research innovation analyst. Write a single analytical section that identifies novel patterns, emerging concepts, and unexplored connections.
+
+Structure your analysis around:
+1. What is genuinely new or different about this approach/idea?
+2. What existing problems does it solve (or create)?
+3. What are the implications if this pattern accelerates?
+
+Use inline citations [1], [2] etc. Write 500-1500 words.
+Label each insight with its maturity: [ESTABLISHED], [EMERGING], or [SPECULATIVE].
+For SPECULATIVE insights, explicitly state your reasoning chain.
+Focus on connections between ideas that sources don't make explicitly.
+Do NOT repeat ideas from previous sections.
+End with '**Key insights:**' -- 2-3 bullet points on what is genuinely novel here."""
+    else:
+        system = """You are a research analyst. Write a single analytical section of a professional report.
 Use inline citations as [1], [2] etc. to match the reference list provided. Write 500–1500 words.
 State confidence where relevant (e.g. "HIGH confidence (3 sources)" or "LOW (single source)").
 Do not repeat URLs in the body; use only [N] references.
@@ -374,6 +392,16 @@ FINDINGS FOR THIS SECTION:
 FULL SOURCE CONTENT (use for depth):
 {full_block[:20000]}
 """
+    if discovery_brief:
+        user += f"""
+
+DISCOVERY SIGNALS (use these to identify non-obvious connections):
+- Novel connections: {json.dumps(discovery_brief.get('novel_connections', [])[:5], ensure_ascii=False)}
+- Emerging concepts: {json.dumps(discovery_brief.get('emerging_concepts', [])[:5], ensure_ascii=False)}
+- Research frontier: {json.dumps(discovery_brief.get('research_frontier', [])[:3], ensure_ascii=False)}
+- Key hypothesis: {discovery_brief.get('key_hypothesis', '')}
+
+Weave these signals into your analysis. Highlight where YOUR section's findings support or challenge the key hypothesis."""
     if claim_block:
         already_cited_note = ""
         if used_claim_refs:
@@ -552,13 +580,24 @@ def _deduplicate_sections(parts: list[str]) -> list[str]:
     return out
 
 
-def _synthesize_conclusions_next_steps(thesis: dict, contradictions: list, question: str, project_id: str, epistemic_profile: str = "") -> tuple[str, str]:
-    """Conclusions (300–500 words) and Recommended Next Steps (200–400 words)."""
-    system = """You are a research analyst. Given thesis and contradictions, produce two sections.
+def _synthesize_conclusions_next_steps(
+    thesis: dict, contradictions: list, question: str, project_id: str,
+    epistemic_profile: str = "", research_mode: str = "standard", discovery_brief: dict | None = None,
+) -> tuple[str, str]:
+    """Conclusions (300–500 words) and Recommended Next Steps (200–400 words). Discovery mode: hypothesis generation."""
+    discovery_brief = discovery_brief or {}
+    if research_mode == "discovery":
+        system = """You are a research strategist. Given findings, patterns, and discovery signals, produce:
+1. "conclusions": 3-5 key hypotheses derived from the research. Each hypothesis must be labeled [ESTABLISHED], [EMERGING], or [SPECULATIVE]. Frame as testable propositions. Include at least one hypothesis based on non-obvious connections from the Discovery Map.
+2. "next_steps": Prioritized list of experiments, prototypes, or deeper investigations to validate the most promising hypotheses. Use [HIGH]/[MEDIUM] priority.
+Return JSON only: {"conclusions": "markdown", "next_steps": "markdown"}"""
+        user = f"QUESTION: {question}\nTHESIS: {thesis.get('current', '')}\nCONTRADICTIONS: {json.dumps(contradictions)[:1500]}\nDISCOVERY KEY HYPOTHESIS: {discovery_brief.get('key_hypothesis', '')}\n\nReturn only valid JSON."
+    else:
+        system = """You are a research analyst. Given thesis and contradictions, produce two sections.
 Return JSON: {"conclusions": "markdown text 300-500 words", "next_steps": "markdown text 200-400 words, prioritized list with [HIGH]/[MEDIUM]."}"""
-    user = f"QUESTION: {question}\nTHESIS: {thesis.get('current', '')} (confidence: {thesis.get('confidence', 0)})\nCONTRADICTIONS: {json.dumps(contradictions)[:2000]}\n\nReturn only valid JSON."
-    if epistemic_profile:
-        user += f"\nEPISTEMIC PROFILE: {epistemic_profile}. If TENTATIVE+UNVERIFIED > 60% of claims, frame conclusions as emerging patterns, not confirmed facts."
+        user = f"QUESTION: {question}\nTHESIS: {thesis.get('current', '')} (confidence: {thesis.get('confidence', 0)})\nCONTRADICTIONS: {json.dumps(contradictions)[:2000]}\n\nReturn only valid JSON."
+        if epistemic_profile:
+            user += f"\nEPISTEMIC PROFILE: {epistemic_profile}. If TENTATIVE+UNVERIFIED > 60% of claims, frame conclusions as emerging patterns, not confirmed facts."
     try:
         result = llm_call(_model(), system, user, project_id=project_id)
         text = (result.text or "").strip()
@@ -570,10 +609,15 @@ Return JSON: {"conclusions": "markdown text 300-500 words", "next_steps": "markd
         return thesis.get("current", ""), "1. [HIGH] Run additional verification.\n2. [MEDIUM] Expand source set."
 
 
-def _evidence_summary_line(claim_ledger: list[dict]) -> str:
-    """One-line evidence summary: X von Y verifiziert (Z authoritative), N unverifiziert. No LLM."""
+def _evidence_summary_line(claim_ledger: list[dict], research_mode: str = "standard") -> str:
+    """One-line evidence summary. Discovery mode: established/emerging/speculative counts."""
     if not claim_ledger:
         return "**Evidence summary:** 0 claims (no claim ledger)."
+    if research_mode == "discovery":
+        established = sum(1 for c in claim_ledger if (c.get("verification_tier") or "").strip().upper() == "ESTABLISHED")
+        emerging = sum(1 for c in claim_ledger if (c.get("verification_tier") or "").strip().upper() == "EMERGING")
+        speculative = len(claim_ledger) - established - emerging
+        return f"**Discovery profile:** {established} established, {emerging} emerging, {speculative} speculative insights."
     verified_only = 0
     authoritative = 0
     for c in claim_ledger:
@@ -800,6 +844,15 @@ def run_synthesis(project_id: str) -> str:
         raise FileNotFoundError(f"Project not found: {project_id}")
     project = load_project(proj_path)
     question = project.get("question", "")
+    research_mode = ((project.get("config") or {}).get("research_mode") or "standard").strip().lower()
+    discovery_brief: dict = {}
+    if research_mode == "discovery":
+        da_path = proj_path / "discovery_analysis.json"
+        if da_path.exists():
+            try:
+                discovery_brief = json.loads(da_path.read_text()).get("discovery_brief", {}) or {}
+            except Exception:
+                pass
     verify_dir = proj_path / "verify"
     findings = _load_findings(proj_path, question=question)
     sources = _load_sources(proj_path)
@@ -863,10 +916,27 @@ def run_synthesis(project_id: str) -> str:
 
     parts = []
     parts.append(f"# Research Report\n\n**Report as of: {report_date}**  \nProject: `{project_id}`  \nQuestion: {question}\n")
-    parts.append("\n" + _evidence_summary_line(claim_ledger) + "\n\n")
+    parts.append("\n" + _evidence_summary_line(claim_ledger, research_mode) + "\n\n")
     parts.append("## KEY NUMBERS\n\n")
     parts.append(_key_numbers(findings, claim_ledger, project_id))
     parts.append("\n\n---\n\n")
+    if research_mode == "discovery" and discovery_brief:
+        parts.append("## Discovery Map\n\n")
+        parts.append("### Novel Connections\n\n")
+        for nc in discovery_brief.get("novel_connections", [])[:5]:
+            parts.append(f"- {nc}\n")
+        parts.append("\n### Emerging Concepts\n\n")
+        for ec in discovery_brief.get("emerging_concepts", [])[:5]:
+            parts.append(f"- {ec}\n")
+        parts.append("\n### Research Frontier (where experts disagree)\n\n")
+        for rf in discovery_brief.get("research_frontier", [])[:5]:
+            parts.append(f"- {rf}\n")
+        parts.append("\n### Unexplored Opportunities\n\n")
+        for uo in discovery_brief.get("unexplored_opportunities", [])[:5]:
+            parts.append(f"- {uo}\n")
+        if discovery_brief.get("key_hypothesis"):
+            parts.append(f"\n### Key Hypothesis\n\n> {discovery_brief['key_hypothesis']}\n\n")
+        parts.append("\n---\n\n")
 
     epistemic_profile = _epistemic_profile_from_ledger(claim_ledger)
     checkpoint_bodies = list(ck["bodies"]) if (ck and ck.get("bodies")) else []
@@ -889,7 +959,7 @@ def run_synthesis(project_id: str) -> str:
             progress_step(project_id, f"Writing section {i+1}/{len(clusters)}: {title}", i+1, len(clusters))
         except Exception:
             pass
-        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger, previous_sections_summary=accumulated_summary, used_claim_refs=accumulated_claim_refs, epistemic_profile=epistemic_profile)
+        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger, previous_sections_summary=accumulated_summary, used_claim_refs=accumulated_claim_refs, epistemic_profile=epistemic_profile, research_mode=research_mode, discovery_brief=discovery_brief)
         body = _epistemic_reflect(body, claim_ledger, project_id)
         accumulated_summary.extend(_extract_section_key_points(body))
         accumulated_claim_refs.update(_extract_used_claim_refs(body))
@@ -921,7 +991,7 @@ def run_synthesis(project_id: str) -> str:
                                     if wr.get("text"):
                                         new_f = {"url": url, "title": wr.get("title", ""), "excerpt": (wr.get("text") or "")[:1500]}
                                         section_findings = section_findings + [new_f]
-                                        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger, previous_sections_summary=accumulated_summary, used_claim_refs=accumulated_claim_refs, epistemic_profile=epistemic_profile)
+                                        body = _synthesize_section(title, section_findings, ref_map, proj_path, question, project_id, rel_sources, claim_ledger, previous_sections_summary=accumulated_summary, used_claim_refs=accumulated_claim_refs, epistemic_profile=epistemic_profile, research_mode=research_mode, discovery_brief=discovery_brief)
                                 except Exception:
                                     pass
                 except Exception:
@@ -961,6 +1031,12 @@ def run_synthesis(project_id: str) -> str:
             status = "AUTHORITATIVE"
         elif tier == "VERIFIED" or c.get("is_verified"):
             status = "VERIFIED"
+        elif tier == "ESTABLISHED":
+            status = "ESTABLISHED"
+        elif tier == "EMERGING":
+            status = "EMERGING"
+        elif tier == "SPECULATIVE":
+            status = "SPECULATIVE"
         elif (c.get("falsification_status") or "").strip() == "PASS_TENTATIVE":
             status = "TENTATIVE"
         else:
@@ -1006,7 +1082,7 @@ def run_synthesis(project_id: str) -> str:
         parts.append("\n\n")
 
     # Conclusions & Next Steps
-    concl, next_steps = _synthesize_conclusions_next_steps(thesis, contradictions, question, project_id, epistemic_profile=epistemic_profile)
+    concl, next_steps = _synthesize_conclusions_next_steps(thesis, contradictions, question, project_id, epistemic_profile=epistemic_profile, research_mode=research_mode, discovery_brief=discovery_brief)
     parts.append("## Conclusions & Thesis\n\n")
     parts.append(concl)
     parts.append("\n\n## Recommended Next Steps\n\n")

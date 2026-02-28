@@ -99,6 +99,11 @@ export default async function ResearchProjectPage({
           </div>
           <div className="flex shrink-0 items-center gap-2 flex-wrap">
             <StatusBadge status={project.status} />
+            {project.config?.research_mode === "discovery" && (
+              <span className="rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider" style={{ background: "var(--tron-accent)", color: "var(--tron-bg)" }}>
+                Discovery Mode
+              </span>
+            )}
             {isActive && project.status !== "pending_review" && <StartCycleButton projectId={id} />}
             {project.status === "active" && <CancelRunButton projectId={id} />}
             {project.status === "done" && <CreateFollowupButton projectId={id} />}
@@ -239,6 +244,65 @@ export default async function ResearchProjectPage({
 
       {/* ── Memory Applied ────────────────────────────────────── */}
       <MemoryAppliedPanel project={project} />
+
+      {/* ── Discovery Insights (discovery mode only) ───────────── */}
+      {project.config?.research_mode === "discovery" && project.discovery_analysis?.discovery_brief && (
+        <div
+          className="rounded-lg px-5 py-4"
+          style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg-panel)" }}
+        >
+          <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--tron-accent)" }}>
+            Discovery Insights
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            {(project.discovery_analysis.discovery_brief.novel_connections?.length ?? 0) > 0 && (
+              <div>
+                <div className="mb-1 text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-muted)" }}>Novel connections</div>
+                <ul className="list-disc pl-4 text-sm space-y-0.5" style={{ color: "var(--tron-text)" }}>
+                  {project.discovery_analysis.discovery_brief.novel_connections!.slice(0, 5).map((nc, i) => (
+                    <li key={i}>{nc}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {(project.discovery_analysis.discovery_brief.emerging_concepts?.length ?? 0) > 0 && (
+              <div>
+                <div className="mb-1 text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-muted)" }}>Emerging concepts</div>
+                <ul className="list-disc pl-4 text-sm space-y-0.5" style={{ color: "var(--tron-text)" }}>
+                  {project.discovery_analysis.discovery_brief.emerging_concepts!.slice(0, 5).map((ec, i) => (
+                    <li key={i}>{ec}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {(project.discovery_analysis.discovery_brief.research_frontier?.length ?? 0) > 0 && (
+              <div>
+                <div className="mb-1 text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-muted)" }}>Research frontier</div>
+                <ul className="list-disc pl-4 text-sm space-y-0.5" style={{ color: "var(--tron-text)" }}>
+                  {project.discovery_analysis.discovery_brief.research_frontier!.slice(0, 5).map((rf, i) => (
+                    <li key={i}>{rf}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {(project.discovery_analysis.discovery_brief.unexplored_opportunities?.length ?? 0) > 0 && (
+              <div>
+                <div className="mb-1 text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-muted)" }}>Unexplored opportunities</div>
+                <ul className="list-disc pl-4 text-sm space-y-0.5" style={{ color: "var(--tron-text)" }}>
+                  {project.discovery_analysis.discovery_brief.unexplored_opportunities!.slice(0, 5).map((uo, i) => (
+                    <li key={i}>{uo}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+          {project.discovery_analysis.discovery_brief.key_hypothesis && (
+            <blockquote className="mt-4 pl-4 border-l-2 text-sm" style={{ borderColor: "var(--tron-accent)", color: "var(--tron-text-muted)" }}>
+              {project.discovery_analysis.discovery_brief.key_hypothesis}
+            </blockquote>
+          )}
+        </div>
+      )}
 
       {/* ── Activity Feed ─────────────────────────────────────── */}
       <ActivityFeed projectId={id} currentPhase={project.phase} isProjectActive={isActive} />

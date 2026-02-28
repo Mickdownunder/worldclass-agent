@@ -161,20 +161,32 @@ def _collect_reasons(metrics: dict, effective_findings_min: int, has_reliability
     return reasons
 
 
-def suggest_frontier_mode(question: str, domain: str = "") -> bool:
-    """Heuristic: True if question/domain suggests frontier (academic, bleeding-edge) research."""
+def suggest_research_mode(question: str, domain: str = "") -> str:
+    """Heuristic: 'discovery' | 'frontier' | 'standard' from question/domain."""
     q = (question or "").lower()
     d = (domain or "").lower()
+    discovery_keywords = (
+        "novel", "neue ideen", "zukunft", "future", "emerging", "discovery",
+        "hypothese", "was waere wenn", "potential", "exploratory", "trends",
+        "next generation", "paradigm", "vision", "roadmap",
+    )
     frontier_keywords = (
         "bleeding edge", "state of the art", "stand der technik", "frontier",
         "neueste forschung", "academic", "papers", "architekturen", "arxiv",
         "conference", "study", "mechanism", "methodology", "hypothesis",
     )
+    if any(k in q for k in discovery_keywords):
+        return "discovery"
     if any(k in q for k in frontier_keywords):
-        return True
+        return "frontier"
     if d in ("academic", "science", "ai_research", "research"):
-        return True
-    return False
+        return "frontier"
+    return "standard"
+
+
+def suggest_frontier_mode(question: str, domain: str = "") -> bool:
+    """Deprecated: use suggest_research_mode() instead. True if frontier or discovery."""
+    return suggest_research_mode(question, domain) in ("frontier", "discovery")
 
 
 def _decide_gate(metrics: dict) -> tuple[str, str | None]:
@@ -210,6 +222,19 @@ def _decide_gate_frontier(metrics: dict, has_reliability_data: bool = True) -> t
     if findings >= 8 and sources >= 5 and reliability_ok:
         return "pass", None
     if findings >= 5 and sources >= 3:
+        return "pending_review", None
+    return "fail", "failed_insufficient_evidence"
+
+
+def _decide_gate_discovery(metrics: dict) -> tuple[str, str | None]:
+    """Discovery mode: idea diversity > verification. Pass with enough findings + sources (no verified_claim_count check)."""
+    findings = metrics.get("findings_count", 0)
+    sources = metrics.get("unique_source_count", 0)
+    if findings >= 10 and sources >= 8:
+        return "pass", None
+    if findings >= 6 and sources >= 4:
+        return "pass", None
+    if findings >= 4:
         return "pending_review", None
     return "fail", "failed_insufficient_evidence"
 
@@ -264,10 +289,12 @@ def run_evidence_gate(project_id: str) -> dict:
     config = project.get("config") or {}
     if isinstance(config, dict):
         research_mode = (config.get("research_mode") or "standard").strip().lower()
-    if research_mode != "frontier":
+    if research_mode not in ("frontier", "discovery"):
         research_mode = "standard"
 
-    if research_mode == "frontier":
+    if research_mode == "discovery":
+        decision, fail_code = _decide_gate_discovery(metrics)
+    elif research_mode == "frontier":
         decision, fail_code = _decide_gate_frontier(metrics, has_reliability_data)
     else:
         decision, fail_code = _decide_gate(metrics)

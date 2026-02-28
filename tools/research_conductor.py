@@ -199,6 +199,15 @@ def decide_action(
     """LLM picks action from 4 options; on failure use deterministic fallback."""
     model = os.environ.get("RESEARCH_CONDUCTOR_MODEL", "gemini-2.5-flash")
     state_dict = asdict(state)
+    research_mode = "standard"
+    if project_id:
+        try:
+            proj = project_dir(project_id)
+            if proj.exists():
+                project = load_project(proj)
+                research_mode = ((project.get("config") or {}).get("research_mode") or "standard").strip().lower()
+        except Exception:
+            pass
     system = """You are a research conductor. You decide ONLY the next action for a research pipeline.
 State (bounded metrics only):
 - findings_count, source_count: evidence gathered
@@ -221,6 +230,14 @@ Allowed actions ONLY (reply with exactly one word):
 - synthesize: enough evidence and verification done, write report
 
 Reply with exactly one word: search_more, read_more, verify, or synthesize. No explanation."""
+    if research_mode == "discovery":
+        system += """
+
+DISCOVERY MODE: Prioritize BREADTH over DEPTH.
+- Prefer 'search_more' to find diverse perspectives over 'read_more' for confirmation.
+- Only 'verify' if findings_count >= 30 (verify late, explore early).
+- 'synthesize' when you have 8+ unique source domains and 20+ findings.
+Do NOT send back to verify if you already have diverse findings."""
 
     user_parts = [
         f"State: {json.dumps(state_dict)}",
@@ -309,6 +326,10 @@ def gate_check(project_id: str, proposed_next: str) -> str:
     if proposed_next == "done":
         return proposed_next
     state = read_state(project_id)
+    research_mode = ((project.get("config") or {}).get("research_mode") or "standard").strip().lower()
+    if research_mode == "discovery" and proposed_next == "synthesize":
+        if state.findings_count >= 15 and state.source_count >= 8:
+            return proposed_next
     if current_phase in ("explore", "focus", "connect") and state.coverage_score >= 0.8 and state.findings_count >= 30:
         return proposed_next
     if state.budget_spent_pct >= 0.8:

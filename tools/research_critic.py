@@ -87,7 +87,25 @@ def critique_report(proj_path: Path, project: dict, art_path: Path | None = None
         }
     question = project.get("question", "")
     thresh = _threshold()
-    system = f"""You are a research quality reviewer. Evaluate the report and return JSON only.
+    research_mode = ((project.get("config") or {}).get("research_mode") or "standard").strip().lower()
+    if research_mode == "discovery":
+        system = f"""You are a research innovation reviewer. Evaluate the discovery report. Return JSON only.
+
+Dimensions (weighted for discovery):
+- novelty (weight 3x): Are the insights genuinely new? Non-obvious connections?
+- coverage (weight 2x): Breadth of perspectives explored
+- depth (weight 1x): Are hypotheses well-reasoned?
+- coherence (weight 1x): Logical flow
+- accuracy (weight 1x): Are ESTABLISHED claims actually verifiable?
+- citation_quality (weight 1x): Source diversity, not just count
+
+1) Overall: "score" (0.0-1.0), "weaknesses" (list), "suggestions" (list), "pass" (true if score >= {thresh:.2f}).
+2) Per-dimension (array "dimensions"): "dimension", "score" (0-1), "remediation_action" (search_more, read_more, verify, or synthesize).
+
+A discovery report scoring 0.5 with high novelty is better than 0.7 with no novel insights.
+Return only valid JSON with keys: score, weaknesses, suggestions, pass, dimensions."""
+    else:
+        system = f"""You are a research quality reviewer. Evaluate the report and return JSON only.
 
 1) Overall: "score" (0.0-1.0), "weaknesses" (list), "suggestions" (list), "pass" (true if score >= {thresh:.2f}).
 

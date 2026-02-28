@@ -145,11 +145,22 @@ export interface ResearchProjectDetail extends ResearchProjectSummary {
   config?: {
     budget_limit?: number;
     max_sources?: number;
+    research_mode?: string;
   };
   phase_history?: string[];
   spend_breakdown?: Record<string, number>;
   prior_knowledge?: PriorKnowledgeInfo;
   memory_applied?: MemoryAppliedInfo;
+  /** Set when research_mode is discovery and discovery_analysis.json exists */
+  discovery_analysis?: {
+    discovery_brief?: {
+      novel_connections?: string[];
+      emerging_concepts?: string[];
+      research_frontier?: string[];
+      unexplored_opportunities?: string[];
+      key_hypothesis?: string;
+    };
+  };
 }
 
 export async function listResearchProjects(): Promise<ResearchProjectSummary[]> {
@@ -247,6 +258,20 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
     } catch {
       // ignore
     }
+    let discoveryAnalysis: ResearchProjectDetail["discovery_analysis"];
+    const config = typeof data.config === "object" && data.config !== null ? (data.config as Record<string, unknown>) : undefined;
+    if (config?.research_mode === "discovery") {
+      try {
+        const daPath = path.join(projPath, "discovery_analysis.json");
+        const daRaw = await readFile(daPath, "utf8");
+        const da = JSON.parse(daRaw) as { discovery_brief?: { novel_connections?: string[]; emerging_concepts?: string[]; research_frontier?: string[]; unexplored_opportunities?: string[]; key_hypothesis?: string } };
+        if (da?.discovery_brief) {
+          discoveryAnalysis = { discovery_brief: da.discovery_brief };
+        }
+      } catch {
+        // ignore
+      }
+    }
     return {
       id: typeof data.id === "string" ? data.id : projectId,
       question: typeof data.question === "string" ? data.question : "",
@@ -281,6 +306,7 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
           : undefined,
       prior_knowledge: priorKnowledge,
       memory_applied: memoryApplied,
+      discovery_analysis: discoveryAnalysis,
     };
   } catch {
     return null;
