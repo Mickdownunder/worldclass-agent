@@ -1513,6 +1513,7 @@ MANIFEST_UPDATE
 
     # Core 10 Phase 2: Trial & Error Experiment Loop
     if [ "${RESEARCH_ENABLE_EXPERIMENT_LOOP:-1}" = "1" ]; then
+      progress_start "experiment"
       progress_step "Running Trial & Error Sandbox Experiment"
       log "Starting: research_experiment"
       timeout 900 python3 "$TOOLS/research_experiment.py" "$PROJECT_ID" >> "$CYCLE_LOG" 2>&1 || true

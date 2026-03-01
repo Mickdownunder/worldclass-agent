@@ -20,8 +20,8 @@ export function GraphTab({ edges, loading }: { edges: any[] | null; loading: boo
   const graphData = useMemo(() => {
     if (!list.length) return { nodes: [], links: [] };
     
-    const nodes = new Map();
-    const links = [];
+    const nodes = new Map<string, { id: string; name: string; val: number; color: string; type: string }>();
+    const links: { source: string; target: string; color: string }[] = [];
     
     list.forEach(edge => {
       // Add Strategy Node

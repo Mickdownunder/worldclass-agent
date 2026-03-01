@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.research_common import research_root, load_secrets
 from tools.research_memory_policy import decide, reason
 from lib.memory import Memory
+from tools.research_budget import track_usage
 
 EMBEDDING_MODEL = "text-embedding-3-small"
 
@@ -109,6 +110,12 @@ def main():
                 try:
                     emb = get_embedding(content, client)
                     emb_json = json.dumps(emb) if emb else None
+                    if emb and project_id:
+                        try:
+                            # ~4 chars per token for embedding input
+                            track_usage(project_id, "text-embedding-3-small", max(1, len(content) // 4), 0)
+                        except Exception:
+                            pass
                 except Exception as e:
                     print(f"Embedding failed {finding_key}: {e}", file=sys.stderr)
                     emb_json = None

@@ -171,6 +171,13 @@ export interface ResearchProjectDetail extends ResearchProjectSummary {
   fact_check_summary?: { confirmed: number; disputed: number; unverifiable: number; total: number };
   /** Verify: claim ledger summary for UI */
   claim_ledger_summary?: { total: number; verified: number; authoritative: number; unverified: number; in_contradiction: number };
+  /** Autonomous Scientist: sandbox experiment result (when experiment.json exists) */
+  experiment_summary?: {
+    success: boolean;
+    iterations: number;
+    subagents_spawned: number;
+    has_history?: boolean;
+  };
 }
 
 export async function listResearchProjects(): Promise<ResearchProjectSummary[]> {
@@ -345,6 +352,21 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
     } catch {
       // ignore
     }
+    let experimentSummary: ResearchProjectDetail["experiment_summary"];
+    try {
+      const expRaw = await readFile(path.join(projPath, "experiment.json"), "utf8");
+      const exp = JSON.parse(expRaw) as { success?: boolean; iterations?: number; subagents_spawned?: number; history?: unknown[] };
+      if (exp && typeof exp === "object") {
+        experimentSummary = {
+          success: !!exp.success,
+          iterations: typeof exp.iterations === "number" ? exp.iterations : 0,
+          subagents_spawned: typeof exp.subagents_spawned === "number" ? exp.subagents_spawned : 0,
+          has_history: Array.isArray(exp.history) && exp.history.length > 0,
+        };
+      }
+    } catch {
+      // ignore
+    }
     return {
       id: typeof data.id === "string" ? data.id : projectId,
       question: typeof data.question === "string" ? data.question : "",
@@ -385,6 +407,7 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
       governor_lane: governorLane,
       fact_check_summary: factCheckSummary,
       claim_ledger_summary: claimLedgerSummary,
+      experiment_summary: experimentSummary,
     };
   } catch {
     return null;

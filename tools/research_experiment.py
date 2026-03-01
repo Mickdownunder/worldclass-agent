@@ -53,6 +53,23 @@ def spawn_subagent(parent_id: str, question: str) -> str:
     cmd_run = ["python3", str(_OPERATOR_ROOT / "bin" / "op"), "run", str(job_dir)]
     res_run = subprocess.run(cmd_run, capture_output=True, text=True, env=env)
     
+    # --- Roll up spend from subagent to parent ---
+    try:
+        from tools.research_common import project_dir, save_project
+        sub_data = load_project(job_dir)
+        sub_spend = sub_data.get("current_spend", 0.0)
+        if sub_spend > 0:
+            parent_dir = project_dir(parent_id)
+            parent_data = load_project(parent_dir)
+            parent_data["current_spend"] = round(parent_data.get("current_spend", 0.0) + sub_spend, 8)
+            parent_data.setdefault("spend_breakdown", {})
+            for k, v in sub_data.get("spend_breakdown", {}).items():
+                parent_data["spend_breakdown"][k] = round(parent_data["spend_breakdown"].get(k, 0.0) + v, 8)
+            save_project(parent_dir, parent_data)
+            print(f"[Sub-Agent] Rolled up ${sub_spend:.4f} spend to parent {parent_id}")
+    except Exception as e:
+        print(f"[Sub-Agent] Failed to roll up spend: {e}")
+        
     # 3. Read report
     report_path = job_dir / "artifacts" / "report.md"
     if report_path.exists():

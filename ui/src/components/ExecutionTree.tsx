@@ -8,6 +8,8 @@ interface ExecutionTreeProps {
     string,
     { started_at: string; completed_at: string; duration_s: number }
   >;
+  /** When set, show Experiment (sandbox) step after Synthesize */
+  experimentSummary?: { success: boolean; iterations: number; subagents_spawned: number } | null;
 }
 
 const PHASES = [
@@ -50,7 +52,15 @@ export function ExecutionTree({
   currentPhase,
   status,
   phaseTimings,
+  experimentSummary,
 }: ExecutionTreeProps) {
+  const showExperiment = experimentSummary != null;
+  const experimentPhaseStatus: PhaseStatus =
+    !showExperiment ? "pending"
+    : experimentSummary.success ? "done"
+    : currentPhase === "synthesize" ? "active"
+    : "failed";
+
   return (
     <div className="w-full overflow-x-auto pb-1">
       <div className="flex items-start gap-0 min-w-max">
@@ -126,14 +136,68 @@ export function ExecutionTree({
           );
         })}
 
+        {/* Experiment (Sandbox) — optional */}
+        {showExperiment && (
+          <>
+            <div className="flex items-center" style={{ marginTop: 15, width: 32 }}>
+              <div className={`h-px w-full ${experimentPhaseStatus === "done" ? "bg-emerald-500/40" : "bg-[var(--tron-border)]"}`} />
+              <svg width="6" height="8" className="shrink-0" fill={experimentPhaseStatus === "done" ? "rgba(34,197,94,0.5)" : "var(--tron-border)"}>
+                <polygon points="0,0 6,4 0,8" />
+              </svg>
+            </div>
+            <div className="flex flex-col items-center gap-1.5" style={{ minWidth: 80 }}>
+              <div
+                className={`flex h-8 w-8 items-center justify-center rounded-full border-2 text-[11px] font-bold transition-all ${phaseColors[experimentPhaseStatus].node}`}
+              >
+                {experimentPhaseStatus === "done" ? (
+                  experimentSummary.success ? (
+                    <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="2,6 5,9 10,3" />
+                    </svg>
+                  ) : (
+                    <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <line x1="3" y1="3" x2="9" y2="9" />
+                      <line x1="9" y1="3" x2="3" y2="9" />
+                    </svg>
+                  )
+                ) : experimentPhaseStatus === "active" ? (
+                  <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+                ) : (
+                  <span className="text-[9px] font-mono font-bold">6</span>
+                )}
+              </div>
+              <span className={`text-[11px] font-semibold ${phaseColors[experimentPhaseStatus].text}`}>
+                Experiment
+              </span>
+              <span className="text-[9px] font-mono leading-tight" style={{ color: "var(--tron-text-dim)" }}>
+                Sandbox / Sub-agents
+              </span>
+              {experimentSummary.iterations > 0 && (
+                <span className="text-[9px] font-mono" style={{ color: "var(--tron-text-dim)" }}>
+                  {experimentSummary.iterations} iter
+                  {experimentSummary.subagents_spawned > 0 ? ` · ${experimentSummary.subagents_spawned} sub` : ""}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center" style={{ marginTop: 15, width: 32 }}>
+              <div className={`h-px w-full ${status === "done" ? "bg-emerald-500/40" : "bg-[var(--tron-border)]"}`} />
+              <svg width="6" height="8" className="shrink-0" fill={status === "done" ? "rgba(34,197,94,0.5)" : "var(--tron-border)"}>
+                <polygon points="0,0 6,4 0,8" />
+              </svg>
+            </div>
+          </>
+        )}
+
         {/* Done terminal node */}
         <div className="flex items-start">
-          <div className="flex items-center" style={{ marginTop: 15, width: 32 }}>
-            <div className={`h-px w-full ${status === "done" ? "bg-emerald-500/40" : "bg-[var(--tron-border)]"}`} />
-            <svg width="6" height="8" className="shrink-0" fill={status === "done" ? "rgba(34,197,94,0.5)" : "var(--tron-border)"}>
-              <polygon points="0,0 6,4 0,8" />
-            </svg>
-          </div>
+          {!showExperiment && (
+            <div className="flex items-center" style={{ marginTop: 15, width: 32 }}>
+              <div className={`h-px w-full ${status === "done" ? "bg-emerald-500/40" : "bg-[var(--tron-border)]"}`} />
+              <svg width="6" height="8" className="shrink-0" fill={status === "done" ? "rgba(34,197,94,0.5)" : "var(--tron-border)"}>
+                <polygon points="0,0 6,4 0,8" />
+              </svg>
+            </div>
+          )}
           <div className="flex flex-col items-center gap-1.5" style={{ minWidth: 56 }}>
             <div className={`flex h-8 w-8 items-center justify-center rounded-full border-2 text-[11px] font-bold transition-all ${status === "done" ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-400" : "bg-[var(--tron-panel-hover)] border-[var(--tron-border)] text-[var(--tron-text-dim)]"}`}>
               {status === "done" ? (

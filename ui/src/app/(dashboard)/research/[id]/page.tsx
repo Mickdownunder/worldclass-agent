@@ -249,6 +249,7 @@ export default async function ResearchProjectPage({
           currentPhase={project.phase}
           status={project.status}
           phaseTimings={project.phase_timings}
+          experimentSummary={project.experiment_summary ?? null}
         />
       </div>
 
@@ -257,6 +258,55 @@ export default async function ResearchProjectPage({
 
       {/* ── Research Intelligence (Connect, Verify, Governor) ─── */}
       <ResearchIntelligencePanel project={project} />
+
+      {/* ── Autonomous Experiment (Sandbox / Sub-agents) ───────── */}
+      {project.experiment_summary && (
+        <div
+          className="rounded-lg px-5 py-4"
+          style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg-panel)" }}
+        >
+          <div className="mb-3 flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--tron-accent)" }}>
+              Autonomous Experiment
+            </span>
+            <span
+              className="rounded px-2 py-0.5 font-mono text-[10px] font-bold"
+              style={{
+                background: project.experiment_summary.success
+                  ? "color-mix(in srgb, var(--tron-success) 20%, transparent)"
+                  : "color-mix(in srgb, var(--tron-amber, #f59e0b) 20%, transparent)",
+                color: project.experiment_summary.success ? "var(--tron-success)" : "var(--tron-amber, #f59e0b)",
+                border: "1px solid var(--tron-border)",
+              }}
+            >
+              {project.experiment_summary.success ? "Sandbox OK" : "Sandbox ran (no success)"}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+            <div>
+              <div className="metric-label mb-1">Iterations</div>
+              <div className="font-mono font-semibold" style={{ color: "var(--tron-text)" }}>
+                {project.experiment_summary.iterations}
+              </div>
+              <p className="text-[10px] mt-0.5" style={{ color: "var(--tron-text-dim)" }}>
+                Code gen + sandbox runs
+              </p>
+            </div>
+            <div>
+              <div className="metric-label mb-1">Sub-agents spawned</div>
+              <div className="font-mono font-semibold" style={{ color: "var(--tron-text)" }}>
+                {project.experiment_summary.subagents_spawned}
+              </div>
+              <p className="text-[10px] mt-0.5" style={{ color: "var(--tron-text-dim)" }}>
+                Their cost is rolled into this project&apos;s budget
+              </p>
+            </div>
+          </div>
+          <p className="mt-3 text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
+            Trial &amp; Error runs after Synthesize: code is generated, executed in an isolated sandbox, and retried on errors. Sub-agent costs are included in the Budget above.
+          </p>
+        </div>
+      )}
 
       {/* ── Memory Applied ────────────────────────────────────── */}
       <MemoryAppliedPanel project={project} />

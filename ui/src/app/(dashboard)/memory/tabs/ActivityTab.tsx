@@ -50,6 +50,25 @@ export function ActivityTab({
           {consolidation.elapsed_sec && <span className="text-tron-dim text-xs ml-auto">Dauer: {consolidation.elapsed_sec.toFixed(1)}s</span>}
         </div>
       )}
+      {consolidation?.domains?.some((d: { auto_prompt_optimization?: unknown }) => d.auto_prompt_optimization) && (
+        <div className="tron-panel p-4 flex flex-col gap-2 text-sm" style={{ borderLeft: "4px solid var(--tron-accent)" }}>
+          <span className="font-bold text-tron-muted">Auto-Prompt-Optimierung (Task Set A)</span>
+          <ul className="list-none space-y-1">
+            {(consolidation.domains as Array<{ domain?: string; auto_prompt_optimization?: { winner?: string; score?: number; version_id?: string } }>)
+              .filter((d) => d.auto_prompt_optimization)
+              .map((d, i) => (
+                <li key={i} className="text-tron-text">
+                  <span className="font-mono text-tron-accent">{d.domain ?? "general"}</span>
+                  {" "}
+                  Score: <span className="font-mono">{typeof d.auto_prompt_optimization?.score === "number" ? d.auto_prompt_optimization.score.toFixed(2) : "—"}</span>
+                  {d.auto_prompt_optimization?.version_id && (
+                    <span className="text-tron-dim text-xs ml-2">({String(d.auto_prompt_optimization.version_id).slice(0, 8)}…)</span>
+                  )}
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="tron-panel p-6 flex flex-col">

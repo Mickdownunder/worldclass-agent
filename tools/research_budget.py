@@ -23,6 +23,8 @@ MODEL_COSTS: dict[str, tuple[float, float]] = {
     "gpt-4.1":                   (2.00 / 1_000_000,  8.00 / 1_000_000),
     "gpt-4o-mini":               (0.15 / 1_000_000,  0.60 / 1_000_000),
     "gpt-5.2":                   (1.75 / 1_000_000, 14.00 / 1_000_000),
+    "text-embedding-3-small":    (0.02 / 1_000_000,  0.0),
+    "embedding":                 (0.02 / 1_000_000,  0.0),  # alias (synthesis uses this key)
     # Gemini
     "gemini-3.1-pro-preview":    (2.00 / 1_000_000, 12.00 / 1_000_000),
     "gemini-3.1-pro":            (2.00 / 1_000_000, 12.00 / 1_000_000),

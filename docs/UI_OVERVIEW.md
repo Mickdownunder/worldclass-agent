@@ -85,6 +85,13 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 - Zusätzlich sichtbar: **Mode Badge** (`v2_applied | v2_fallback | v2_disabled`), Fallback-Grund und Confidence-Drivers (warum diese Strategy gewählt wurde).
 - Quelle: `research/proj-*/memory_strategy.json` (wird beim Planning geschrieben).
 
+**Autonomous Experiment (Sandbox / Sub-Agents):**
+
+- Wenn nach Synthesize der **Trial-&-Error-Experiment-Loop** lief (`RESEARCH_ENABLE_EXPERIMENT_LOOP=1`), existiert `research/proj-…/experiment.json`.
+- Die Detailseite zeigt dann ein Panel **„Autonomous Experiment“**: Status (Sandbox OK / Sandbox ran), **Iterations** (Code-Generierung + Sandbox-Läufe), **Sub-agents spawned** (Anzahl; deren Kosten sind im Projekt-Budget enthalten).
+- **Execution Pipeline:** Es erscheint ein zusätzlicher Schritt **„Experiment“** (Sandbox / Sub-agents) zwischen Synthesize und Done, mit Iterations- und Sub-Agent-Anzahl.
+- So siehst du, ob die KI in der Sandbox gearbeitet hat und ob mehrere Agenten gespawnt wurden.
+
 **Live Activity & Runtime-Status („Läuft es oder hängt es?“):**
 
 - Die UI pollt `GET /api/research/projects/[id]/progress`. Der Endpoint liefert einen **berechneten Laufzeit-Status** (nicht nur „Running/Idle“):
@@ -95,6 +102,7 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
   - **FAILED / DONE:** Projekt-Status fehlgeschlagen bzw. abgeschlossen.
 - Zusätzlich: **Phase**, **aktueller Step**, **letzte Aktivität**, **letzter Fehler** (Code + Meldung), **Ereignis-Timeline** (events.jsonl). So erkennst du zuverlässig, ob gearbeitet wird, ein Fehler-Loop läuft oder du (z. B. mit „Nächste Phase starten“ oder Abbrechen) reagieren solltest.
 - **Bei Conductor-Modus** (`RESEARCH_USE_CONDUCTOR=1`): Der aktuelle Step kann u. a. „Conductor: synthesizing report“, „Conductor: running verification“, „Conductor: reading more sources“, „Conductor: searching for more sources“ anzeigen (geschrieben von run_cycle über research_progress).
+- **Experiment-Phase:** Während des Trial-&-Error-Sandbox-Laufs ist die Phase **„experiment“** und der Step **„Running Trial & Error Sandbox Experiment“** – so siehst du, wann die KI in der Sandbox arbeitet.
 - **Conductor-Override (Hybrid-Gate):** Wenn der Conductor z. B. focus → explore zurückschickt, wird nach `advance_phase` sofort `progress_start(next_phase)` ausgeführt, damit `progress.json` (Phase + Heartbeat) zur neuen Phase passt. Die UI bleibt damit konsistent und „klebt“ nicht mehr auf der alten Phase/Step.
 
 **So verstehst du es:** Die Detailseite ist die **Steuerung und Anzeige** eines einzelnen Forschungsprojekts. Du siehst Phase und Fortschritt, startest manuell den nächsten Cycle, liest den Report und gibst Feedback. Die UI liest alles aus dem Dateisystem des Operators (`research/proj-…/`); die API-Routen sind dünne Wrapper darüber.
@@ -115,13 +123,15 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 | Brain-Status (läuft/hängt) | GET /api/health (op healthcheck) | `brain.cycle` / `brain.reflect`: Anzahl, max_elapsed_sec; **stuck** wenn Cycle >10 min oder Reflect >5 min. Zeile im Command Center + Infobox auf Brain & Memory. System gilt als unhealthy wenn stuck. |
 | Feedback zu Finding | POST /api/research/feedback | research_feedback.py (Frage/Redirect/Type) |
 
+**Kostenkontrolle:** Alle Research-Kosten (LLM, Embeddings, APIs, Sub-Agenten) sind pro Projekt getrackt und sichtbar (Budget-Zeile + Tooltip mit `spend_breakdown`). Details und Garantie: `docs/COST_CONTROL.md`.
+
 **Wichtig:** Beim normalen „Forschung starten“ wartet die UI auf Abschluss von research-init (für project_id), dann läuft der Cycle-until-done im Hintergrund. Einzelne „Nächste Phase starten“-Jobs laufen ebenfalls detached. Fortschritt siehst du durch erneutes Laden oder Refresh.
 
 ---
 
 ## 4. Rest der Nav (kurz)
 
-- **Memory & Graph** (`/memory`): Memory-Value-Karte, Stats (Ereignisse, Run-Episoden, Decisions, Reflections, Ø Qualität, Principles, Outcomes), Tabs: Activity (inkl. Konsolidierungs-Status), Runs (Run-Verlauf v2: was half/schadete, Strategy, Critic), Strategies (Profile & Policies), Principles, Sources, Brain (mit klickbarer Explainability), Utility (Top Memories), Graph (Strategy-Verknüpfungen), Plumber, Knowledge.
+- **Memory & Graph** (`/memory`): Memory-Value-Karte, Stats (Ereignisse, Run-Episoden, Decisions, Reflections, Ø Qualität, Principles, Outcomes), Tabs: Activity (inkl. Konsolidierungs-Status und **Auto-Prompt-Optimierung** pro Domain, sofern in consolidation_last.json vorhanden), Runs (Run-Verlauf v2: was half/schadete, Strategy, Critic), Strategies (Profile & Policies), Principles, Sources, Brain (mit klickbarer Explainability), Utility (Top Memories), Graph (Strategy-Verknüpfungen), Plumber, Knowledge.
 - **Audit Logs** (`/jobs`): Job-Liste, Detail, Retry.
 - **Agents** (`/agents`): Übersicht **wer läuft und was eingesetzt wird**: Zwei Agent-Karten (Captain = Operator/Brain/Workflows, June = OpenClaw/Telegram) mit Kurzbeschreibung und „Einsatz/Nutzt“-Liste; Workflows nach Kategorie (Research, Brain & Qualität, Factory & Opportunity, Tools, Infrastruktur, Produkt, Sonstige) mit Tabellen und Badge **„Von UI startbar“** für Workflows aus `ALLOWED_WORKFLOWS`. Kurzreferenz zu Research, Brain, Tool-Workflows. Details: `docs/TOOL_AGENT_SYSTEM_AUDIT.md`.
 - **Insights** (`/research/insights`): Cross-Domain-Insights (Findings über Projekte hinweg).

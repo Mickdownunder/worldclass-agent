@@ -60,7 +60,7 @@ def run_auto_prompt_optimization(domain: str, mem) -> dict | None:
     user_gen = f"Domain: {domain}\nRecent successful traits: {what_helped}\nReturn ONLY a JSON array of 3 strings."
     
     try:
-        variants_res = llm_call(mid_model, sys_gen, user_gen)
+        variants_res = llm_call(mid_model, sys_gen, user_gen, project_id=sys_proj_id)
         text = variants_res.text.strip()
         if text.startswith("```json"): text = text[7:]
         if text.endswith("```"): text = text[:-3]
@@ -97,11 +97,11 @@ def run_auto_prompt_optimization(domain: str, mem) -> dict | None:
             if not q: continue
             
             # Simulate a quick generation
-            sim_res = llm_call(mid_model, prompt, q)
+            sim_res = llm_call(mid_model, prompt, q, project_id=sys_proj_id)
             answer = sim_res.text
             
             # Evaluate
-            eval_res = llm_call(strong_model, eval_sys, f"Question: {q}\nAnswer:\n{answer}")
+            eval_res = llm_call(strong_model, eval_sys, f"Question: {q}\nAnswer:\n{answer}", project_id=sys_proj_id)
             try:
                 score = float(eval_res.text.strip())
             except:
