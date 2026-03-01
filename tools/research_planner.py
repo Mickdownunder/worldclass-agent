@@ -596,13 +596,24 @@ def _persist_strategy_context(project_id: str, strategy_ctx: dict[str, Any] | No
         pass
 
 
-def _load_prior_knowledge_and_questions(project_id: str) -> tuple[str, str]:
-    """Load optional prior_knowledge.json and questions/questions.json for planner context. Returns (prior_snippet, questions_snippet)."""
+def _load_prior_knowledge_and_questions(project_id: str) -> tuple[str, str, str]:
+    """Load optional prior_knowledge.json, questions.json, and get research_mode from project.json.
+    Returns (prior_snippet, questions_snippet, research_mode)."""
     prior_snippet = ""
     questions_snippet = ""
+    research_mode = "standard"
     if not project_id:
-        return prior_snippet, questions_snippet
+        return prior_snippet, questions_snippet, research_mode
     root = research_root() / project_id
+    
+    try:
+        p_path = root / "project.json"
+        if p_path.exists():
+            data = json.loads(p_path.read_text(encoding="utf-8", errors="replace"))
+            research_mode = data.get("config", {}).get("research_mode", "standard")
+    except Exception:
+        pass
+
     try:
         pk_path = root / "prior_knowledge.json"
         if pk_path.exists():
@@ -612,6 +623,9 @@ def _load_prior_knowledge_and_questions(project_id: str) -> tuple[str, str]:
             parts = []
             if principles:
                 parts.append("Principles: " + "; ".join((p.get("description") or "")[:200] for p in principles[:5]))
+            lateral = data.get("lateral_principles") or []
+            if lateral:
+                parts.append("Cross-Domain Inspiration (Lateral Thinking): " + "; ".join((p.get("description") or "")[:200] for p in lateral))
             if findings:
                 parts.append("Prior findings: " + "; ".join((f.get("preview") or "")[:150] for f in findings[:8]))
             if parts:
@@ -628,13 +642,52 @@ def _load_prior_knowledge_and_questions(project_id: str) -> tuple[str, str]:
                 questions_snippet = "\nSub-questions / uncertainty (consider in plan):\n" + "\n".join(q_lines)[:800]
     except Exception:
         pass
-    return prior_snippet, questions_snippet
+    return prior_snippet, questions_snippet, research_mode
+
+
+def _research_mode_for_project(project_id: str) -> str:
+    """Read config.research_mode from project.json; return 'standard' if missing."""
+    if not project_id:
+        return "standard"
+    p = research_root() / project_id / "project.json"
+    if not p.exists():
+        return "standard"
+    try:
+        data = json.loads(p.read_text())
+        mode = (data.get("config") or {}).get("research_mode") or "standard"
+        return str(mode).strip().lower()
+    except Exception:
+        return "standard"
 
 
 def build_plan(question: str, project_id: str) -> dict[str, Any]:
-    system = "You are a senior research strategist planning a comprehensive investigation."
-    prior_snippet, questions_snippet = _load_prior_knowledge_and_questions(project_id)
-    user = f"""
+    research_mode = _research_mode_for_project(project_id)
+    prior_snippet, questions_snippet, _ = _load_prior_knowledge_and_questions(project_id)
+
+    if research_mode == "discovery":
+        system = """You are a research strategist for DISCOVERY mode: breadth over depth, novel connections, hypothesis generation.
+Goal: Maximize diversity of sources, perspectives, and adjacent fields. We are NOT trying to verify one answer — we are exploring what is unknown, where evidence is missing, and what competing hypotheses exist."""
+        user = f"""
+QUESTION: {question}{prior_snippet}{questions_snippet}
+
+Create a DISCOVERY research plan (broad, hypothesis-seeking). Return JSON with keys:
+1) topics: [{{id,name,priority,description,source_types,min_sources}}] — include adjacent fields and "where evidence is missing"
+2) entities: [specific systems, papers, people, approaches]
+3) perspectives: [5-8 diverse perspectives, e.g. clinical researcher, skeptic, industry, policy, adjacent domain]
+4) queries: [{{query,topic_id,type,perspective}}]
+   - 20-40 queries (more than standard)
+   - English
+   - max 12 words each
+   - Include: competing hypotheses, emerging approaches, gaps, "what we don't know", adjacent fields
+   - type: "web" | "academic" | "medical" — use "academic"/"medical" for papers and trials where relevant
+   - Every entity and topic from multiple angles (supporting, critical, alternative)
+5) complexity: prefer "moderate" or "complex" for discovery
+6) estimated_sources_needed: integer (e.g. 30-60 for breadth)
+
+Return ONLY JSON."""
+    else:
+        system = "You are a senior research strategist planning a comprehensive investigation."
+        user = f"""
 QUESTION: {question}{prior_snippet}{questions_snippet}
 
 Create a research plan. Return JSON with keys:
@@ -656,10 +709,11 @@ Create a research plan. Return JSON with keys:
 
 Return ONLY JSON.
 """.strip()
+
     try:
         resp = llm_call(PLANNER_MODEL, system, user, project_id=project_id)
         base = _sanitize_plan(_json_only(resp.text), question)
-        print(f"PLANNER: LLM plan generated ({len(base.get('queries', []))} queries, {len(base.get('topics', []))} topics)", file=sys.stderr)
+        print(f"PLANNER: LLM plan generated ({len(base.get('queries', []))} queries, {len(base.get('topics', []))} topics){' [discovery]' if research_mode == 'discovery' else ''}", file=sys.stderr)
     except Exception as exc:
         print(f"PLANNER: LLM call failed ({type(exc).__name__}: {exc}), using fallback", file=sys.stderr)
         base = _fallback_plan(question)
@@ -821,10 +875,27 @@ def build_perspective_rotate_queries(thin_topics_arg: str, project_id: str) -> d
 def main() -> None:
     if len(sys.argv) < 2:
         print(
-            "Usage: research_planner.py <question> [project_id] | --gap-fill <coverage_json> <project_id> | --refinement-queries <coverage_json> <project_id> | --perspective-rotate <thin_topics_json_or_csv> <project_id>",
+            "Usage: research_planner.py <question> [project_id] | --fallback-only <question> [project_id] | --gap-fill <coverage_json> <project_id> | ...",
             file=sys.stderr,
         )
         sys.exit(2)
+
+    if sys.argv[1] == "--fallback-only":
+        if len(sys.argv) < 3:
+            print("Usage: research_planner.py --fallback-only <question> [project_id]", file=sys.stderr)
+            sys.exit(2)
+        question = sys.argv[2]
+        project_id = sys.argv[3] if len(sys.argv) > 3 else ""
+        plan = _fallback_plan(question)
+        # Optional: apply strategy overlay if Memory available (same shape as build_plan output)
+        try:
+            strategy_ctx = _load_strategy_context(question, project_id)
+            plan = _apply_strategy_to_plan(plan, strategy_ctx)
+            _persist_strategy_context(project_id, strategy_ctx)
+        except Exception:
+            pass
+        print(json.dumps(plan, indent=2, ensure_ascii=False))
+        return
 
     if sys.argv[1] == "--gap-fill":
         if len(sys.argv) < 4:

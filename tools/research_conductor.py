@@ -40,6 +40,7 @@ from tools.research_coverage import _load_json, _iter_findings, _iter_source_met
 # Bounded state: 6 metrics only (no raw findings)
 CONDUCTOR_ACTIONS = ["search_more", "read_more", "verify", "synthesize"]
 MAX_STEPS = 25
+MAX_CONSECUTIVE_TOOL_FAILURES = 3
 
 
 @dataclass
@@ -81,9 +82,9 @@ def read_state(project_id: str) -> ConductorState:
     if sources_dir.exists():
         source_count = len([f for f in sources_dir.glob("*.json") if not f.name.endswith("_content.json")])
 
-    # coverage_score 0-1 from latest coverage or coverage tool
+    # coverage_score 0-1 from latest coverage or coverage tool (conductor-written first when in run_cycle)
     coverage_score = 0.0
-    for name in ["coverage_round3.json", "coverage_round2.json", "coverage_round1.json"]:
+    for name in ["coverage_conductor.json", "coverage_round3.json", "coverage_round2.json", "coverage_round1.json"]:
         p = proj / name
         if p.exists():
             try:
@@ -327,8 +328,11 @@ def gate_check(project_id: str, proposed_next: str) -> str:
         return proposed_next
     state = read_state(project_id)
     research_mode = ((project.get("config") or {}).get("research_mode") or "standard").strip().lower()
+    # Discovery: only allow synthesize when enough breadth (configurable)
     if research_mode == "discovery" and proposed_next == "synthesize":
-        if state.findings_count >= 15 and state.source_count >= 8:
+        min_findings = max(1, int(os.environ.get("RESEARCH_DISCOVERY_SYNTHESIZE_MIN_FINDINGS", "15")))
+        min_sources = max(1, int(os.environ.get("RESEARCH_DISCOVERY_SYNTHESIZE_MIN_SOURCES", "8")))
+        if state.findings_count >= min_findings and state.source_count >= min_sources:
             return proposed_next
     # Strong satisfaction: avoid endless explore/focus loops
     if current_phase in ("explore", "focus", "connect") and state.coverage_score >= 0.8 and state.findings_count >= 30:
@@ -453,7 +457,8 @@ def run_shadow(project_id: str, phase: str, artifacts_dir: Path | None = None) -
 
 
 def _run_tool(project_id: str, tool: str, *args: str, cwd: Path | None = None, capture_stdout: bool = False):
-    """Run a research tool via subprocess. Returns True if exit 0, or (True, stdout_text) if capture_stdout."""
+    """Run a research tool via subprocess. Returns True if exit 0, or (True, stdout_text) if capture_stdout.
+    On non-zero exit, appends an entry to conductor_tool_errors.log in the project dir."""
     root = Path(__file__).resolve().parent.parent
     tool_path = root / "tools" / tool
     cmd = [sys.executable, str(tool_path)] + list(args)
@@ -462,10 +467,39 @@ def _run_tool(project_id: str, tool: str, *args: str, cwd: Path | None = None, c
     env["RESEARCH_PROJECT_ID"] = project_id
     try:
         r = subprocess.run(cmd, cwd=cwd or str(root), env=env, timeout=600, capture_output=True, text=True)
+        if r.returncode != 0:
+            try:
+                proj = project_dir(project_id)
+                log_path = proj / "conductor_tool_errors.log"
+                err_snippet = (r.stderr or r.stdout or "")[:500].replace("\n", " ")
+                entry = {
+                    "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "tool": tool,
+                    "args": list(args)[:10],
+                    "returncode": r.returncode,
+                    "stderr_snippet": err_snippet,
+                }
+                with open(log_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
         if capture_stdout:
             return r.returncode == 0, (r.stdout or "")
         return r.returncode == 0
-    except Exception:
+    except Exception as e:
+        try:
+            proj = project_dir(project_id)
+            log_path = proj / "conductor_tool_errors.log"
+            entry = {
+                "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "tool": tool,
+                "args": list(args)[:10],
+                "error": str(e)[:300],
+            }
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
         return (False, "") if capture_stdout else False
 
 
@@ -474,6 +508,7 @@ def run_cycle(project_id: str) -> bool:
     Phase C: Conductor as master. Loop until synthesize complete or max steps.
     Executes actions via existing Python tools; context manager + supervisor after steps.
     Returns True if cycle completed (synthesize done or done phase).
+    Stops after MAX_CONSECUTIVE_TOOL_FAILURES consecutive tool failures and sets status.
     """
     root = Path(__file__).resolve().parent.parent
     proj = project_dir(project_id)
@@ -481,6 +516,29 @@ def run_cycle(project_id: str) -> bool:
         return False
     project = load_project(proj)
     question = (project.get("question") or "")[:2000]
+    consecutive_failures: list[int] = [0]
+
+    def run_tool(tool: str, *args: str, capture_stdout: bool = False) -> Any:
+        out = _run_tool(project_id, tool, *args, capture_stdout=capture_stdout)
+        ok = out[0] if isinstance(out, tuple) else out
+        if ok:
+            consecutive_failures[0] = 0
+        else:
+            consecutive_failures[0] += 1
+        return out
+
+    def check_abort() -> bool:
+        if consecutive_failures[0] >= MAX_CONSECUTIVE_TOOL_FAILURES:
+            try:
+                project = load_project(proj)
+                project["status"] = "failed_conductor_tool_errors"
+                project["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                (proj / "project.json").write_text(json.dumps(project, indent=2) + "\n")
+            except Exception:
+                pass
+            return True
+        return False
+
     for step in range(MAX_STEPS):
         state = read_state(project_id)
         project = load_project(proj)
@@ -500,12 +558,18 @@ def run_cycle(project_id: str) -> bool:
         write_conductor_step_count(project_id, state.steps_taken + 1)
 
         if action == "synthesize":
-            ok_syn, out_syn = _run_tool(project_id, "research_synthesize.py", project_id, capture_stdout=True)
+            try:
+                from tools.research_progress import step as progress_step
+                progress_step(project_id, "Conductor: synthesizing report")
+            except Exception:
+                pass
+            ok_syn, out_syn = run_tool("research_synthesize.py", project_id, capture_stdout=True)
             if ok_syn and out_syn.strip():
                 from datetime import datetime, timezone
                 ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
                 (proj / "reports").mkdir(parents=True, exist_ok=True)
                 (proj / "reports" / f"report_{ts}.md").write_text(out_syn, encoding="utf-8")
+                run_tool("research_synthesize_postprocess.py", project_id)
             try:
                 from tools.research_critic import critique_report
                 project = load_project(proj)
@@ -516,11 +580,18 @@ def run_cycle(project_id: str) -> bool:
             return True
 
         if action == "verify":
-            _run_tool(project_id, "research_verify.py", project_id, "source_reliability")
-            _run_tool(project_id, "research_verify.py", project_id, "claim_verification")
-            _run_tool(project_id, "research_verify.py", project_id, "fact_check")
-            _run_tool(project_id, "research_verify.py", project_id, "claim_ledger")
-            gate_ok, gate_out = _run_tool(project_id, "research_quality_gate.py", project_id, capture_stdout=True)
+            try:
+                from tools.research_progress import step as progress_step
+                progress_step(project_id, "Conductor: running verification")
+            except Exception:
+                pass
+            run_tool("research_verify.py", project_id, "source_reliability")
+            run_tool("research_verify.py", project_id, "claim_verification")
+            run_tool("research_verify.py", project_id, "fact_check")
+            run_tool("research_verify.py", project_id, "claim_ledger")
+            gate_ok, gate_out = run_tool("research_quality_gate.py", project_id, capture_stdout=True)
+            if check_abort():
+                return False
             if gate_ok and gate_out.strip():
                 try:
                     gate = json.loads(gate_out)
@@ -531,9 +602,16 @@ def run_cycle(project_id: str) -> bool:
                         advance_phase(proj, "synthesize")
                 except Exception:
                     pass
+            if check_abort():
+                return False
             continue
 
         if action == "read_more":
+            try:
+                from tools.research_progress import step as progress_step
+                progress_step(project_id, "Conductor: reading more sources")
+            except Exception:
+                pass
             # Build list of unread source paths
             sources_dir = proj / "sources"
             read_list = []
@@ -546,8 +624,8 @@ def run_cycle(project_id: str) -> bool:
             if read_list:
                 order_file = proj / "conductor_read_order.txt"
                 order_file.write_text("\n".join(read_list[:15]))
-                _run_tool(project_id, "research_parallel_reader.py", project_id, "explore", "--input-file", str(order_file), "--read-limit", "10", "--workers", "8")
-            _run_tool(project_id, "research_deep_extract.py")
+                run_tool("research_parallel_reader.py", project_id, "explore", "--input-file", str(order_file), "--read-limit", "10", "--workers", "8")
+            run_tool("research_deep_extract.py", project_id)
             try:
                 add_compressed_batch(project_id)
                 from tools.research_dynamic_outline import merge_evidence_into_outline
@@ -556,15 +634,28 @@ def run_cycle(project_id: str) -> bool:
                 run_supervisor(project_id)
             except Exception:
                 pass
+            ok_cov, out_cov = _run_tool(project_id, "research_coverage.py", project_id, capture_stdout=True)
+            if ok_cov and out_cov and out_cov.strip():
+                try:
+                    (proj / "coverage_conductor.json").write_text(out_cov, encoding="utf-8")
+                except Exception:
+                    pass
+            if check_abort():
+                return False
             continue
 
         if action == "search_more":
+            try:
+                from tools.research_progress import step as progress_step
+                progress_step(project_id, "Conductor: searching for more sources")
+            except Exception:
+                pass
             plan_path = proj / "research_plan.json"
             if not plan_path.exists():
-                _run_tool(project_id, "research_planner.py", question, project_id)
+                run_tool("research_planner.py", question, project_id)
             plan_path = proj / "research_plan.json"
             if plan_path.exists():
-                ok, out = _run_tool(project_id, "research_web_search.py", "--queries-file", str(plan_path), "--max-per-query", "5", capture_stdout=True)
+                ok, out = run_tool("research_web_search.py", "--queries-file", str(plan_path), "--max-per-query", "5", capture_stdout=True)
                 if ok and out.strip():
                     try:
                         import hashlib
@@ -578,6 +669,14 @@ def run_cycle(project_id: str) -> bool:
                                     (proj / "sources" / f"{fid}.json").write_text(json.dumps({**item, "confidence": 0.5}))
                     except Exception:
                         pass
+            ok_cov, out_cov = _run_tool(project_id, "research_coverage.py", project_id, capture_stdout=True)
+            if ok_cov and out_cov and out_cov.strip():
+                try:
+                    (proj / "coverage_conductor.json").write_text(out_cov, encoding="utf-8")
+                except Exception:
+                    pass
+            if check_abort():
+                return False
             continue
     return False
 
@@ -592,6 +691,12 @@ def advance_phase(proj: Path, next_phase: str) -> None:
 
 
 def main() -> None:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    try:
+        from tools.research_tool_registry import ensure_tool_context
+        ensure_tool_context("research_conductor.py")
+    except ImportError:
+        pass
     if len(sys.argv) < 3:
         print(
             "Usage: research_conductor.py <shadow|run|run_cycle|gate> <project_id> [phase|proposed_next] [artifacts_dir]",

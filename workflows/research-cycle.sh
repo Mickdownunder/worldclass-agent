@@ -41,7 +41,7 @@ export RESEARCH_HYPOTHESIS_MODEL="${RESEARCH_HYPOTHESIS_MODEL:-gemini-3.1-pro-pr
 export RESEARCH_ENABLE_KNOWLEDGE_SEED="${RESEARCH_ENABLE_KNOWLEDGE_SEED:-1}"
 export RESEARCH_ENABLE_QUESTION_GRAPH="${RESEARCH_ENABLE_QUESTION_GRAPH:-1}"
 export RESEARCH_ENABLE_ACADEMIC="${RESEARCH_ENABLE_ACADEMIC:-1}"
-export RESEARCH_ENABLE_TOKEN_GOVERNOR="${RESEARCH_ENABLE_TOKEN_GOVERNOR:-0}"
+export RESEARCH_ENABLE_TOKEN_GOVERNOR="${RESEARCH_ENABLE_TOKEN_GOVERNOR:-1}"
 export RESEARCH_ENABLE_RELEVANCE_GATE="${RESEARCH_ENABLE_RELEVANCE_GATE:-0}"
 export RESEARCH_ENABLE_CONTEXT_MANAGER="${RESEARCH_ENABLE_CONTEXT_MANAGER:-1}"
 export RESEARCH_ENABLE_DYNAMIC_OUTLINE="${RESEARCH_ENABLE_DYNAMIC_OUTLINE:-0}"
@@ -259,14 +259,25 @@ advance_phase() {
   # Conductor hybrid gate: ask conductor if we should really advance (unless gate disabled or conductor is master)
   if [ -f "$TOOLS/research_conductor.py" ] && [ "${RESEARCH_CONDUCTOR_GATE:-1}" != "0" ] && [ "${RESEARCH_USE_CONDUCTOR:-0}" != "1" ]; then
     local conductor_next
-    conductor_next=$(python3 "$TOOLS/research_conductor.py" gate "$PROJECT_ID" "$next_phase" 2>>/dev/null) || true
-    if [ -n "$conductor_next" ] && [ "$conductor_next" != "$next_phase" ]; then
+    conductor_next=$(python3 "$TOOLS/research_conductor.py" gate "$PROJECT_ID" "$next_phase" 2>> "$CYCLE_LOG") || true
+    conductor_next="${conductor_next:-}"
+    if [ -z "${conductor_next// }" ]; then
+      log "Conductor gate returned empty — not advancing; keeping current phase"
+      next_phase=$(python3 -c "import json; print(json.load(open('$PROJ_DIR/project.json')).get('phase','explore'), end='')" 2>> "$CYCLE_LOG") || next_phase="$1"
+    elif [ "$conductor_next" != "$next_phase" ]; then
       log "Conductor override: $next_phase -> $conductor_next (re-running phase)"
       next_phase="$conductor_next"
       progress_step "Conductor: weitere ${next_phase}-Runde"
+      export RESEARCH_ADVANCE_SKIP_LOOP_LIMIT=1
     fi
   fi
   python3 "$TOOLS/research_advance_phase.py" "$PROJ_DIR" "$next_phase"
+  # After conductor override: align progress.json with new phase so UI does not show stale phase/step
+  if [ "$next_phase" != "$1" ]; then
+    progress_start "$next_phase"
+    log "advance_phase: progress updated to phase=$next_phase for UI"
+  fi
+  unset -v RESEARCH_ADVANCE_SKIP_LOOP_LIMIT 2>/dev/null || true
   log "advance_phase: set phase=$next_phase"
 }
 
@@ -392,15 +403,6 @@ with Memory() as mem:
         strategy_profile_id=strategy_profile_id,
         confidence=0.8,
     )
-    if strategy_profile_id:
-        mem.record_graph_edge(
-            edge_type="used_in",
-            from_node_type="strategy_profile",
-            from_node_id=strategy_profile_id,
-            to_node_type="run_episode",
-            to_node_id=episode_id,
-            project_id=project_id,
-        )
     question = str(project.get("question") or "")
     read_urls_list = []
     for sf in (proj_dir / "sources").glob("*.json"):
@@ -427,6 +429,11 @@ if [ "${RESEARCH_USE_CONDUCTOR:-0}" = "1" ] && [ -f "$TOOLS/research_conductor.p
     exit 0
   fi
   log "Conductor run_cycle failed or incomplete — falling back to bash pipeline."
+  CURR_STATUS=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('status',''), end='')" 2>> "$CYCLE_LOG") || true
+  if [ "$CURR_STATUS" = "failed_conductor_tool_errors" ]; then
+    persist_v2_episode "failed"
+    exit 0
+  fi
 fi
 
 # Shadow conductor: log what conductor would decide at this phase (no execution control)
@@ -440,7 +447,7 @@ case "$PHASE" in
     progress_start "explore"
 
     # Core 10: token governor lane for this phase (tools may read RESEARCH_GOVERNOR_LANE or governor_lane.json)
-    if [ "${RESEARCH_ENABLE_TOKEN_GOVERNOR:-0}" = "1" ]; then
+    if [ "${RESEARCH_ENABLE_TOKEN_GOVERNOR:-1}" = "1" ]; then
       GOVERNOR_LANE=$(python3 -c "import sys; sys.path.insert(0,'$OPERATOR_ROOT'); from tools.research_token_governor import recommend_lane; print(recommend_lane('$PROJECT_ID'))" 2>/dev/null || echo "mid")
       export RESEARCH_GOVERNOR_LANE="${GOVERNOR_LANE:-mid}"
       echo "\"$GOVERNOR_LANE\"" > "$PROJ_DIR/governor_lane.json" 2>/dev/null || true
@@ -458,8 +465,12 @@ case "$PHASE" in
     log "Starting: research_planner"
     timeout 300 python3 "$TOOLS/research_planner.py" "$QUESTION" "$PROJECT_ID" > "$ART/research_plan.json" 2>> "$CYCLE_LOG" || true
     if [ ! -s "$ART/research_plan.json" ]; then
+      log "Planner failed or timed out — using full fallback plan (question-derived queries)"
+      python3 "$TOOLS/research_planner.py" --fallback-only "$QUESTION" "$PROJECT_ID" > "$ART/research_plan.json" 2>> "$CYCLE_LOG" || true
+    fi
+    if [ ! -s "$ART/research_plan.json" ]; then
       echo '{"queries":[],"topics":[],"complexity":"moderate"}' > "$ART/research_plan.json"
-      log "Planner failed or timed out — using minimal plan"
+      log "Fallback plan failed — using empty plan (no queries)"
     fi
     log "Done: research_planner"
     cp "$ART/research_plan.json" "$PROJ_DIR/research_plan.json"
@@ -609,10 +620,15 @@ order_file.write_text("\n".join(filtered))
 FILTER_READ_URLS
 
     log "Starting: parallel_reader explore (limit=$READ_LIMIT workers=8)"
-    READ_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/read_order_round1.txt" --read-limit "$READ_LIMIT" --workers 8 2>> "$CYCLE_LOG" | tail -1)
     read_attempts=0
     read_successes=0
-    [ -n "$READ_STATS" ] && read -r read_attempts read_successes <<< "$(echo "$READ_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null)" 2>/dev/null || true
+    READ_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/read_order_round1.txt" --read-limit "$READ_LIMIT" --workers 8 2>> "$CYCLE_LOG" | tail -1)
+    if [ -n "$READ_STATS" ]; then
+      _add=$(echo "$READ_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null) || true
+      read -r _a _s <<< "${_add:-0 0}"
+      read_attempts=$((read_attempts + _a))
+      read_successes=$((read_successes + _s))
+    fi
     log "Done: parallel_reader explore (attempts=$read_attempts successes=$read_successes)"
     SATURATION_DETECTED=0
     python3 "$TOOLS/research_saturation_check.py" "$PROJ_DIR" 2>> "$CYCLE_LOG" || SATURATION_DETECTED=1
@@ -654,7 +670,13 @@ Path('$ART/refinement_urls_to_read.txt').write_text('\n'.join(urls[:10]))
 "
       if [ -s "$ART/refinement_urls_to_read.txt" ]; then
         progress_step "Reading refinement sources"
-        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/refinement_urls_to_read.txt" --read-limit 10 --workers 8 2>> "$CYCLE_LOG" | tail -1 > /dev/null || true
+        REF_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/refinement_urls_to_read.txt" --read-limit 10 --workers 8 2>> "$CYCLE_LOG" | tail -1)
+        if [ -n "$REF_STATS" ]; then
+          _add=$(echo "$REF_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null) || true
+          read -r _a _s <<< "${_add:-0 0}"
+          read_attempts=$((read_attempts + _a))
+          read_successes=$((read_successes + _s))
+        fi
       fi
     fi
 
@@ -687,7 +709,13 @@ Path('$ART/gap_urls_to_read.txt').write_text('\n'.join(urls[:10]))
 "
       if [ -s "$ART/gap_urls_to_read.txt" ] && [ "$SATURATION_DETECTED" != "1" ]; then
         progress_step "Reading gap-fill sources"
-        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/gap_urls_to_read.txt" --read-limit 10 --workers 8 2>> "$CYCLE_LOG" | tail -1 > /dev/null || true
+        GAP_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/gap_urls_to_read.txt" --read-limit 10 --workers 8 2>> "$CYCLE_LOG" | tail -1)
+        if [ -n "$GAP_STATS" ]; then
+          _add=$(echo "$GAP_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null) || true
+          read -r _a _s <<< "${_add:-0 0}"
+          read_attempts=$((read_attempts + _a))
+          read_successes=$((read_successes + _s))
+        fi
       fi
       python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round2.json"
       cp "$ART/coverage_round2.json" "$PROJ_DIR/coverage_round2.json"
@@ -724,7 +752,13 @@ Path('$ART/depth_urls_to_read.txt').write_text('\n'.join(urls[:8]))
 "
         if [ -s "$ART/depth_urls_to_read.txt" ] && [ "$SATURATION_DETECTED" != "1" ]; then
           progress_step "Reading depth sources"
-          python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/depth_urls_to_read.txt" --read-limit 8 --workers 8 2>> "$CYCLE_LOG" | tail -1 > /dev/null || true
+          DEPTH_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/depth_urls_to_read.txt" --read-limit 8 --workers 8 2>> "$CYCLE_LOG" | tail -1)
+          if [ -n "$DEPTH_STATS" ]; then
+            _add=$(echo "$DEPTH_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null) || true
+            read -r _a _s <<< "${_add:-0 0}"
+            read_attempts=$((read_attempts + _a))
+            read_successes=$((read_successes + _s))
+          fi
         fi
         python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round3.json"
         cp "$ART/coverage_round3.json" "$PROJ_DIR/coverage_round3.json"
@@ -766,7 +800,7 @@ p.write_text(json.dumps({
   focus)
     log "Phase: FOCUS — targeted deep-dive from coverage gaps"
     progress_start "focus"
-    if [ "${RESEARCH_ENABLE_TOKEN_GOVERNOR:-0}" = "1" ]; then
+    if [ "${RESEARCH_ENABLE_TOKEN_GOVERNOR:-1}" = "1" ]; then
       GOVERNOR_LANE=$(python3 -c "import sys; sys.path.insert(0,'$OPERATOR_ROOT'); from tools.research_token_governor import recommend_lane; print(recommend_lane('$PROJECT_ID'))" 2>/dev/null || echo "mid")
       export RESEARCH_GOVERNOR_LANE="${GOVERNOR_LANE:-mid}"
       echo "\"$GOVERNOR_LANE\"" > "$PROJ_DIR/governor_lane.json" 2>/dev/null || true
@@ -781,9 +815,46 @@ p.write_text(json.dumps({
     [ -f "$COV_FILE" ] || COV_FILE="$ART/coverage_round1.json"
     if [ ! -f "$COV_FILE" ]; then
       log "No coverage file found (explore may have run in another job) — using empty focus queries"
+      progress_step "No coverage file — continuing with existing sources only"
       echo '{"queries":[]}' > "$ART/focus_queries.json"
     else
       python3 "$TOOLS/research_planner.py" --gap-fill "$COV_FILE" "$PROJECT_ID" > "$ART/focus_queries.json"
+    fi
+    # Merge verify/deepening_queries (from Verify loop-back) with gap-fill; deepening first, dedupe by query text
+    if [ -f "$PROJ_DIR/verify/deepening_queries.json" ]; then
+      python3 - "$PROJ_DIR" "$ART" <<'FOCUS_MERGE'
+import json, sys
+from pathlib import Path
+def norm(q):
+    if isinstance(q, str):
+        return (q or "").strip()[:200], "deepening", "web", ""
+    if isinstance(q, dict):
+        return (q.get("query") or "").strip()[:200], q.get("topic_id") or "deepening", q.get("type") or "web", q.get("perspective") or ""
+    return "", "deepening", "web", ""
+proj_dir, art = Path(sys.argv[1]), Path(sys.argv[2])
+deep_path = proj_dir / "verify" / "deepening_queries.json"
+gap_path = art / "focus_queries.json"
+seen = set()
+queries = []
+for path in [deep_path, gap_path]:
+    if not path.exists():
+        continue
+    try:
+        data = json.loads(path.read_text())
+        raw = data.get("queries")
+        if not isinstance(raw, list):
+            raw = []
+        for q in raw:
+            qtext, topic_id, qtype, perspective = norm(q)
+            if not qtext or qtext.lower() in seen:
+                continue
+            seen.add(qtext.lower())
+            queries.append({"query": qtext, "topic_id": topic_id, "type": qtype, "perspective": perspective})
+    except Exception:
+        pass
+gap_path.write_text(json.dumps({"queries": queries}, indent=2, ensure_ascii=False))
+FOCUS_MERGE
+      log "Merged verify/deepening_queries into focus_queries"
     fi
     progress_step "Searching for sources (KI)"
     python3 "$TOOLS/research_web_search.py" --queries-file "$ART/focus_queries.json" --max-per-query 8 > "$ART/focus_search.json" 2>> "$CYCLE_LOG" || true
@@ -841,7 +912,11 @@ RANK_FOCUS
     FOCUS_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" focus --input-file "$ART/focus_read_order.txt" --read-limit 15 --workers 8 2>> "$CYCLE_LOG" | tail -1)
     focus_read_attempts=0
     focus_read_successes=0
-    [ -n "$FOCUS_STATS" ] && read -r focus_read_attempts focus_read_successes <<< "$(echo "$FOCUS_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null)" 2>/dev/null || true
+    focus_read_failures=0
+    [ -n "$FOCUS_STATS" ] && read -r focus_read_attempts focus_read_successes focus_read_failures <<< "$(echo "$FOCUS_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0), d.get('read_failures',0))" 2>/dev/null)" 2>/dev/null || true
+    [ -z "$focus_read_failures" ] && focus_read_failures=$(( focus_read_attempts - focus_read_successes ))
+    mkdir -p "$PROJ_DIR/focus"
+    echo "{\"read_attempts\": $focus_read_attempts, \"read_successes\": $focus_read_successes, \"read_failures\": $focus_read_failures}" > "$PROJ_DIR/focus/read_stats.json"
     log "Focus reads: $focus_read_attempts attempted, $focus_read_successes succeeded"
     progress_step "Extracting focused findings"
     timeout 600 python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
@@ -858,6 +933,11 @@ RANK_FOCUS
   verify)
     log "Phase: VERIFY — source reliability, claim verification, fact-check"
     progress_start "verify"
+    if [ "${RESEARCH_ENABLE_TOKEN_GOVERNOR:-1}" = "1" ]; then
+      GOVERNOR_LANE=$(python3 -c "import sys; sys.path.insert(0,'$OPERATOR_ROOT'); from tools.research_token_governor import recommend_lane; print(recommend_lane('$PROJECT_ID'))" 2>/dev/null || echo "mid")
+      export RESEARCH_GOVERNOR_LANE="${GOVERNOR_LANE:-mid}"
+      echo "\"$GOVERNOR_LANE\"" > "$PROJ_DIR/governor_lane.json" 2>/dev/null || true
+    fi
     progress_step "Checking source reliability"
     if ! timeout 300 python3 "$TOOLS/research_verify.py" "$PROJECT_ID" source_reliability > "$ART/source_reliability.json" 2>> "$CYCLE_LOG"; then
       log "source_reliability failed — retrying in 30s"
@@ -880,6 +960,11 @@ RANK_FOCUS
     [ -s "$ART/source_reliability.json" ] && cp "$ART/source_reliability.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     [ -s "$ART/claim_verification.json" ] && cp "$ART/claim_verification.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     [ -s "$ART/fact_check.json" ] && cp "$ART/fact_check.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+    # CoVe (Phase 3): independent verification when enabled (fail-safe: never upgrades, only downgrades)
+    if [ "${RESEARCH_ENABLE_COVE_VERIFICATION:-0}" = "1" ]; then
+      progress_step "CoVe claim verification"
+      timeout 120 python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification_cove 2>> "$CYCLE_LOG" || true
+    fi
     # Claim ledger: deterministic is_verified (V3)
     progress_step "Building claim ledger"
     timeout 300 python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_ledger > "$ART/claim_ledger.json" 2>> "$CYCLE_LOG" || true
@@ -1068,10 +1153,20 @@ high_gaps = [g for g in gaps if g.get("priority") == "high"]
 phase_history = d.get("phase_history", [])
 loopback_count = phase_history.count("focus")
 if high_gaps and loopback_count < 2:
-  queries = [g.get("suggested_search", "").strip() for g in high_gaps[:5] if g.get("suggested_search", "").strip()]
+  # Phase 4: structured deepening_queries (query, reason, priority) for Focus merge
+  queries = []
+  for g in high_gaps[:5]:
+    q = (g.get("suggested_search") or "").strip()
+    if not q:
+      continue
+    queries.append({
+      "query": q[:200],
+      "reason": (g.get("description") or "")[:300],
+      "priority": g.get("priority") or "high",
+    })
   if queries:
     (proj_dir / "verify").mkdir(parents=True, exist_ok=True)
-    (proj_dir / "verify" / "deepening_queries.json").write_text(json.dumps({"queries": queries}, indent=2))
+    (proj_dir / "verify" / "deepening_queries.json").write_text(json.dumps({"queries": queries}, indent=2, ensure_ascii=False))
   print("1" if queries else "0", end="")
 else:
   print("0", end="")
@@ -1234,6 +1329,7 @@ d["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 d.setdefault("quality_gate", {})["aem_block_reason"] = reason
 (proj_dir / "project.json").write_text(json.dumps(d, indent=2))
 AEM_BLOCK
+        persist_v2_episode "aem_blocked"
         exit 0
       fi
     fi
@@ -1250,158 +1346,17 @@ AEM_BLOCK
   synthesize)
     log "Phase: SYNTHESIZE — report"
     progress_start "synthesize"
+    if [ "${RESEARCH_ENABLE_TOKEN_GOVERNOR:-1}" = "1" ]; then
+      GOVERNOR_LANE=$(python3 -c "import sys; sys.path.insert(0,'$OPERATOR_ROOT'); from tools.research_token_governor import recommend_lane; print(recommend_lane('$PROJECT_ID'))" 2>/dev/null || echo "mid")
+      export RESEARCH_GOVERNOR_LANE="${GOVERNOR_LANE:-mid}"
+      echo "\"$GOVERNOR_LANE\"" > "$PROJ_DIR/governor_lane.json" 2>/dev/null || true
+    fi
     progress_step "Generating outline"
     export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
     # Multi-pass section-by-section synthesis (research-firm-grade report)
-    timeout 900 python3 "$TOOLS/research_synthesize.py" "$PROJECT_ID" > "$ART/report.md" 2>> "$CYCLE_LOG" || true
+    timeout 1800 python3 "$TOOLS/research_synthesize.py" "$PROJECT_ID" > "$ART/report.md" 2>> "$CYCLE_LOG" || true
     progress_step "Saving report & applying citations"
-    python3 - "$PROJ_DIR" "$ART" "$OPERATOR_ROOT" <<'PY'
-import json, os, sys
-from pathlib import Path
-from datetime import datetime, timezone
-proj_dir, art, op_root = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
-verify_dir = proj_dir / "verify"
-report = ""
-if (art / "report.md").exists():
-  report = (art / "report.md").read_text()
-ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-sys.path.insert(0, str(op_root))
-from tools.research_common import get_claims_for_synthesis
-claim_ledger = get_claims_for_synthesis(proj_dir)
-from tools.research_verify import apply_verified_tags_to_report
-report = apply_verified_tags_to_report(report, claim_ledger)
-# Deterministic References section (replaces LLM-generated sources list)
-import re as _re
-# Strip any LLM-generated References/Sources section at end of report
-report = _re.sub(
-    r'\n---\s*\n\*?\*?(?:Sources|References)\*?\*?:?\s*\n.*',
-    '', report, flags=_re.DOTALL | _re.IGNORECASE
-).rstrip()
-report = _re.sub(
-    r'\n#+\s*(?:Sources|References)\s*\n.*',
-    '', report, flags=_re.DOTALL | _re.IGNORECASE
-).rstrip()
-
-# Collect unique URLs with titles from findings + source metadata
-ref_map = {}  # url -> title
-for fp in sorted((proj_dir / "findings").glob("*.json")):
-    try:
-        fd = json.loads(fp.read_text())
-        fu = (fd.get("url") or "").strip()
-        if fu and fu not in ref_map:
-            ref_map[fu] = (fd.get("title") or "").strip()
-    except Exception:
-        pass
-for sp in sorted((proj_dir / "sources").glob("*.json")):
-    if "_content" in sp.name:
-        continue
-    try:
-        sd = json.loads(sp.read_text())
-        su = (sd.get("url") or "").strip()
-        if su and su not in ref_map:
-            ref_map[su] = (sd.get("title") or "").strip()
-    except Exception:
-        pass
-
-# Only include sources that appear in claim_ledger
-cited_urls = set()
-for c in claim_ledger:
-    for u in c.get("supporting_source_ids", []):
-        cited_urls.add(u.strip())
-refs = [(u, ref_map.get(u, "")) for u in cited_urls if u in ref_map]
-refs.sort(key=lambda r: r[1] or r[0])
-
-if refs:
-    report += "\n\n---\n\n## References\n\n"
-    for i, (url, title) in enumerate(refs, 1):
-        if title:
-            report += f"[{i}] {title}  \n    {url}\n\n"
-        else:
-            report += f"[{i}] {url}\n\n"
-(art / "report.md").write_text(report)
-(proj_dir / "reports" / f"report_{ts}.md").write_text(report)
-# Audit: claim_evidence_map per report (include verification_reason for UI: verified/disputed/unverified)
-# Build URL -> excerpt index from findings
-findings_by_url = {}
-for fp in sorted((proj_dir / "findings").glob("*.json")):
-    try:
-        fd = json.loads(fp.read_text())
-        fu = (fd.get("url") or "").strip()
-        if fu and fd.get("excerpt"):
-            findings_by_url.setdefault(fu, fd["excerpt"][:500])
-    except Exception:
-        pass
-
-# Also try source metadata (title+description) as fallback snippet
-for sp in sorted((proj_dir / "sources").glob("*.json")):
-    if "_content" in sp.name:
-        continue
-    try:
-        sd = json.loads(sp.read_text())
-        su = (sd.get("url") or "").strip()
-        if su and su not in findings_by_url:
-            snippet = (sd.get("description") or sd.get("title") or "")[:300]
-            if snippet:
-                findings_by_url[su] = snippet
-    except Exception:
-        pass
-
-claim_evidence_map = {"report_id": f"report_{ts}.md", "ts": ts, "claims": []}
-for c in claim_ledger:
-    evidence = []
-    for src_url in c.get("supporting_source_ids", []):
-        snippet = findings_by_url.get(src_url, "")
-        evidence.append({"url": src_url, "snippet": snippet})
-    claim_evidence_map["claims"].append({
-        "claim_id": c.get("claim_id"),
-        "text": (c.get("text") or "")[:500],
-        "is_verified": c.get("is_verified"),
-        "verification_reason": c.get("verification_reason"),
-        "supporting_source_ids": c.get("supporting_source_ids", []),
-        "supporting_evidence": evidence,
-    })
-(proj_dir / "reports" / f"claim_evidence_map_{ts}.json").write_text(json.dumps(claim_evidence_map, indent=2))
-(proj_dir / "verify" / "claim_evidence_map_latest.json").write_text(json.dumps(claim_evidence_map, indent=2))
-# Generate report manifest
-manifest_entries = []
-for rpt in sorted((proj_dir / "reports").glob("report_*.md"), key=lambda p: p.stat().st_mtime):
-  name = rpt.name
-  rpt_ts = name.replace("report_", "").replace("_revised.md", "").replace(".md", "")
-  is_revised = "_revised" in name
-  critique_score = None
-  critique_file = proj_dir / "verify" / "critique.json"
-  if critique_file.exists():
-    try:
-      critique_score = json.loads(critique_file.read_text()).get("score")
-    except Exception:
-      pass
-  manifest_entries.append({
-    "filename": name,
-    "generated_at": rpt_ts,
-    "is_revised": is_revised,
-    "quality_score": critique_score,
-    "path": f"research/{proj_dir.name}/reports/{name}",
-    "is_final": False,
-  })
-# Last report is final (updated after Critic via MANIFEST_UPDATE for quality_score)
-if manifest_entries:
-  manifest_entries[-1]["is_final"] = True
-(proj_dir / "reports" / "manifest.json").write_text(json.dumps({
-  "project_id": proj_dir.name,
-  "report_count": len(manifest_entries),
-  "reports": manifest_entries,
-  "pipeline": {
-    "synthesis_model": os.environ.get("RESEARCH_SYNTHESIS_MODEL", "unknown"),
-    "critique_model": os.environ.get("RESEARCH_CRITIQUE_MODEL", "unknown"),
-    "verify_model": os.environ.get("RESEARCH_VERIFY_MODEL", "unknown"),
-    "gate_thresholds": {
-      "hard_pass_verified_min": 5,
-      "soft_pass_verified_min": 3,
-      "review_zone_rate": 0.4,
-    },
-  },
-}, indent=2))
-PY
+    python3 "$TOOLS/research_synthesize_postprocess.py" "$PROJECT_ID" "$ART" 2>> "$CYCLE_LOG" || true
     # Quality Gate: critic pass; up to 2 revision rounds if score below threshold
     # Default 0.50 so typical ~0.55 scores pass; frontier = explicit low bar.
     CRITIC_THRESHOLD="${RESEARCH_CRITIC_THRESHOLD:-0.50}"
@@ -1413,6 +1368,11 @@ PY
       CRITIC_THRESHOLD="0.50"
     fi
     MAX_REVISE_ROUNDS="${RESEARCH_MEMORY_REVISE_ROUNDS:-2}"
+    if [ "${RESEARCH_ENABLE_TOKEN_GOVERNOR:-1}" = "1" ]; then
+      GOVERNOR_LANE=$(python3 -c "import sys; sys.path.insert(0,'$OPERATOR_ROOT'); from tools.research_token_governor import recommend_lane; print(recommend_lane('$PROJECT_ID'))" 2>/dev/null || echo "mid")
+      export RESEARCH_GOVERNOR_LANE="${GOVERNOR_LANE:-mid}"
+      echo "\"$GOVERNOR_LANE\"" > "$PROJ_DIR/governor_lane.json" 2>/dev/null || true
+    fi
     progress_step "Running quality critic"
     timeout 600 python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$CYCLE_LOG" || true
     if [ ! -s "$ART/critique.json" ]; then
@@ -1550,6 +1510,15 @@ MANIFEST_UPDATE
       log "PDF generation failed (install weasyprint? pip install weasyprint); see log.txt for details"
     fi
     progress_step "PDF generated"
+
+    # Core 10 Phase 2: Trial & Error Experiment Loop
+    if [ "${RESEARCH_ENABLE_EXPERIMENT_LOOP:-1}" = "1" ]; then
+      progress_step "Running Trial & Error Sandbox Experiment"
+      log "Starting: research_experiment"
+      timeout 900 python3 "$TOOLS/research_experiment.py" "$PROJECT_ID" >> "$CYCLE_LOG" 2>&1 || true
+      log "Done: research_experiment"
+    fi
+
     # Store verified findings in Memory DB for cross-domain learning (non-fatal)
     python3 "$OPERATOR_ROOT/tools/research_embed.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     # Update cross-project links (Brain/UI can show cross-links)

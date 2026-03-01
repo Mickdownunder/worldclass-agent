@@ -63,6 +63,7 @@ function IconTerminal() {
 const primaryNav = [
   { href: "/",         label: "Command Center",      icon: <IconGrid /> },
   { href: "/research", label: "Research Projects",   icon: <IconSearch /> },
+  { href: "/research/discovery", label: "Discovery Research", icon: <IconSearch /> },
   { href: "/memory",   label: "Memory & Graph",      icon: <IconDatabase /> },
   { href: "/jobs",     label: "Audit Logs",          icon: <IconClipboard /> },
 ];

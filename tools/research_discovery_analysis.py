@@ -152,8 +152,38 @@ def _gap_opportunities(proj_path: Path) -> list[dict]:
     return []
 
 
+def _local_entity_graph_signals(proj_path: Path) -> dict:
+    """Read connect/entity_graph.json for use when Memory has no/little data. Returns entities + relations summary."""
+    path = proj_path / "connect" / "entity_graph.json"
+    if not path.exists():
+        return {"entities": [], "relations": [], "local_patterns": []}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        entities = list(data.get("entities") or [])[:30]
+        relations = list(data.get("relations") or [])[:25]
+        # Build simple "local_patterns" (A->B style) so brief LLM can suggest novel connections
+        local_patterns = [
+            {"entity_a": r.get("from"), "entity_b": r.get("to"), "relation_type": r.get("relation_type", ""), "hypothesis": f"{r.get('from')} relates to {r.get('to')}"}
+            for r in relations
+        ]
+        return {
+            "entities": [e.get("name") or e.get("id") for e in entities if (e.get("name") or e.get("id"))],
+            "relations": [{"from": r.get("from"), "to": r.get("to"), "type": r.get("relation_type")} for r in relations],
+            "local_patterns": local_patterns,
+        }
+    except Exception:
+        return {"entities": [], "relations": [], "local_patterns": []}
+
+
 def _synthesize_discovery_brief(
-    patterns, entities, cross_links, contradictions, gaps, question: str, project_id: str
+    patterns,
+    entities,
+    cross_links,
+    contradictions,
+    gaps,
+    question: str,
+    project_id: str,
+    local_graph: dict | None = None,
 ) -> dict:
     """LLM call to synthesize raw discovery signals into a structured brief."""
     from tools.research_common import llm_call
@@ -172,12 +202,25 @@ Return JSON only:
 }
 Be specific. Only include genuinely non-obvious insights. No markdown, only JSON."""
 
-    user = f"""RESEARCH QUESTION: {question}
-GRAPH PATTERNS (transitive connections): {json.dumps(patterns[:10], ensure_ascii=False)}
+    graph_empty = not patterns and not cross_links
+    effective_patterns = list(patterns)[:10]
+    if not effective_patterns and local_graph and local_graph.get("local_patterns"):
+        effective_patterns = local_graph["local_patterns"][:10]
+
+    hint = ""
+    if graph_empty:
+        hint = "\nNOTE: No graph/cross-domain data yet. Emphasize contradictions and coverage gaps as discovery opportunities. Still produce novel_connections and key_hypothesis from question, gaps, and contradictions (and local entity graph if provided).\n"
+
+    local_block = ""
+    if local_graph and (local_graph.get("entities") or local_graph.get("relations")):
+        local_block = f"\nLOCAL ENTITY GRAPH (this project's connect phase):\nEntities: {json.dumps(local_graph.get('entities', [])[:20], ensure_ascii=False)}\nRelations: {json.dumps(local_graph.get('relations', [])[:15], ensure_ascii=False)}\n"
+
+    user = f"""RESEARCH QUESTION: {question}{hint}
+GRAPH PATTERNS (transitive connections): {json.dumps(effective_patterns, ensure_ascii=False)}
 ENTITY FREQUENCY: {json.dumps(entities, ensure_ascii=False)}
 CROSS-DOMAIN LINKS: {json.dumps(cross_links[:5], ensure_ascii=False)}
 CONTRADICTIONS: {json.dumps(contradictions[:5], ensure_ascii=False)}
-KNOWLEDGE GAPS: {json.dumps(gaps[:5], ensure_ascii=False)}
+KNOWLEDGE GAPS: {json.dumps(gaps[:5], ensure_ascii=False)}{local_block}
 """
     try:
         result = llm_call("gemini-2.5-flash", system, user, project_id=project_id)
@@ -215,11 +258,12 @@ def run_discovery_analysis(project_id: str) -> dict:
         cross_links = _cross_domain_insights(mem, project_id)
         contradictions = _contradiction_frontier(proj_path)
         gaps = _gap_opportunities(proj_path)
+        local_graph = _local_entity_graph_signals(proj_path)
 
         project = load_project(proj_path)
         question = (project.get("question") or "")[:500]
         brief = _synthesize_discovery_brief(
-            patterns, entities, cross_links, contradictions, gaps, question, project_id
+            patterns, entities, cross_links, contradictions, gaps, question, project_id, local_graph=local_graph
         )
 
         result = {
@@ -229,6 +273,7 @@ def run_discovery_analysis(project_id: str) -> dict:
                 "cross_domain_links": cross_links,
                 "contradiction_frontier": contradictions,
                 "gap_opportunities": gaps,
+                "local_entity_graph": local_graph,
             },
             "discovery_brief": brief,
         }
