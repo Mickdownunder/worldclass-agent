@@ -53,8 +53,52 @@ def save_project(proj_path: Path, data: dict) -> None:
     (proj_path / "project.json").write_text(json.dumps(data, indent=2) + "\n")
 
 
+def model_for_lane(context: str) -> str:
+    """
+    Return LLM model for the current RESEARCH_GOVERNOR_LANE (cheap | mid | strong).
+    context: "verify" | "synthesize" | "critic".
+    When lane is unset, returns the default (strong) model for that context so behavior is unchanged.
+    """
+    lane = (os.environ.get("RESEARCH_GOVERNOR_LANE") or "").strip().lower()
+    defaults = {
+        "verify": {
+            "strong": os.environ.get("RESEARCH_VERIFY_MODEL", "gemini-3.1-pro-preview"),
+            "mid": os.environ.get("RESEARCH_VERIFY_MODEL_MID", "gemini-2.5-flash"),
+            "cheap": os.environ.get("RESEARCH_VERIFY_MODEL_CHEAP", "gpt-4.1-mini"),
+        },
+        "synthesize": {
+            "strong": os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gemini-3.1-pro-preview"),
+            "mid": os.environ.get("RESEARCH_SYNTHESIS_MODEL_MID", "gemini-2.5-flash"),
+            "cheap": os.environ.get("RESEARCH_SYNTHESIS_MODEL_CHEAP", "gpt-4.1-mini"),
+        },
+        "critic": {
+            "strong": os.environ.get("RESEARCH_CRITIQUE_MODEL", "gpt-5.2"),
+            "mid": os.environ.get("RESEARCH_CRITIQUE_MODEL_MID", "gemini-2.5-flash"),
+            "cheap": os.environ.get("RESEARCH_CRITIQUE_MODEL_CHEAP", "gpt-4.1-mini"),
+        },
+    }
+    maps = defaults.get(context, defaults["verify"])
+    if lane == "cheap":
+        return maps["cheap"]
+    if lane == "mid":
+        return maps["mid"]
+    return maps["strong"]
+
+
+def _is_quota_or_bottleneck(exc) -> bool:
+    """True if error is quota/429 so we may try another provider (when RESEARCH_LLM_FALLBACK_ON_QUOTA=1)."""
+    msg = (getattr(exc, "message", None) or str(exc)).lower()
+    if "429" in msg or "insufficient_quota" in msg or "quota exceeded" in msg or "you exceeded your current quota" in msg:
+        return True
+    return False
+
+
 def _is_retryable(exc):
-    """Return True for transient errors that should be retried (rate-limit, timeout, server errors)."""
+    """Return True for transient errors that should be retried (rate-limit, timeout, server errors).
+    Returns False for quota exceeded (retrying won't help; fail fast so logs show clear reason)."""
+    msg = (getattr(exc, "message", None) or str(exc)).lower()
+    if "insufficient_quota" in msg or "quota exceeded" in msg or "you exceeded your current quota" in msg:
+        return False
     try:
         from openai import RateLimitError, APITimeoutError, APIConnectionError, InternalServerError
         if isinstance(exc, (RateLimitError, APITimeoutError, APIConnectionError, InternalServerError)):
@@ -64,7 +108,6 @@ def _is_retryable(exc):
     # Gemini / google-genai: retry on rate limit, timeout, server errors (often wrapped or message-based)
     exc_module = type(exc).__module__
     if "genai" in exc_module or "google" in exc_module:
-        msg = str(exc).lower()
         if any(x in msg for x in ("429", "503", "500", "502", "rate", "timeout", "resource", "overload")):
             return True
     from urllib.error import HTTPError
@@ -116,19 +159,63 @@ def _call_gemini(model: str, system: str, user: str) -> LLMResult:
     return LLMResult(text=text, input_tokens=inp, output_tokens=out)
 
 
-def llm_call(model: str, system: str, user: str, project_id: str = "") -> LLMResult:
-    """Route to OpenAI (gpt-*) or Gemini (gemini-*) and optionally track budget. Uses llm_retry."""
-    @llm_retry()
-    def _invoke():
-        if model.startswith("gemini"):
-            return _call_gemini(model, system, user)
-        return _call_openai(model, system, user)
+def _fallback_model_for_quota(primary_model: str) -> str | None:
+    """Return an alternative model on another provider when primary hits quota. None if no fallback available."""
+    secrets = load_secrets()
+    has_openai = bool(secrets.get("OPENAI_API_KEY"))
+    has_gemini = bool(secrets.get("GEMINI_API_KEY"))
+    if primary_model.startswith("gemini"):
+        if has_openai:
+            return os.environ.get("RESEARCH_LLM_FALLBACK_OPENAI", "gpt-4.1-mini")
+        return None
+    if primary_model.startswith("gpt-") or "openai" in primary_model.lower():
+        if has_gemini:
+            return os.environ.get("RESEARCH_LLM_FALLBACK_GEMINI", "gemini-2.5-flash")
+        return None
+    return None
 
-    result = _invoke()
+
+def _llm_invoke(model: str, system: str, user: str) -> LLMResult:
+    """Single provider call: Gemini or OpenAI by model prefix."""
+    if model.startswith("gemini"):
+        return _call_gemini(model, system, user)
+    return _call_openai(model, system, user)
+
+
+def llm_call(model: str, system: str, user: str, project_id: str = "") -> LLMResult:
+    """Route to OpenAI (gpt-*) or Gemini (gemini-*) and optionally track budget. Uses llm_retry.
+    When RESEARCH_LLM_FALLBACK_ON_QUOTA=1 and the primary provider returns quota/429, tries once with
+    the other provider (fallback model) so the system continues without manual intervention."""
+    import sys
+
+    @llm_retry()
+    def _invoke_primary():
+        return _llm_invoke(model, system, user)
+
+    used_model = model
+    try:
+        result = _invoke_primary()
+    except Exception as e:
+        fallback_enabled = os.environ.get("RESEARCH_LLM_FALLBACK_ON_QUOTA", "").strip() in ("1", "true", "yes")
+        if not fallback_enabled or not _is_quota_or_bottleneck(e):
+            raise
+        fallback = _fallback_model_for_quota(model)
+        if not fallback:
+            raise
+        print(
+            f"research_common: provider fallback (quota/429) {model} -> {fallback}",
+            file=sys.stderr,
+        )
+        try:
+            result = _llm_invoke(fallback, system, user)
+            used_model = fallback
+        except Exception:
+            raise e  # reraise original so caller sees quota, not fallback error
+
     if project_id:
         try:
             from tools.research_budget import track_usage
-            track_usage(project_id, model, result.input_tokens, result.output_tokens)
+            track_usage(project_id, used_model, result.input_tokens, result.output_tokens)
         except Exception:
             pass
     return result
@@ -204,7 +291,7 @@ def get_principles_for_research(question: str, domain: str | None = None, limit:
         from lib.memory import Memory
         with Memory() as mem:
             if question and hasattr(mem, "retrieve_with_utility"):
-                principles = mem.retrieve_with_utility(question, "principle", k=limit)
+                principles = mem.retrieve_with_utility(question, "principle", k=limit, context_key=question)
             else:
                 principles = mem.list_principles(limit=limit, domain=domain or "")
         if not principles:
@@ -212,6 +299,8 @@ def get_principles_for_research(question: str, domain: str | None = None, limit:
         lines = []
         for p in principles:
             ptype = (p.get("principle_type") or "guiding").upper()
+            if ptype == "SYSTEM_PROMPT":
+                continue # System prompts are handled separately now
             desc = (p.get("description") or "")[:300]
             if desc:
                 lines.append(f"- [{ptype}] {desc}")
@@ -220,3 +309,26 @@ def get_principles_for_research(question: str, domain: str | None = None, limit:
         return "\n\nSTRATEGIC PRINCIPLES (follow guiding, avoid cautionary):\n" + "\n".join(lines)
     except Exception:
         return ""
+
+def get_optimized_system_prompt(domain: str, default_prompt: str) -> str:
+    """
+    Returns the active optimized system prompt for the domain if one exists in the versioned ledger.
+    Otherwise, returns the default_prompt.
+    """
+    try:
+        versions_file = operator_root() / "memory" / "prompt_versions.json"
+        if not versions_file.exists():
+            return default_prompt
+            
+        versions = json.loads(versions_file.read_text())
+        active = [v for v in versions if v.get("domain") == domain and v.get("status") == "active"]
+        
+        if active:
+            # Sort by created_at descending just in case there are multiple active (shouldn't happen)
+            active.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+            optimized = active[0].get("prompt_text", "").strip()
+            if optimized:
+                return optimized + "\n\n" + default_prompt
+    except Exception:
+        pass
+    return default_prompt

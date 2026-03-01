@@ -2,7 +2,7 @@
 Cognitive Core — The Operator's Brain.
 
 Implements the Structured Cognitive Loop (SCL):
-  Perceive → Think → Decide → Act → Reflect → Remember
+  Perceive → Understand → Think → Decide → Act → Reflect → Remember
 
 Each phase produces a reasoning trace stored in memory.
 The brain uses LLM for reasoning but degrades gracefully without it.
@@ -56,6 +56,31 @@ def _utcnow() -> str:
 
 def _trace_id() -> str:
     return hashlib.sha256(f"trace:{time.time_ns()}".encode()).hexdigest()[:12]
+
+
+def _compact_state_for_think(state: dict, limit: int = 12000) -> str:
+    """
+    Prioritize high-signal state slices before truncation.
+    This reduces the chance that strategic context is cut off.
+    """
+    priority = {
+        "system": state.get("system", {}),
+        "governance": state.get("governance", {}),
+        "workflow_health": state.get("workflow_health", {}),
+        "workflow_trends": state.get("workflow_trends", {}),
+        "research_projects": state.get("research_projects", [])[:12],
+        "research_context": state.get("research_context", {}),
+        "research_playbooks": state.get("research_playbooks", [])[:12],
+        "memory": {
+            "totals": ((state.get("memory") or {}).get("totals") or {}),
+            "recent_reflections": ((state.get("memory") or {}).get("recent_reflections") or [])[:8],
+        },
+        "recent_jobs": state.get("recent_jobs", [])[:12],
+    }
+    payload = json.dumps(priority, indent=2, default=str)
+    if len(payload) <= limit:
+        return payload
+    return payload[:limit] + "\n... (truncated)"
 
 
 def _load_secrets() -> dict[str, str]:
@@ -324,12 +349,125 @@ class Brain:
         return state
 
     # ------------------------------------------------------------------
-    # Phase 2: THINK — Reason about what to do
+    # Phase 1.5: UNDERSTAND — Build structured understanding before Think/Decide/Act (Pre-Act / checklist)
     # ------------------------------------------------------------------
 
-    def think(self, state: dict, goal: str = "Decide the most impactful next action") -> dict:
-        """Use LLM to reason about current state and generate a plan."""
+    def understand(self, state: dict, goal: str = "") -> dict:
+        """
+        Build a grounded understanding from state + memory: situation, relevant past, why helped/hurt, uncertainties, options.
+        No action without this. Input is only Perceive + retrieved memories (no hallucination).
+        """
         trace_id = _trace_id()
+        research_ctx = state.get("research_context") or {}
+        principles = list((research_ctx.get("strategic_principles") or [])[:10])
+        reflections = list((research_ctx.get("high_quality_reflections") or [])[:8])
+        findings_by_project = research_ctx.get("accepted_findings_by_project") or {}
+        # Collect memory IDs that feed into this understanding (explainability checklist)
+        trace = research_ctx.get("memory_trace") or {}
+        retrieved_principle_ids = [str(x) for x in (trace.get("principle_ids") or []) if x]
+        retrieved_finding_ids = [str(x) for x in (trace.get("finding_ids") or []) if x]
+        if not retrieved_principle_ids:
+            for p in principles:
+                if p.get("id"):
+                    retrieved_principle_ids.append(str(p["id"]))
+        if not retrieved_finding_ids:
+            for _proj, findings in findings_by_project.items():
+                for f in (findings or [])[:5]:
+                    if f.get("id"):
+                        retrieved_finding_ids.append(str(f["id"]))
+        # Situation summary from state
+        n_projects = len(state.get("research_projects") or [])
+        n_not_done = sum(1 for p in (state.get("research_projects") or []) if p.get("status") != "done")
+        active_goal = goal or ""
+        if not active_goal and n_not_done and (state.get("research_projects")):
+            for p in state.get("research_projects", []):
+                if p.get("status") != "done" and (p.get("question") or "").strip():
+                    active_goal = (p.get("question") or "").strip()[:500]
+                    break
+        situation = {
+            "summary": f"{n_projects} research projects, {n_not_done} not done; recent jobs and workflows available.",
+            "goal": active_goal[:400] if active_goal else "Decide the most impactful next action",
+            "domain_hint": "",
+        }
+        if (state.get("research_projects") or []) and n_not_done:
+            first = next((p for p in state.get("research_projects", []) if p.get("status") != "done"), None)
+            if first:
+                situation["domain_hint"] = str(first.get("phase", ""))[:80]
+        # Relevant past: what helped/hurt from memory totals and reflections
+        relevant_episodes_summary = []
+        for r in reflections[:5]:
+            q = r.get("quality")
+            learn = (r.get("learnings") or "")[:150]
+            relevant_episodes_summary.append({"quality": q, "learnings": learn})
+        why_helped_hurt = []
+        if research_ctx.get("totals"):
+            t = research_ctx["totals"]
+            why_helped_hurt.append(f"Accepted findings: {t.get('accepted_findings', 0)}; reflections above threshold: {t.get('reflections_above_threshold', 0)}; principles: {t.get('principles_count', 0)}.")
+        for r in reflections[:3]:
+            if (r.get("learnings") or "").strip():
+                why_helped_hurt.append((r.get("learnings") or "").strip()[:200])
+        # Uncertainties: where we lack similar experience
+        uncertainties = []
+        if n_not_done and not principles and not reflections:
+            uncertainties.append("No strategic principles or high-quality reflections yet; first runs in this context.")
+        if not active_goal.strip():
+            uncertainties.append("No explicit goal from open research project; using default goal.")
+        # Options: workflows and plumber hint from state
+        options = []
+        for w in state.get("workflows") or []:
+            options.append({"action": w, "type": "workflow"})
+        if (state.get("workflow_health") or {}).get("sick_workflows"):
+            options.append({"action": "plumber:diagnose-and-fix", "type": "self_healing", "reason": "Repeated workflow failures"})
+        understand_output = {
+            "situation": situation,
+            "relevant_episodes_summary": relevant_episodes_summary,
+            "why_helped_hurt": why_helped_hurt[:10],
+            "uncertainties": uncertainties,
+            "options": options[:15],
+            "retrieved_memory_ids": {
+                "principle_ids": retrieved_principle_ids[:30],
+                "finding_ids": retrieved_finding_ids[:50],
+            },
+            "_trace_id": trace_id,
+        }
+        self.memory.record_decision(
+            phase="understand",
+            inputs={"state_keys": list(state.keys()), "goal": (goal or active_goal or "")[:200]},
+            reasoning=json.dumps(situation, ensure_ascii=False)[:1500],
+            decision="understanding_built",
+            confidence=0.9,
+            trace_id=trace_id,
+            metadata={"retrieved_memory_ids": understand_output["retrieved_memory_ids"]},
+        )
+        return understand_output
+
+    # ------------------------------------------------------------------
+    # Phase 2: THINK — Reason about what to do (primary input: understanding)
+    # ------------------------------------------------------------------
+
+    def think(self, state: dict, goal: str = "Decide the most impactful next action", understanding: dict | None = None) -> dict:
+        """Use LLM to reason about current state and generate a plan. Prefer understanding as primary input (checklist)."""
+        trace_id = _trace_id()
+        if understanding is None:
+            understanding = {}
+        # Build think input from understanding first (Pre-Act: plan from understanding)
+        ctx_for_think = {
+            "understanding": {
+                "situation": understanding.get("situation", {}),
+                "relevant_episodes_summary": understanding.get("relevant_episodes_summary", [])[:5],
+                "why_helped_hurt": understanding.get("why_helped_hurt", [])[:5],
+                "uncertainties": understanding.get("uncertainties", [])[:5],
+                "options": understanding.get("options", [])[:10],
+            },
+            "state_summary": {
+                "research_projects": state.get("research_projects", [])[:8],
+                "recent_jobs": state.get("recent_jobs", [])[:6],
+                "workflows": state.get("workflows", []),
+                "governance": state.get("governance", {}),
+                "workflow_health": state.get("workflow_health"),
+                "workflow_trends": state.get("workflow_trends"),
+            },
+        }
 
         system_prompt = """You are the cognitive core of an autonomous operator system.
 You THINK about the current state and a given goal, then produce a structured plan.
@@ -391,11 +529,11 @@ Incorporate applicable principles into your plan reasoning."""
                 lines.append(f"- [{tag}] (score: {score:.2f}) {desc}")
             principles_block = "\n\nSTRATEGIC PRINCIPLES:\n" + "\n".join(lines)
 
-        state_compact = json.dumps(state, indent=2, default=str)
-        if len(state_compact) > 12000:
-            state_compact = state_compact[:12000] + "\n... (truncated)"
-
-        user_prompt = f"GOAL: {goal}\n\nCURRENT STATE:\n{state_compact}{principles_block}"
+        # Primary input: understanding (Pre-Act); then state summary
+        understand_compact = json.dumps(ctx_for_think, indent=2, default=str)
+        if len(understand_compact) > 8000:
+            understand_compact = understand_compact[:8000] + "\n... (truncated)"
+        user_prompt = f"GOAL: {goal}\n\nUNDERSTANDING (situation, relevant past, uncertainties, options):\n{understand_compact}{principles_block}"
 
         try:
             plan = self._llm_json(system_prompt, user_prompt)
@@ -413,13 +551,17 @@ Incorporate applicable principles into your plan reasoning."""
                 metadata={"trace_id": trace_id, "goal": goal[:200]},
             )
 
+        meta = {"llm_failed": "LLM reasoning failed" in plan.get("analysis", "")}
+        if understanding and understanding.get("retrieved_memory_ids"):
+            meta["retrieved_memory_ids"] = understanding["retrieved_memory_ids"]
         self.memory.record_decision(
             phase="think",
-            inputs={"goal": goal, "state_keys": list(state.keys()), "llm_failed": "LLM reasoning failed" in plan.get("analysis", "")},
+            inputs={"goal": goal, "state_keys": list(state.keys()), **meta},
             reasoning=plan.get("analysis", ""),
             decision=json.dumps(plan.get("plan", [])[:3]),
             confidence=float(plan.get("confidence", 0.5)),
             trace_id=trace_id,
+            metadata=meta,
         )
 
         plan["_trace_id"] = trace_id
@@ -429,7 +571,7 @@ Incorporate applicable principles into your plan reasoning."""
     # Phase 3: DECIDE — Select specific action(s) to take
     # ------------------------------------------------------------------
 
-    def decide(self, plan: dict) -> dict:
+    def decide(self, plan: dict, retrieved_memory_ids: dict | None = None) -> dict:
         """Select the specific action to execute based on the plan and governance level."""
         trace_id = plan.get("_trace_id", _trace_id())
         actions = plan.get("plan", [])
@@ -468,6 +610,9 @@ Incorporate applicable principles into your plan reasoning."""
                 "all_planned": [a.get("action") for a in actions],
             }
 
+        meta = None
+        if retrieved_memory_ids:
+            meta = {"retrieved_memory_ids": retrieved_memory_ids}
         self.memory.record_decision(
             phase="decide",
             inputs={"plan_actions": [a.get("action") for a in actions], "governance_level": self.governance_level},
@@ -475,6 +620,7 @@ Incorporate applicable principles into your plan reasoning."""
             decision=decision.get("action", "none"),
             confidence=float(plan.get("confidence", 0.5)),
             trace_id=trace_id,
+            metadata=meta,
         )
 
         decision["_trace_id"] = trace_id
@@ -724,11 +870,19 @@ Be honest and specific. A failed job with useful error info is more valuable tha
                 outcome = f"Job status: {status}"
                 went_well = "Partial completion"
                 went_wrong = "Unclear outcome"
+            # Short, UI-friendly reason for missing LLM reflection (no raw API/429 text in learnings)
+            err_msg = str(llm_error or "").lower()
+            if "429" in err_msg or "quota" in err_msg or "exceeded your current quota" in err_msg:
+                llm_reason = "API quota / rate limit"
+            elif "timeout" in err_msg:
+                llm_reason = "timeout"
+            else:
+                llm_reason = "temporarily unavailable"
             reflection = {
                 "outcome_summary": outcome,
                 "went_well": went_well,
                 "went_wrong": went_wrong,
-                "learnings": f"Metrics-based reflection (LLM unavailable: {llm_error})",
+                "learnings": f"Metrik-basierte Bewertung (Reflection-LLM {llm_reason}).",
                 "quality_score": q,
                 "should_retry": status == "FAILED",
                 "playbook_update": None,
@@ -798,20 +952,21 @@ Be honest and specific. A failed job with useful error info is more valuable tha
         return reflection
 
     # ------------------------------------------------------------------
-    # Full Cycle: PERCEIVE → THINK → DECIDE → ACT → REFLECT
+    # Full Cycle: PERCEIVE → UNDERSTAND → THINK → DECIDE → ACT → REFLECT
     # ------------------------------------------------------------------
 
     def run_cycle(self, goal: str = "Decide and execute the most impactful next action") -> dict:
-        """Run a complete cognitive cycle."""
+        """Run a complete cognitive cycle. No action without Understand (checklist)."""
         trace_id = _trace_id()
 
         self.memory.record_episode("cycle_start", f"Cognitive cycle started: {goal}")
 
         state = self.perceive()
-        plan = self.think(state, goal)
+        understanding = self.understand(state, goal=goal)
+        plan = self.think(state, goal, understanding=understanding)
         plan["_trace_id"] = trace_id
 
-        decision = self.decide(plan)
+        decision = self.decide(plan, retrieved_memory_ids=understanding.get("retrieved_memory_ids"))
         decision["_trace_id"] = trace_id
 
         action_result = self.act(decision)
