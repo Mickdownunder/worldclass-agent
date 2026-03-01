@@ -16,6 +16,11 @@ factory/opportunities/discovered.jsonl
 factory/opportunities/opportunities.jsonl
 # Research project runtime (keep structure and code)
 research/proj-*/
+research/test/
+# Memory runtime (WAL, consolidation cache; *.db already above)
+memory/*.db-wal
+memory/*.db-shm
+memory/consolidation_last.json
 
 # Python
 __pycache__/
