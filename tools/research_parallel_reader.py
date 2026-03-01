@@ -100,14 +100,16 @@ def _save_result(
     source_label: str,
     lock: threading.Lock,
 ) -> bool:
-    """Apply relevance gate and write content + finding to proj_dir. Returns True if saved (success + relevant)."""
+    """Apply relevance gate and write content + finding to proj_dir. Returns True if saved (success + relevant).
+    Gate only runs when RESEARCH_ENABLE_RELEVANCE_GATE=1 to avoid concurrent LLM load in parallel workers."""
     import hashlib
     text = (data.get("text") or data.get("abstract") or "")[:8000]
     title = data.get("title", "")
     relevant = True
     rel_score = 10.0
+    enable_gate = os.environ.get("RESEARCH_ENABLE_RELEVANCE_GATE", "0") == "1"
     skip_gate = os.environ.get("RESEARCH_SKIP_RELEVANCE_GATE", "").lower() in ("1", "true", "yes")
-    if text and question and not skip_gate:
+    if text and question and enable_gate and not skip_gate:
         try:
             from tools.research_relevance_gate import check_relevance
             gate = check_relevance(question, title, text, project_id="")

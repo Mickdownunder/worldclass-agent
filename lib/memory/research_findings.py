@@ -79,6 +79,27 @@ class ResearchFindings:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def search_by_query(self, query: str, limit: int = 50) -> list[dict]:
+        """Return accepted findings whose content_preview or title matches query terms (keyword AND).
+         Used for prior-knowledge seeding so discovery and standard runs only get topic-relevant findings."""
+        terms = [t for t in query.lower().split() if len(t) >= 2]
+        if not terms:
+            return []
+        conditions = " AND ".join(
+            "(LOWER(COALESCE(content_preview,'')) LIKE ? OR LOWER(COALESCE(title,'')) LIKE ?)"
+            for _ in terms
+        )
+        params = [f"%{t}%" for t in terms for _ in (0, 1)]
+        params.append(limit)
+        rows = self._conn.execute(
+            """SELECT id, project_id, finding_key, content_preview, url, title, relevance_score, importance_score
+               FROM research_findings WHERE admission_state = 'accepted' AND """
+            + conditions
+            + " ORDER BY ts DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def insert_cross_link(
         self,
         finding_a_id: str,

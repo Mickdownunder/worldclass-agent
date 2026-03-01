@@ -20,7 +20,8 @@ if [ ! -d "$OPERATOR_ROOT/research/$PROJECT_ID" ]; then
 fi
 
 MAX_RUNS=10
-MAX_SAME_PHASE=2
+# Allow 3 runs in same phase so conductor can do one extra round and we still advance (phase-by-phase stabilization)
+MAX_SAME_PHASE=3
 run=0
 last_phase=""
 same_phase_count=0
@@ -45,7 +46,25 @@ while [ $run -lt $MAX_RUNS ]; do
   if [ "$phase" = "$last_phase" ]; then
     same_phase_count=$((same_phase_count + 1))
     if [ "$same_phase_count" -ge "$MAX_SAME_PHASE" ]; then
-      echo "Phase '$phase' stuck after $same_phase_count retries without advancing. Stopping."
+      echo "Phase '$phase' stuck after $same_phase_count retries without advancing. Marking project failed and stopping."
+      python3 -c "
+import json
+from pathlib import Path
+p = Path('$OPERATOR_ROOT/research/$PROJECT_ID/project.json')
+if p.exists():
+    d = json.loads(p.read_text())
+    d['status'] = 'failed_stuck_phase'
+    p.write_text(json.dumps(d, indent=2))
+" 2>/dev/null || true
+      python3 -c "
+import json
+from pathlib import Path
+prog = Path('$OPERATOR_ROOT/research/$PROJECT_ID/progress.json')
+if prog.exists():
+    d = json.loads(prog.read_text())
+    d['alive'] = False
+    prog.write_text(json.dumps(d, indent=2))
+" 2>/dev/null || true
       exit 0
     fi
   else

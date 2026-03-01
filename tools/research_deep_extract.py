@@ -107,7 +107,8 @@ Each fact should be a single sentence or short paragraph. Be specific (numbers, 
     total_work = len(work)
     results_by_index: dict[int, tuple[str, str, list]] = {}
     done = 0
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    # Fewer workers to reduce memory/API pressure and stabilize explore phase
+    with ThreadPoolExecutor(max_workers=6) as executor:
         future_to_item = {
             executor.submit(_llm_json, system, user, project_id): (idx, url, title)
             for idx, system, user, url, title in work
@@ -115,7 +116,7 @@ Each fact should be a single sentence or short paragraph. Be specific (numbers, 
         for future in as_completed(future_to_item):
             idx, url, title = future_to_item[future]
             try:
-                facts = future.result()
+                facts = future.result(timeout=120)
             except Exception:
                 facts = []
             if not isinstance(facts, list):
@@ -160,8 +161,9 @@ def main():
         n = run(sys.argv[1])
         print(n)
     except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+        print(f"Error (non-fatal, continuing): {e}", file=sys.stderr)
+        # Exit 0 so pipeline continues and we get past explore phase
+        sys.exit(0)
 
 
 if __name__ == "__main__":

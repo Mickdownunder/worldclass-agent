@@ -203,13 +203,15 @@ class Memory:
         self._utility.record_retrieval(memory_type, memory_id)
 
     def retrieve_with_utility(self, query: str, memory_type: str, k: int = 10) -> list[dict]:
-        """Phase 1: semantic/keyword candidates. Phase 2: utility re-rank."""
+        """Phase 1: semantic/keyword candidates. Phase 2: utility re-rank.
+        Findings are filtered by query (keyword match) so discovery and standard runs
+        only get topic-relevant prior knowledge."""
         if memory_type == "principle":
             candidates = self._principles.search(query, limit=k * 5)
         elif memory_type == "reflection":
             candidates = search_module.search_reflections(self._conn, query, limit=k * 5)
         elif memory_type == "finding":
-            candidates = self._research.get_accepted(project_id=None, limit=k * 5)
+            candidates = self._research.search_by_query(query, limit=k * 5)
         else:
             return []
 
@@ -220,7 +222,9 @@ class Memory:
             util_row = self._utility.get(memory_type, mid)
             util_score = util_row["utility_score"] if util_row else 0.5
             c["utility_score"] = util_score
-            relevance = c.get("relevance", 0.5) if isinstance(c.get("relevance"), (int, float)) else 0.5
+            relevance = c.get("relevance_score", c.get("relevance", 0.5))
+            if not isinstance(relevance, (int, float)):
+                relevance = 0.5
             c["combined_score"] = 0.4 * relevance + 0.6 * util_score
 
         candidates.sort(key=lambda x: x.get("combined_score", 0), reverse=True)

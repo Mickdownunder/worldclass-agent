@@ -330,12 +330,19 @@ def gate_check(project_id: str, proposed_next: str) -> str:
     if research_mode == "discovery" and proposed_next == "synthesize":
         if state.findings_count >= 15 and state.source_count >= 8:
             return proposed_next
+    # Strong satisfaction: avoid endless explore/focus loops
     if current_phase in ("explore", "focus", "connect") and state.coverage_score >= 0.8 and state.findings_count >= 30:
         return proposed_next
+    # Softer satisfaction for explore: coverage already good and enough findings → proceed (conductor not "always unsatisfied")
+    if current_phase == "explore" and proposed_next == "focus":
+        if state.coverage_score >= 0.72 and state.findings_count >= 25:
+            return proposed_next
     if state.budget_spent_pct >= 0.8:
         return proposed_next
     key = f"{current_phase}->{proposed_next}"
-    if _load_overrides(project_id).get(key, 0) >= 2:
+    # Cap overrides: after 1 extra round for explore->focus, force advance (don't loop forever)
+    max_overrides = 1 if key == "explore->focus" else 2
+    if _load_overrides(project_id).get(key, 0) >= max_overrides:
         return proposed_next
     question = (project.get("question") or "")[:2000]
     compressed = ""

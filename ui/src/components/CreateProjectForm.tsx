@@ -14,13 +14,14 @@ const PLAYBOOKS = [
 const RESEARCH_MODES = [
   { id: "standard", label: "Standard Research", desc: "Market analysis, competitive intel — cross-source verification required" },
   { id: "frontier", label: "Frontier Research", desc: "Academic, bleeding-edge — single authoritative source can suffice" },
+  { id: "discovery", label: "Discovery Research", desc: "Novel ideas, hypothesis generation — Knowledge Graph mining, cross-domain patterns, gap detection" },
 ];
 
 export function CreateProjectForm() {
   const router = useRouter();
   const [question, setQuestion] = useState("");
   const [playbookId, setPlaybookId] = useState("general");
-  const [researchMode, setResearchMode] = useState<"standard" | "frontier">("standard");
+  const [researchMode, setResearchMode] = useState<"standard" | "frontier" | "discovery">("standard");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -111,7 +112,7 @@ export function CreateProjectForm() {
           <select
             id="research_mode"
             value={researchMode}
-            onChange={(e) => setResearchMode(e.target.value as "standard" | "frontier")}
+            onChange={(e) => setResearchMode(e.target.value as "standard" | "frontier" | "discovery")}
             className="w-full rounded-sm border-2 border-tron-border bg-tron-bg px-4 py-3 text-sm text-tron-text focus:border-tron-accent focus:outline-none focus:shadow-[0_0_15px_var(--tron-glow)] transition-all appearance-none"
             disabled={loading}
             suppressHydrationWarning

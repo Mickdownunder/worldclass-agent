@@ -208,8 +208,8 @@ export function ActivityFeed({
           </div>
         )}
 
-        {/* Phase completed: either step is "Done" or completed list has final step (e.g. 20/20) so we don't show stale "13/20" */}
-        {state !== "RUNNING" && hasProgressData && (step === "Done" || hasReadingSourceFinal) && (
+        {/* Phase completed: only when run is Done. In explore, "Reading source N/N" can repeat (conductor rounds) so we do not show "Phase abgeschlossen" there. */}
+        {state !== "RUNNING" && hasProgressData && (step === "Done" || (hasReadingSourceFinal && displayPhase !== "explore")) && (
           <div className="flex items-center gap-3">
             <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: "var(--tron-success)" }} />
             <span className="text-sm font-mono" style={{ color: "var(--tron-success)" }}>

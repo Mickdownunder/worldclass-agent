@@ -12,7 +12,7 @@ interface ExecutionTreeProps {
 
 const PHASES = [
   { id: "explore",   label: "Explore",   desc: "Source discovery" },
-  { id: "focus",     label: "Focus",     desc: "Relevance filtering" },
+  { id: "focus",     label: "Focus",     desc: "Gap-fill & deep read" },
   { id: "connect",   label: "Connect",   desc: "Cross-referencing" },
   { id: "verify",    label: "Verify",    desc: "Fact-checking" },
   { id: "synthesize",label: "Synthesize",desc: "Report generation" },

@@ -36,7 +36,7 @@ if question.startswith("{"):
         payload = json.loads(question)
         question = (payload.get("question") or "").strip() or question
         research_mode = (payload.get("research_mode") or "standard").strip().lower()
-        if research_mode not in ("standard", "frontier"):
+        if research_mode not in ("standard", "frontier", "discovery"):
             research_mode = "standard"
     except Exception:
         pass

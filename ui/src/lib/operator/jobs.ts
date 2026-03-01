@@ -1,8 +1,12 @@
 import { readFile, readdir, rm } from "fs/promises";
 import path from "path";
+import { execFile } from "child_process";
+import { promisify } from "util";
 import { OPERATOR_ROOT } from "./config";
 
 const JOBS_PATH = path.join(OPERATOR_ROOT, "jobs");
+const OP_BIN = path.join(OPERATOR_ROOT, "bin", "op");
+const execFileAsync = promisify(execFile);
 
 export interface JobSummary {
   id: string;
@@ -31,6 +35,17 @@ export async function listJobs(
 ): Promise<ListJobsResult> {
   const jobs: JobSummary[] = [];
   if (!JOBS_PATH) return { jobs, hasMore: false };
+  // Reconcile stale RUNNING jobs (mark as FAILED when process is dead) so the list matches reality
+  if (statusFilter === "RUNNING") {
+    try {
+      await execFileAsync(OP_BIN, ["job", "reconcile"], {
+        timeout: 10000,
+        env: { ...process.env, OPERATOR_ROOT },
+      });
+    } catch {
+      // non-fatal: list will still show whatever is on disk
+    }
+  }
   const statusMatch =
     statusFilter && VALID_STATUS_FILTERS.has(statusFilter)
       ? statusFilter

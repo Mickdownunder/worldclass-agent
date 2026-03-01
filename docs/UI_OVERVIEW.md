@@ -126,7 +126,7 @@ Alles liest bzw. triggert gegen den gleichen Operator (Dateisystem + `op`).
 ## 5. So behältst du den Überblick
 
 1. **Command Center = Zentrale:** Health, aktive Research-Projekte, Quick-Actions. Von hier aus startest du Research oder gehst in die Details.
-2. **Research = Projekte + Phasen:** Ein Projekt = eine Frage, ein Ordner `research/proj-…/`, State in `project.json`. „Forschung starten“ = Init-Job; „Nächste Phase starten“ = ein Cycle-Job. Phasen laufen nacheinander (explore → … → synthesize → done).
+2. **Research = Projekte + Phasen:** Ein Projekt = eine Frage, ein Ordner `research/proj-…/`, State in `project.json`. „Forschung starten“ = Init-Job; „Nächste Phase starten“ = ein Cycle-Job. Phasen laufen nacheinander (explore → focus → connect → verify → synthesize → done). Details: Explore `docs/EXPLORE_PHASE_DEEP_DIVE.md`, Focus `docs/FOCUS_PHASE_DEEP_DIVE.md`.
 3. **UI startet Jobs, wartet nicht:** Nach Klick auf „Forschung starten“ oder „Nächste Phase starten“ läuft der Job auf dem Server. Fortschritt = Seite neu laden oder später nochmal ins Projekt gehen.
 4. **Report & Feedback:** Im Projekt-Detail liest du den Report, siehst Findings/Sources/Verlauf und gibst Feedback; das Backend schreibt in das Projektverzeichnis und ggf. in die Research-Logik (redirect, Fragen).
 

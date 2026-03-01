@@ -31,7 +31,8 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const researchMode = body.research_mode === "frontier" ? "frontier" : "standard";
+    const validModes = ["standard", "frontier", "discovery"];
+    const researchMode = validModes.includes(body.research_mode) ? body.research_mode : "standard";
     const requestPayload = JSON.stringify({ question, research_mode: researchMode });
     const runUntilDone = body.run_until_done !== false;
     const result = runUntilDone

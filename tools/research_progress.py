@@ -97,6 +97,7 @@ def step_start(project_id: str, message: str, index: int = None, total: int = No
         data.setdefault("active_steps", [])
         if not any((e.get("step") == message) for e in data["active_steps"]):
             data["active_steps"].append({"step": message, "started_at": now})
+        data["pid"] = os.getpid()
         data["alive"] = True
         data["heartbeat"] = now
         _write_progress(progress_file, data)
@@ -130,6 +131,7 @@ def step_finish(project_id: str, message: str) -> None:
                 data["steps_completed"] = data["steps_completed"][-50:]
                 data["active_steps"] = active[:i] + active[i + 1:]
                 break
+        data["pid"] = os.getpid()
         data["alive"] = True
         data["heartbeat"] = now
         _write_progress(progress_file, data)
@@ -143,6 +145,7 @@ def step_summary(project_id: str, message: str, completed: int, total: int) -> N
         data = _read_progress(progress_file)
         if not data:
             return
+        data["pid"] = os.getpid()
         data["alive"] = True
         data["heartbeat"] = _now_iso()
         data["step"] = message
@@ -182,6 +185,7 @@ def step(project_id: str, message: str, index: int = None, total: int = None) ->
             data["steps_completed"] = data["steps_completed"][-10:]
             _append_event(project_id, "step_done", {"step": prev_step, "duration_s": duration})
 
+        data["pid"] = os.getpid()  # so UI sees current runner as alive, not the parent that spawned this step
         data["alive"] = True
         data["heartbeat"] = now
         data["step"] = message

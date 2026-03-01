@@ -25,6 +25,8 @@ fi
 
 PROJ_DIR="$RESEARCH/$PROJECT_ID"
 export RESEARCH_PROJECT_ID="$PROJECT_ID"
+# All tool stderr and pipeline messages go to project log for easier debugging
+CYCLE_LOG="$PROJ_DIR/log.txt"
 SECRETS="$OPERATOR_ROOT/conf/secrets.env"
 [ -f "$SECRETS" ] && set -a && source "$SECRETS" && set +a
 POLICY="$OPERATOR_ROOT/conf/policy.env"
@@ -35,13 +37,13 @@ export RESEARCH_CRITIQUE_MODEL="${RESEARCH_CRITIQUE_MODEL:-gpt-5.2}"
 export RESEARCH_VERIFY_MODEL="${RESEARCH_VERIFY_MODEL:-gemini-3.1-pro-preview}"
 export RESEARCH_HYPOTHESIS_MODEL="${RESEARCH_HYPOTHESIS_MODEL:-gemini-3.1-pro-preview}"
 
-# Core 10 tool integration flags (fail-open; default 0 to avoid regression)
-export RESEARCH_ENABLE_KNOWLEDGE_SEED="${RESEARCH_ENABLE_KNOWLEDGE_SEED:-0}"
-export RESEARCH_ENABLE_QUESTION_GRAPH="${RESEARCH_ENABLE_QUESTION_GRAPH:-0}"
-export RESEARCH_ENABLE_ACADEMIC="${RESEARCH_ENABLE_ACADEMIC:-0}"
+# Core 10 tool integration: Welle 1 on by default (knowledge_seed, question_graph, context_manager, academic)
+export RESEARCH_ENABLE_KNOWLEDGE_SEED="${RESEARCH_ENABLE_KNOWLEDGE_SEED:-1}"
+export RESEARCH_ENABLE_QUESTION_GRAPH="${RESEARCH_ENABLE_QUESTION_GRAPH:-1}"
+export RESEARCH_ENABLE_ACADEMIC="${RESEARCH_ENABLE_ACADEMIC:-1}"
 export RESEARCH_ENABLE_TOKEN_GOVERNOR="${RESEARCH_ENABLE_TOKEN_GOVERNOR:-0}"
 export RESEARCH_ENABLE_RELEVANCE_GATE="${RESEARCH_ENABLE_RELEVANCE_GATE:-0}"
-export RESEARCH_ENABLE_CONTEXT_MANAGER="${RESEARCH_ENABLE_CONTEXT_MANAGER:-0}"
+export RESEARCH_ENABLE_CONTEXT_MANAGER="${RESEARCH_ENABLE_CONTEXT_MANAGER:-1}"
 export RESEARCH_ENABLE_DYNAMIC_OUTLINE="${RESEARCH_ENABLE_DYNAMIC_OUTLINE:-0}"
 export RESEARCH_ENABLE_CLAIM_STATE_MACHINE="${RESEARCH_ENABLE_CLAIM_STATE_MACHINE:-0}"
 export RESEARCH_ENABLE_CONTRADICTION_LINKING="${RESEARCH_ENABLE_CONTRADICTION_LINKING:-0}"
@@ -120,7 +122,8 @@ export RESEARCH_MEMORY_DOMAIN_OVERRIDES_JSON
 export RESEARCH_MEMORY_CRITIC_THRESHOLD
 export RESEARCH_MEMORY_REVISE_ROUNDS
 
-log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$PROJ_DIR/log.txt" 2>/dev/null; echo "$*" >&2; }
+log() { echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] $*" >> "$CYCLE_LOG" 2>/dev/null; echo "$*" >&2; }
+log "Cycle started: project=$PROJECT_ID phase=$PHASE"
 
 # ── Terminal status guard: if project is dead, don't run ──
 _STATUS=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('status',''), end='')" 2>/dev/null || echo "")
@@ -144,7 +147,7 @@ progress_step() { python3 "$TOOLS/research_progress.py" step "$PROJECT_ID" "$1" 
 progress_done() { python3 "$TOOLS/research_progress.py" done "$PROJECT_ID" 2>/dev/null || true; }
 
 log_v2_mode_for_cycle() {
-  python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" "$PHASE" <<'MEMORY_V2_MODE' 2>> "$PWD/log.txt" || true
+  python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" "$PHASE" <<'MEMORY_V2_MODE' 2>> "$CYCLE_LOG" || true
 import json, os, sys
 from pathlib import Path
 proj_dir, op_root, project_id, phase = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4]
@@ -252,6 +255,7 @@ log_v2_mode_for_cycle
 
 advance_phase() {
   local next_phase="$1"
+  log "advance_phase: requesting $next_phase"
   # Conductor hybrid gate: ask conductor if we should really advance (unless gate disabled or conductor is master)
   if [ -f "$TOOLS/research_conductor.py" ] && [ "${RESEARCH_CONDUCTOR_GATE:-1}" != "0" ] && [ "${RESEARCH_USE_CONDUCTOR:-0}" != "1" ]; then
     local conductor_next
@@ -263,11 +267,12 @@ advance_phase() {
     fi
   fi
   python3 "$TOOLS/research_advance_phase.py" "$PROJ_DIR" "$next_phase"
+  log "advance_phase: set phase=$next_phase"
 }
 
 persist_v2_episode() {
   local run_status="$1"
-  python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" "$run_status" <<'MEMORY_V2_EPISODE' 2>> "$PWD/log.txt" || true
+  python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" "$run_status" <<'MEMORY_V2_EPISODE' 2>> "$CYCLE_LOG" || true
 import json, sys
 from collections import Counter
 from pathlib import Path
@@ -416,7 +421,7 @@ MEMORY_V2_EPISODE
 
 # Phase C: Conductor as master when RESEARCH_USE_CONDUCTOR=1 (bash pipeline remains fallback when 0)
 if [ "${RESEARCH_USE_CONDUCTOR:-0}" = "1" ] && [ -f "$TOOLS/research_conductor.py" ]; then
-  if python3 "$TOOLS/research_conductor.py" run_cycle "$PROJECT_ID" 2>> "$PWD/log.txt"; then
+  if python3 "$TOOLS/research_conductor.py" run_cycle "$PROJECT_ID" 2>> "$CYCLE_LOG"; then
     log "Conductor run_cycle completed."
     echo "done"
     exit 0
@@ -426,7 +431,7 @@ fi
 
 # Shadow conductor: log what conductor would decide at this phase (no execution control)
 if [ -f "$TOOLS/research_conductor.py" ] && [ "${RESEARCH_USE_CONDUCTOR:-0}" != "1" ]; then
-  python3 "$TOOLS/research_conductor.py" shadow "$PROJECT_ID" "$PHASE" >> "$PROJ_DIR/conductor_shadow.log" 2>> "$PWD/log.txt" || true
+  python3 "$TOOLS/research_conductor.py" shadow "$PROJECT_ID" "$PHASE" >> "$PROJ_DIR/conductor_shadow.log" 2>> "$CYCLE_LOG" || true
 fi
 
 case "$PHASE" in
@@ -443,14 +448,20 @@ case "$PHASE" in
 
     # Core 10: prior knowledge and question graph before planner (Welle 1)
     if [ "${RESEARCH_ENABLE_KNOWLEDGE_SEED:-0}" = "1" ]; then
-      python3 "$TOOLS/research_knowledge_seed.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_knowledge_seed.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     fi
     if [ "${RESEARCH_ENABLE_QUESTION_GRAPH:-0}" = "1" ]; then
-      python3 "$TOOLS/research_question_graph.py" build "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_question_graph.py" build "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     fi
 
     progress_step "Creating research plan"
-    python3 "$TOOLS/research_planner.py" "$QUESTION" "$PROJECT_ID" > "$ART/research_plan.json" 2>> "$PWD/log.txt"
+    log "Starting: research_planner"
+    timeout 300 python3 "$TOOLS/research_planner.py" "$QUESTION" "$PROJECT_ID" > "$ART/research_plan.json" 2>> "$CYCLE_LOG" || true
+    if [ ! -s "$ART/research_plan.json" ]; then
+      echo '{"queries":[],"topics":[],"complexity":"moderate"}' > "$ART/research_plan.json"
+      log "Planner failed or timed out — using minimal plan"
+    fi
+    log "Done: research_planner"
     cp "$ART/research_plan.json" "$PROJ_DIR/research_plan.json"
 
     QUERY_COUNT=$(python3 -c "import json; d=json.load(open('$ART/research_plan.json')); print(len(d.get('queries',[])), end='')" 2>/dev/null || echo "0")
@@ -458,14 +469,14 @@ case "$PHASE" in
     READ_LIMIT=$(python3 -c "c='$COMPLEXITY'; print(40 if c=='complex' else 25 if c=='moderate' else 15, end='')")
 
     progress_step "Searching $QUERY_COUNT targeted queries"
-    python3 "$TOOLS/research_web_search.py" --queries-file "$ART/research_plan.json" --max-per-query 5 > "$ART/web_search_round1.json" 2>> "$PWD/log.txt" || true
+    python3 "$TOOLS/research_web_search.py" --queries-file "$ART/research_plan.json" --max-per-query 5 > "$ART/web_search_round1.json" 2>> "$CYCLE_LOG" || true
 
     # Core 10: academic sources into URL pool (Welle 1)
     if [ "${RESEARCH_ENABLE_ACADEMIC:-0}" = "1" ]; then
       mkdir -p "$PROJ_DIR/sources"
-      python3 "$TOOLS/research_academic.py" semantic_scholar "$QUESTION" --max 5 > "$ART/academic_round1.json" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_academic.py" semantic_scholar "$QUESTION" --max 5 > "$ART/academic_round1.json" 2>> "$CYCLE_LOG" || true
       if [ -s "$ART/academic_round1.json" ]; then
-        python3 - "$PROJ_DIR" "$ART/academic_round1.json" <<'MERGE_ACADEMIC' 2>> "$PWD/log.txt" || true
+        python3 - "$PROJ_DIR" "$ART/academic_round1.json" <<'MERGE_ACADEMIC' 2>> "$CYCLE_LOG" || true
 import json, sys, hashlib
 from pathlib import Path
 proj_dir, path = Path(sys.argv[1]), Path(sys.argv[2])
@@ -566,7 +577,7 @@ for f in (proj_dir / "sources").glob("*.json"):
 ranked.sort()
 (art / "read_order_round1.txt").write_text("\n".join(path for _, _, path in ranked))
 SMART_RANK
-    python3 - "$PROJ_DIR" "$ART" "$OPERATOR_ROOT" "$QUESTION" <<FILTER_READ_URLS 2>> "$PWD/log.txt" || true
+    python3 - "$PROJ_DIR" "$ART" "$OPERATOR_ROOT" "$QUESTION" <<FILTER_READ_URLS 2>> "$CYCLE_LOG" || true
 import json, sys
 from pathlib import Path
 proj_dir, art, op_root, question = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]
@@ -597,12 +608,14 @@ for p in paths:
 order_file.write_text("\n".join(filtered))
 FILTER_READ_URLS
 
-    READ_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/read_order_round1.txt" --read-limit "$READ_LIMIT" --workers 8 2>> "$PWD/log.txt" | tail -1)
+    log "Starting: parallel_reader explore (limit=$READ_LIMIT workers=8)"
+    READ_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/read_order_round1.txt" --read-limit "$READ_LIMIT" --workers 8 2>> "$CYCLE_LOG" | tail -1)
     read_attempts=0
     read_successes=0
     [ -n "$READ_STATS" ] && read -r read_attempts read_successes <<< "$(echo "$READ_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null)" 2>/dev/null || true
+    log "Done: parallel_reader explore (attempts=$read_attempts successes=$read_successes)"
     SATURATION_DETECTED=0
-    python3 "$TOOLS/research_saturation_check.py" "$PROJ_DIR" 2>> "$PWD/log.txt" || SATURATION_DETECTED=1
+    python3 "$TOOLS/research_saturation_check.py" "$PROJ_DIR" 2>> "$CYCLE_LOG" || SATURATION_DETECTED=1
 
     progress_step "Assessing source coverage"
     python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round1.json"
@@ -611,10 +624,10 @@ FILTER_READ_URLS
 
     if [ "$COVERAGE_PASS" != "True" ]; then
       progress_step "Planner Round 2: precision queries"
-      python3 "$TOOLS/research_planner.py" --refinement-queries "$ART/coverage_round1.json" "$PROJECT_ID" > "$ART/refinement_queries.json" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_planner.py" --refinement-queries "$ART/coverage_round1.json" "$PROJECT_ID" > "$ART/refinement_queries.json" 2>> "$CYCLE_LOG" || true
       REFINEMENT_COUNT=$(python3 -c "import json; d=json.load(open('$ART/refinement_queries.json')) if __import__('pathlib').Path('$ART/refinement_queries.json').exists() else {}; print(len(d.get('queries', [])), end='')" 2>/dev/null || echo "0")
       if [ "$REFINEMENT_COUNT" -gt 0 ] && [ "$SATURATION_DETECTED" != "1" ]; then
-      python3 "$TOOLS/research_web_search.py" --queries-file "$ART/refinement_queries.json" --max-per-query 5 > "$ART/refinement_search.json" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_web_search.py" --queries-file "$ART/refinement_queries.json" --max-per-query 5 > "$ART/refinement_search.json" 2>> "$CYCLE_LOG" || true
       python3 - "$PROJ_DIR" "$ART/refinement_search.json" <<'SAVE_REFINEMENT'
 import json, sys, hashlib
 from pathlib import Path
@@ -641,13 +654,13 @@ Path('$ART/refinement_urls_to_read.txt').write_text('\n'.join(urls[:10]))
 "
       if [ -s "$ART/refinement_urls_to_read.txt" ]; then
         progress_step "Reading refinement sources"
-        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/refinement_urls_to_read.txt" --read-limit 10 --workers 8 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
+        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/refinement_urls_to_read.txt" --read-limit 10 --workers 8 2>> "$CYCLE_LOG" | tail -1 > /dev/null || true
       fi
     fi
 
       progress_step "Filling coverage gaps (Round 2)"
       python3 "$TOOLS/research_planner.py" --gap-fill "$ART/coverage_round1.json" "$PROJECT_ID" > "$ART/gap_queries.json"
-      python3 "$TOOLS/research_web_search.py" --queries-file "$ART/gap_queries.json" --max-per-query 8 > "$ART/gap_search_round2.json" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_web_search.py" --queries-file "$ART/gap_queries.json" --max-per-query 8 > "$ART/gap_search_round2.json" 2>> "$CYCLE_LOG" || true
       python3 - "$PROJ_DIR" "$ART/gap_search_round2.json" <<'SAVE_GAP'
 import json, sys, hashlib
 from pathlib import Path
@@ -674,7 +687,7 @@ Path('$ART/gap_urls_to_read.txt').write_text('\n'.join(urls[:10]))
 "
       if [ -s "$ART/gap_urls_to_read.txt" ] && [ "$SATURATION_DETECTED" != "1" ]; then
         progress_step "Reading gap-fill sources"
-        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/gap_urls_to_read.txt" --read-limit 10 --workers 8 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
+        python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/gap_urls_to_read.txt" --read-limit 10 --workers 8 2>> "$CYCLE_LOG" | tail -1 > /dev/null || true
       fi
       python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round2.json"
       cp "$ART/coverage_round2.json" "$PROJ_DIR/coverage_round2.json"
@@ -684,7 +697,7 @@ Path('$ART/gap_urls_to_read.txt').write_text('\n'.join(urls[:10]))
         progress_step "Deep-diving thin topics (Round 3)"
         echo "$THIN_TOPICS" > "$ART/thin_topics.json"
         python3 "$TOOLS/research_planner.py" --perspective-rotate "$ART/thin_topics.json" "$PROJECT_ID" > "$ART/depth_queries.json"
-        python3 "$TOOLS/research_web_search.py" --queries-file "$ART/depth_queries.json" --max-per-query 5 > "$ART/depth_search_round3.json" 2>> "$PWD/log.txt" || true
+        python3 "$TOOLS/research_web_search.py" --queries-file "$ART/depth_queries.json" --max-per-query 5 > "$ART/depth_search_round3.json" 2>> "$CYCLE_LOG" || true
         python3 - "$PROJ_DIR" "$ART/depth_search_round3.json" <<'SAVE_DEPTH'
 import json, sys, hashlib
 from pathlib import Path
@@ -711,7 +724,7 @@ Path('$ART/depth_urls_to_read.txt').write_text('\n'.join(urls[:8]))
 "
         if [ -s "$ART/depth_urls_to_read.txt" ] && [ "$SATURATION_DETECTED" != "1" ]; then
           progress_step "Reading depth sources"
-          python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/depth_urls_to_read.txt" --read-limit 8 --workers 8 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
+          python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/depth_urls_to_read.txt" --read-limit 8 --workers 8 2>> "$CYCLE_LOG" | tail -1 > /dev/null || true
         fi
         python3 "$TOOLS/research_coverage.py" "$PROJECT_ID" > "$ART/coverage_round3.json"
         cp "$ART/coverage_round3.json" "$PROJ_DIR/coverage_round3.json"
@@ -721,7 +734,9 @@ Path('$ART/depth_urls_to_read.txt').write_text('\n'.join(urls[:8]))
     fi
 
     progress_step "Extracting findings"
-    python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    log "Starting: research_deep_extract"
+    timeout 600 python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
+    log "Done: research_deep_extract"
     # Persist read stats for evidence gate and UI (research_quality_gate._load_explore_stats)
     read_failures=$((read_attempts - read_successes))
     mkdir -p "$PROJ_DIR/explore"
@@ -738,13 +753,13 @@ p.write_text(json.dumps({
 "
     # Core 10: post-read relevance gate, context compression, dynamic outline (Welle 1–2)
     if [ "${RESEARCH_ENABLE_RELEVANCE_GATE:-0}" = "1" ]; then
-      python3 "$TOOLS/research_relevance_gate.py" batch "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_relevance_gate.py" batch "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     fi
     if [ "${RESEARCH_ENABLE_CONTEXT_MANAGER:-0}" = "1" ]; then
-      python3 "$TOOLS/research_context_manager.py" add "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_context_manager.py" add "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     fi
     if [ "${RESEARCH_ENABLE_DYNAMIC_OUTLINE:-0}" = "1" ]; then
-      python3 "$TOOLS/research_dynamic_outline.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_dynamic_outline.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     fi
     advance_phase "focus"
     ;;
@@ -771,7 +786,7 @@ p.write_text(json.dumps({
       python3 "$TOOLS/research_planner.py" --gap-fill "$COV_FILE" "$PROJECT_ID" > "$ART/focus_queries.json"
     fi
     progress_step "Searching for sources (KI)"
-    python3 "$TOOLS/research_web_search.py" --queries-file "$ART/focus_queries.json" --max-per-query 8 > "$ART/focus_search.json" 2>> "$PWD/log.txt" || true
+    python3 "$TOOLS/research_web_search.py" --queries-file "$ART/focus_queries.json" --max-per-query 8 > "$ART/focus_search.json" 2>> "$CYCLE_LOG" || true
     progress_step "Saving and ranking sources"
     python3 - "$PROJ_DIR" "$ART/focus_search.json" <<'FOCUS_SAVE'
 import json, sys, hashlib
@@ -823,15 +838,15 @@ for f in (proj_dir / "sources").glob("*.json"):
 ranked.sort()
 (art / "focus_read_order.txt").write_text("\n".join(path for _, path in ranked))
 RANK_FOCUS
-    FOCUS_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" focus --input-file "$ART/focus_read_order.txt" --read-limit 15 --workers 8 2>> "$PWD/log.txt" | tail -1)
+    FOCUS_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" focus --input-file "$ART/focus_read_order.txt" --read-limit 15 --workers 8 2>> "$CYCLE_LOG" | tail -1)
     focus_read_attempts=0
     focus_read_successes=0
     [ -n "$FOCUS_STATS" ] && read -r focus_read_attempts focus_read_successes <<< "$(echo "$FOCUS_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null)" 2>/dev/null || true
     log "Focus reads: $focus_read_attempts attempted, $focus_read_successes succeeded"
     progress_step "Extracting focused findings"
-    python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    timeout 600 python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     if [ "${RESEARCH_ENABLE_CONTEXT_MANAGER:-0}" = "1" ]; then
-      python3 "$TOOLS/research_context_manager.py" add "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_context_manager.py" add "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     fi
     progress_done
     advance_phase "connect"
@@ -844,21 +859,21 @@ RANK_FOCUS
     log "Phase: VERIFY — source reliability, claim verification, fact-check"
     progress_start "verify"
     progress_step "Checking source reliability"
-    if ! python3 "$TOOLS/research_verify.py" "$PROJECT_ID" source_reliability > "$ART/source_reliability.json" 2>> "$PWD/log.txt"; then
+    if ! timeout 300 python3 "$TOOLS/research_verify.py" "$PROJECT_ID" source_reliability > "$ART/source_reliability.json" 2>> "$CYCLE_LOG"; then
       log "source_reliability failed — retrying in 30s"
       sleep 30
-      python3 "$TOOLS/research_verify.py" "$PROJECT_ID" source_reliability > "$ART/source_reliability.json" 2>> "$PWD/log.txt" || true
+      timeout 300 python3 "$TOOLS/research_verify.py" "$PROJECT_ID" source_reliability > "$ART/source_reliability.json" 2>> "$CYCLE_LOG" || true
     fi
     progress_step "Verifying claims"
-    if ! python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification > "$ART/claim_verification.json" 2>> "$PWD/log.txt"; then
+    if ! timeout 300 python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification > "$ART/claim_verification.json" 2>> "$CYCLE_LOG"; then
       log "claim_verification failed — retrying in 30s"
       sleep 30
-      python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification > "$ART/claim_verification.json" 2>> "$PWD/log.txt" || true
+      timeout 300 python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification > "$ART/claim_verification.json" 2>> "$CYCLE_LOG" || true
     fi
-    if ! python3 "$TOOLS/research_verify.py" "$PROJECT_ID" fact_check > "$ART/fact_check.json" 2>> "$PWD/log.txt"; then
+    if ! timeout 300 python3 "$TOOLS/research_verify.py" "$PROJECT_ID" fact_check > "$ART/fact_check.json" 2>> "$CYCLE_LOG"; then
       log "fact_check failed — retrying in 30s"
       sleep 30
-      python3 "$TOOLS/research_verify.py" "$PROJECT_ID" fact_check > "$ART/fact_check.json" 2>> "$PWD/log.txt" || true
+      timeout 300 python3 "$TOOLS/research_verify.py" "$PROJECT_ID" fact_check > "$ART/fact_check.json" 2>> "$CYCLE_LOG" || true
     fi
     # Persist verify artifacts to project for synthesize phase (only copy non-empty files)
     mkdir -p "$PROJ_DIR/verify"
@@ -867,20 +882,20 @@ RANK_FOCUS
     [ -s "$ART/fact_check.json" ] && cp "$ART/fact_check.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     # Claim ledger: deterministic is_verified (V3)
     progress_step "Building claim ledger"
-    python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_ledger > "$ART/claim_ledger.json" 2>> "$PWD/log.txt" || true
+    timeout 300 python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_ledger > "$ART/claim_ledger.json" 2>> "$CYCLE_LOG" || true
     [ -s "$ART/claim_ledger.json" ] && cp "$ART/claim_ledger.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     # Core 10: AEM claim state machine, contradiction linking, falsification gate (Welle 3)
     if [ "${RESEARCH_ENABLE_CLAIM_STATE_MACHINE:-0}" = "1" ]; then
-      python3 "$TOOLS/research_claim_state_machine.py" upgrade "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_claim_state_machine.py" upgrade "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     fi
     if [ "${RESEARCH_ENABLE_CONTRADICTION_LINKING:-0}" = "1" ]; then
-      python3 "$TOOLS/research_contradiction_linking.py" run "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_contradiction_linking.py" run "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     fi
     if [ "${RESEARCH_ENABLE_FALSIFICATION_GATE:-0}" = "1" ]; then
-      python3 "$TOOLS/research_falsification_gate.py" run "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_falsification_gate.py" run "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     fi
     # Counter-evidence: search for contradicting sources for top 3 verified claims (before gate)
-    python3 - "$PROJ_DIR" "$ART" "$TOOLS" "$OPERATOR_ROOT" <<'COUNTER_EVIDENCE' 2>> "$PWD/log.txt" || true
+    python3 - "$PROJ_DIR" "$ART" "$TOOLS" "$OPERATOR_ROOT" <<'COUNTER_EVIDENCE' 2>> "$CYCLE_LOG" || true
 import json, sys, hashlib, subprocess
 from pathlib import Path
 proj_dir, art, tools, op_root = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4])
@@ -944,11 +959,11 @@ for i in range(6):
 (art / "counter_urls_to_read.txt").write_text("\n".join(urls_to_read[:9]))
 COUNTER_EVIDENCE
     if [ -f "$ART/counter_urls_to_read.txt" ] && [ -s "$ART/counter_urls_to_read.txt" ]; then
-      python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" counter --input-file "$ART/counter_urls_to_read.txt" --read-limit 9 --workers 8 2>> "$PWD/log.txt" | tail -1 > /dev/null || true
-      python3 "$TOOLS/research_reason.py" "$PROJECT_ID" contradiction_detection > "$PROJ_DIR/contradictions.json" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" counter --input-file "$ART/counter_urls_to_read.txt" --read-limit 9 --workers 8 2>> "$CYCLE_LOG" | tail -1 > /dev/null || true
+      python3 "$TOOLS/research_reason.py" "$PROJECT_ID" contradiction_detection > "$PROJ_DIR/contradictions.json" 2>> "$CYCLE_LOG" || true
     fi
     # Evidence Gate: must pass before synthesize
-    GATE_RESULT=$(python3 "$TOOLS/research_quality_gate.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || echo '{"pass":false}')
+    GATE_RESULT=$(timeout 300 python3 "$TOOLS/research_quality_gate.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || echo '{"pass":false}')
     if ! GATE_PASS=$(echo "$GATE_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('pass') else 0, end='')" 2>/dev/null); then GATE_PASS=0; fi
     if [ "$GATE_PASS" != "1" ]; then
       # Smart recovery: if unread sources remain and recovery not yet attempted, read more and re-gate
@@ -991,19 +1006,19 @@ for f in (proj_dir / "sources").glob("*.json"):
 ranked.sort()
 (art / "recovery_read_order.txt").write_text("\n".join(path for _, path in ranked))
 RANK_RECOVERY
-        RECOVERY_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" recovery --input-file "$ART/recovery_read_order.txt" --read-limit 10 --workers 8 2>> "$PWD/log.txt" | tail -1)
+        RECOVERY_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" recovery --input-file "$ART/recovery_read_order.txt" --read-limit 10 --workers 8 2>> "$CYCLE_LOG" | tail -1)
         recovery_reads=0
         recovery_successes=0
         [ -n "$RECOVERY_STATS" ] && read -r recovery_reads recovery_successes <<< "$(echo "$RECOVERY_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null)" 2>/dev/null || true
         log "Recovery reads: $recovery_reads attempted, $recovery_successes succeeded"
         if [ "$recovery_successes" -gt 0 ]; then
           # Re-run claim verification and ledger with new findings
-          python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification > "$ART/claim_verification.json" 2>> "$PWD/log.txt" || true
+          timeout 300 python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_verification > "$ART/claim_verification.json" 2>> "$CYCLE_LOG" || true
           [ -s "$ART/claim_verification.json" ] && cp "$ART/claim_verification.json" "$PROJ_DIR/verify/" 2>/dev/null || true
-          python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_ledger > "$ART/claim_ledger.json" 2>> "$PWD/log.txt" || true
+          timeout 300 python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_ledger > "$ART/claim_ledger.json" 2>> "$CYCLE_LOG" || true
           [ -s "$ART/claim_ledger.json" ] && cp "$ART/claim_ledger.json" "$PROJ_DIR/verify/" 2>/dev/null || true
           # Re-check evidence gate
-          GATE_RESULT=$(python3 "$TOOLS/research_quality_gate.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || echo '{"pass":false}')
+          GATE_RESULT=$(timeout 300 python3 "$TOOLS/research_quality_gate.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || echo '{"pass":false}')
           if ! GATE_PASS=$(echo "$GATE_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(1 if d.get('pass') else 0, end='')" 2>/dev/null); then GATE_PASS=0; fi
           log "Recovery gate result: GATE_PASS=$GATE_PASS"
         fi
@@ -1037,7 +1052,7 @@ PENDING_REVIEW
         exit 0
       fi
       # decision == "fail": try gap-driven loop-back to focus (max 2)
-      python3 "$TOOLS/research_reason.py" "$PROJECT_ID" gap_analysis > "$ART/gaps_verify.json" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_reason.py" "$PROJECT_ID" gap_analysis > "$ART/gaps_verify.json" 2>> "$CYCLE_LOG" || true
       LOOP_BACK=$(python3 - "$PROJ_DIR" "$ART" <<'LOOPCHECK'
 import json, sys
 from pathlib import Path
@@ -1092,10 +1107,10 @@ d["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 (proj_dir / "project.json").write_text(json.dumps(d, indent=2))
 GATE_FAIL
       # Generate abort report from existing data (zero LLM cost)
-      python3 "$TOOLS/research_abort_report.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_abort_report.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
       log "Abort report generated for $PROJECT_ID"
       # Brain/Memory reflection after failed run (non-fatal)
-      python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" <<'BRAIN_REFLECT' 2>> "$PWD/log.txt" || true
+      python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" <<'BRAIN_REFLECT' 2>> "$CYCLE_LOG" || true
 import json, sys
 from pathlib import Path
 proj_dir, op_root, project_id = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
@@ -1116,8 +1131,8 @@ try:
 except Exception as e:
     print(f"[brain] reflection failed (non-fatal): {e}", file=sys.stderr)
 BRAIN_REFLECT
-      python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
-      python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
+      python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
       persist_v2_episode "failed"
     else
     echo "$GATE_RESULT" > "$ART/evidence_gate_result.json" 2>/dev/null || true
@@ -1164,13 +1179,13 @@ for src in rel.get("sources", []):
 VERIFY_PY
     fi
     # Update source credibility from verify outcomes (per-domain)
-    python3 "$TOOLS/research_source_credibility.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    python3 "$TOOLS/research_source_credibility.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     # AEM Settlement (optional; when contracts present): upgrade ledger, run settlement, write AEM artifacts.
     # Enforcement: observe=fail-open; enforce=block if AEM fails; strict=block if AEM fails or oracle_integrity_rate < 0.80.
     AEM_ADVANCE=1
     if [ -f "$TOOLS/research_claim_outcome_schema.py" ] && [ -f "$TOOLS/research_episode_metrics.py" ]; then
       progress_step "AEM settlement"
-      python3 "$TOOLS/research_aem_settlement.py" "$PROJECT_ID" > "$ART/aem_result.json" 2>> "$PWD/log.txt"
+      python3 "$TOOLS/research_aem_settlement.py" "$PROJECT_ID" > "$ART/aem_result.json" 2>> "$CYCLE_LOG"
       AEM_EXIT=$?
       AEM_MODE="${AEM_ENFORCEMENT_MODE:-observe}"
       if [ "$AEM_MODE" = "enforce" ] || [ "$AEM_MODE" = "strict" ]; then
@@ -1226,7 +1241,7 @@ AEM_BLOCK
     FM=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print((d.get('config') or {}).get('research_mode', 'standard'), end='')" 2>/dev/null || echo "standard")
     if [ "$FM" = "discovery" ]; then
       progress_step "Running Discovery Analysis"
-      python3 "$TOOLS/research_discovery_analysis.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_discovery_analysis.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     fi
     # Evidence gate passed — advance to synthesize (no loop-back; gate already enforces evidence)
     advance_phase "synthesize"
@@ -1238,7 +1253,7 @@ AEM_BLOCK
     progress_step "Generating outline"
     export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
     # Multi-pass section-by-section synthesis (research-firm-grade report)
-    python3 "$TOOLS/research_synthesize.py" "$PROJECT_ID" > "$ART/report.md" 2>> "$PWD/log.txt" || true
+    timeout 900 python3 "$TOOLS/research_synthesize.py" "$PROJECT_ID" > "$ART/report.md" 2>> "$CYCLE_LOG" || true
     progress_step "Saving report & applying citations"
     python3 - "$PROJ_DIR" "$ART" "$OPERATOR_ROOT" <<'PY'
 import json, os, sys
@@ -1399,11 +1414,11 @@ PY
     fi
     MAX_REVISE_ROUNDS="${RESEARCH_MEMORY_REVISE_ROUNDS:-2}"
     progress_step "Running quality critic"
-    python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$PWD/log.txt" || true
+    timeout 600 python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$CYCLE_LOG" || true
     if [ ! -s "$ART/critique.json" ]; then
       log "Critic output empty — retrying in 15s"
       sleep 15
-      python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$PWD/log.txt" || true
+      timeout 600 python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$CYCLE_LOG" || true
     fi
     [ -s "$ART/critique.json" ] && cp "$ART/critique.json" "$PROJ_DIR/verify/" 2>/dev/null || true
     SCORE=0.5
@@ -1438,13 +1453,13 @@ except Exception:
       else
         log "Report quality below threshold (score $SCORE, threshold $CRITIC_THRESHOLD). Revision round $REV_ROUND/$MAX_REVISE_ROUNDS..."
       fi
-      python3 "$TOOLS/research_critic.py" "$PROJECT_ID" revise "$ART" > "$ART/revised_report.md" 2>> "$PWD/log.txt" || true
+      timeout 600 python3 "$TOOLS/research_critic.py" "$PROJECT_ID" revise "$ART" > "$ART/revised_report.md" 2>> "$CYCLE_LOG" || true
       if [ -f "$ART/revised_report.md" ] && [ -s "$ART/revised_report.md" ]; then
         cp "$ART/revised_report.md" "$ART/report.md"
         REV_TS=$(python3 -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ'), end='')")
         cp "$ART/revised_report.md" "$PROJ_DIR/reports/report_${REV_TS}_revised${REV_ROUND}.md"
       fi
-      python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$PWD/log.txt" || true
+      timeout 600 python3 "$TOOLS/research_critic.py" "$PROJECT_ID" critique "$ART" > "$ART/critique.json" 2>> "$CYCLE_LOG" || true
       SCORE=$(python3 -c "import json; d=json.load(open('$ART/critique.json')); print(d.get('score', 0.5), end='')" 2>/dev/null || echo "0.5")
     done
     progress_step "Critic done — score: $SCORE"
@@ -1464,8 +1479,8 @@ d["quality_gate"]["fail_code"] = "failed_quality_gate"
 d["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 (proj_dir / "project.json").write_text(json.dumps(d, indent=2))
 QF_FAIL
-      python3 "$TOOLS/research_abort_report.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
-      python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" "$SCORE" <<'OUTCOME_RECORD' 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_abort_report.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
+      python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" "$SCORE" <<'OUTCOME_RECORD' 2>> "$CYCLE_LOG" || true
 import json, sys
 from pathlib import Path
 proj_dir, op_root, project_id, score = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], float(sys.argv[4])
@@ -1482,8 +1497,8 @@ try:
 except Exception as e:
     print(f"[outcome] failed (non-fatal): {e}", file=sys.stderr)
 OUTCOME_RECORD
-      python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
-      python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+      python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
+      python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
       persist_v2_episode "failed"
     else
     # Persist quality_gate and critique to project (passed)
@@ -1531,14 +1546,14 @@ MANIFEST_UPDATE
     # Generate PDF report (non-fatal)
     log "Generating PDF report..."
     progress_step "Generating final PDF"
-    if ! python3 "$OPERATOR_ROOT/tools/research_pdf_report.py" "$PROJECT_ID" 2>>"$PWD/log.txt"; then
+    if ! python3 "$OPERATOR_ROOT/tools/research_pdf_report.py" "$PROJECT_ID" 2>> "$CYCLE_LOG"; then
       log "PDF generation failed (install weasyprint? pip install weasyprint); see log.txt for details"
     fi
     progress_step "PDF generated"
     # Store verified findings in Memory DB for cross-domain learning (non-fatal)
-    python3 "$OPERATOR_ROOT/tools/research_embed.py" "$PROJECT_ID" 2>>"$PWD/log.txt" || true
+    python3 "$OPERATOR_ROOT/tools/research_embed.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     # Update cross-project links (Brain/UI can show cross-links)
-    python3 "$TOOLS/research_cross_domain.py" --threshold 0.75 --max-pairs 20 2>>"$PWD/log.txt" || true
+    python3 "$TOOLS/research_cross_domain.py" --threshold 0.75 --max-pairs 20 2>> "$CYCLE_LOG" || true
     advance_phase "done"
     progress_done
     # Telegram: Forschung abgeschlossen (only when passed)
@@ -1549,10 +1564,10 @@ MANIFEST_UPDATE
       rm -f "$MSG_FILE"
     fi
     if [ "${RESEARCH_AUTO_FOLLOWUP:-0}" = "1" ] && [ -f "$TOOLS/research_auto_followup.py" ]; then
-      python3 "$TOOLS/research_auto_followup.py" "$PROJECT_ID" >> "$PWD/log.txt" 2>&1 || true
+      python3 "$TOOLS/research_auto_followup.py" "$PROJECT_ID" >> "$CYCLE_LOG" 2>&1 || true
     fi
     # Brain/Memory reflection after successful run (non-fatal)
-    python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" <<'BRAIN_REFLECT' 2>> "$PWD/log.txt" || true
+    python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" <<'BRAIN_REFLECT' 2>> "$CYCLE_LOG" || true
 import json, sys
 from pathlib import Path
 proj_dir, op_root, project_id = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
@@ -1575,8 +1590,8 @@ try:
 except Exception as e:
     print(f"[brain] reflection failed (non-fatal): {e}", file=sys.stderr)
 BRAIN_REFLECT
-    python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
-    python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
+    python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     persist_v2_episode "done"
     fi
     ;;
@@ -1589,5 +1604,5 @@ BRAIN_REFLECT
     ;;
 esac
 
-echo "Phase $PHASE complete." >> "$PWD/log.txt"
+echo "Phase $PHASE complete." >> "$CYCLE_LOG"
 echo "done"
