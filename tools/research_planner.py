@@ -596,10 +596,46 @@ def _persist_strategy_context(project_id: str, strategy_ctx: dict[str, Any] | No
         pass
 
 
+def _load_prior_knowledge_and_questions(project_id: str) -> tuple[str, str]:
+    """Load optional prior_knowledge.json and questions/questions.json for planner context. Returns (prior_snippet, questions_snippet)."""
+    prior_snippet = ""
+    questions_snippet = ""
+    if not project_id:
+        return prior_snippet, questions_snippet
+    root = research_root() / project_id
+    try:
+        pk_path = root / "prior_knowledge.json"
+        if pk_path.exists():
+            data = json.loads(pk_path.read_text(encoding="utf-8", errors="replace"))
+            principles = data.get("principles") or []
+            findings = data.get("findings") or []
+            parts = []
+            if principles:
+                parts.append("Principles: " + "; ".join((p.get("description") or "")[:200] for p in principles[:5]))
+            if findings:
+                parts.append("Prior findings: " + "; ".join((f.get("preview") or "")[:150] for f in findings[:8]))
+            if parts:
+                prior_snippet = "\nPrior knowledge (use to align queries): " + " ".join(parts)[:1200]
+    except Exception:
+        pass
+    try:
+        q_path = root / "questions" / "questions.json"
+        if q_path.exists():
+            data = json.loads(q_path.read_text(encoding="utf-8", errors="replace"))
+            questions = data.get("questions") or []
+            if questions:
+                q_lines = [f"- {(q.get('text') or '')[:120]} (uncertainty: {q.get('uncertainty') or {}})" for q in questions[:10]]
+                questions_snippet = "\nSub-questions / uncertainty (consider in plan):\n" + "\n".join(q_lines)[:800]
+    except Exception:
+        pass
+    return prior_snippet, questions_snippet
+
+
 def build_plan(question: str, project_id: str) -> dict[str, Any]:
     system = "You are a senior research strategist planning a comprehensive investigation."
+    prior_snippet, questions_snippet = _load_prior_knowledge_and_questions(project_id)
     user = f"""
-QUESTION: {question}
+QUESTION: {question}{prior_snippet}{questions_snippet}
 
 Create a research plan. Return JSON with keys:
 1) topics: [{{id,name,priority,description,source_types,min_sources}}]

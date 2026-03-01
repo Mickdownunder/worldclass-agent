@@ -35,6 +35,18 @@ export RESEARCH_CRITIQUE_MODEL="${RESEARCH_CRITIQUE_MODEL:-gpt-5.2}"
 export RESEARCH_VERIFY_MODEL="${RESEARCH_VERIFY_MODEL:-gemini-3.1-pro-preview}"
 export RESEARCH_HYPOTHESIS_MODEL="${RESEARCH_HYPOTHESIS_MODEL:-gemini-3.1-pro-preview}"
 
+# Core 10 tool integration flags (fail-open; default 0 to avoid regression)
+export RESEARCH_ENABLE_KNOWLEDGE_SEED="${RESEARCH_ENABLE_KNOWLEDGE_SEED:-0}"
+export RESEARCH_ENABLE_QUESTION_GRAPH="${RESEARCH_ENABLE_QUESTION_GRAPH:-0}"
+export RESEARCH_ENABLE_ACADEMIC="${RESEARCH_ENABLE_ACADEMIC:-0}"
+export RESEARCH_ENABLE_TOKEN_GOVERNOR="${RESEARCH_ENABLE_TOKEN_GOVERNOR:-0}"
+export RESEARCH_ENABLE_RELEVANCE_GATE="${RESEARCH_ENABLE_RELEVANCE_GATE:-0}"
+export RESEARCH_ENABLE_CONTEXT_MANAGER="${RESEARCH_ENABLE_CONTEXT_MANAGER:-0}"
+export RESEARCH_ENABLE_DYNAMIC_OUTLINE="${RESEARCH_ENABLE_DYNAMIC_OUTLINE:-0}"
+export RESEARCH_ENABLE_CLAIM_STATE_MACHINE="${RESEARCH_ENABLE_CLAIM_STATE_MACHINE:-0}"
+export RESEARCH_ENABLE_CONTRADICTION_LINKING="${RESEARCH_ENABLE_CONTRADICTION_LINKING:-0}"
+export RESEARCH_ENABLE_FALSIFICATION_GATE="${RESEARCH_ENABLE_FALSIFICATION_GATE:-0}"
+
 # Don't send LLM API traffic through HTTP_PROXY (prevents 403 from proxy)
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}api.openai.com,openai.com,generativelanguage.googleapis.com"
 export no_proxy="${no_proxy:+$no_proxy,}api.openai.com,openai.com,generativelanguage.googleapis.com"
@@ -422,6 +434,21 @@ case "$PHASE" in
     log "Phase: EXPLORE — 3-round adaptive planning/search/read/coverage"
     progress_start "explore"
 
+    # Core 10: token governor lane for this phase (tools may read RESEARCH_GOVERNOR_LANE or governor_lane.json)
+    if [ "${RESEARCH_ENABLE_TOKEN_GOVERNOR:-0}" = "1" ]; then
+      GOVERNOR_LANE=$(python3 -c "import sys; sys.path.insert(0,'$OPERATOR_ROOT'); from tools.research_token_governor import recommend_lane; print(recommend_lane('$PROJECT_ID'))" 2>/dev/null || echo "mid")
+      export RESEARCH_GOVERNOR_LANE="${GOVERNOR_LANE:-mid}"
+      echo "\"$GOVERNOR_LANE\"" > "$PROJ_DIR/governor_lane.json" 2>/dev/null || true
+    fi
+
+    # Core 10: prior knowledge and question graph before planner (Welle 1)
+    if [ "${RESEARCH_ENABLE_KNOWLEDGE_SEED:-0}" = "1" ]; then
+      python3 "$TOOLS/research_knowledge_seed.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    fi
+    if [ "${RESEARCH_ENABLE_QUESTION_GRAPH:-0}" = "1" ]; then
+      python3 "$TOOLS/research_question_graph.py" build "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    fi
+
     progress_step "Creating research plan"
     python3 "$TOOLS/research_planner.py" "$QUESTION" "$PROJECT_ID" > "$ART/research_plan.json" 2>> "$PWD/log.txt"
     cp "$ART/research_plan.json" "$PROJ_DIR/research_plan.json"
@@ -432,6 +459,30 @@ case "$PHASE" in
 
     progress_step "Searching $QUERY_COUNT targeted queries"
     python3 "$TOOLS/research_web_search.py" --queries-file "$ART/research_plan.json" --max-per-query 5 > "$ART/web_search_round1.json" 2>> "$PWD/log.txt" || true
+
+    # Core 10: academic sources into URL pool (Welle 1)
+    if [ "${RESEARCH_ENABLE_ACADEMIC:-0}" = "1" ]; then
+      mkdir -p "$PROJ_DIR/sources"
+      python3 "$TOOLS/research_academic.py" semantic_scholar "$QUESTION" --max 5 > "$ART/academic_round1.json" 2>> "$PWD/log.txt" || true
+      if [ -s "$ART/academic_round1.json" ]; then
+        python3 - "$PROJ_DIR" "$ART/academic_round1.json" <<'MERGE_ACADEMIC' 2>> "$PWD/log.txt" || true
+import json, sys, hashlib
+from pathlib import Path
+proj_dir, path = Path(sys.argv[1]), Path(sys.argv[2])
+data = json.loads(path.read_text()) if path.exists() else []
+for item in (data if isinstance(data, list) else []):
+    url = (item.get("url") or "").strip()
+    if not url: continue
+    fid = hashlib.sha256(url.encode()).hexdigest()[:12]
+    out = dict(item)
+    out.setdefault("title", out.get("abstract", "")[:200])
+    out.setdefault("description", out.get("abstract", ""))
+    out["confidence"] = 0.5
+    out["source_quality"] = "academic"
+    (proj_dir / "sources" / f"{fid}.json").write_text(json.dumps(out))
+MERGE_ACADEMIC
+      fi
+    fi
 
     python3 - "$PROJ_DIR" "$ART/research_plan.json" "$ART/web_search_round1.json" <<'FILTER_AND_SAVE'
 import json, sys, hashlib, re
@@ -685,11 +736,26 @@ p.write_text(json.dumps({
     'read_failures': $read_failures,
 }, indent=2))
 "
+    # Core 10: post-read relevance gate, context compression, dynamic outline (Welle 1–2)
+    if [ "${RESEARCH_ENABLE_RELEVANCE_GATE:-0}" = "1" ]; then
+      python3 "$TOOLS/research_relevance_gate.py" batch "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    fi
+    if [ "${RESEARCH_ENABLE_CONTEXT_MANAGER:-0}" = "1" ]; then
+      python3 "$TOOLS/research_context_manager.py" add "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    fi
+    if [ "${RESEARCH_ENABLE_DYNAMIC_OUTLINE:-0}" = "1" ]; then
+      python3 "$TOOLS/research_dynamic_outline.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    fi
     advance_phase "focus"
     ;;
   focus)
     log "Phase: FOCUS — targeted deep-dive from coverage gaps"
     progress_start "focus"
+    if [ "${RESEARCH_ENABLE_TOKEN_GOVERNOR:-0}" = "1" ]; then
+      GOVERNOR_LANE=$(python3 -c "import sys; sys.path.insert(0,'$OPERATOR_ROOT'); from tools.research_token_governor import recommend_lane; print(recommend_lane('$PROJECT_ID'))" 2>/dev/null || echo "mid")
+      export RESEARCH_GOVERNOR_LANE="${GOVERNOR_LANE:-mid}"
+      echo "\"$GOVERNOR_LANE\"" > "$PROJ_DIR/governor_lane.json" 2>/dev/null || true
+    fi
     progress_step "Analyzing coverage gaps"
     # Coverage is copied to PROJ_DIR by explore; use it when FOCUS runs in a separate job
     COV_FILE="$PROJ_DIR/coverage_round3.json"
@@ -764,6 +830,9 @@ RANK_FOCUS
     log "Focus reads: $focus_read_attempts attempted, $focus_read_successes succeeded"
     progress_step "Extracting focused findings"
     python3 "$TOOLS/research_deep_extract.py" "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    if [ "${RESEARCH_ENABLE_CONTEXT_MANAGER:-0}" = "1" ]; then
+      python3 "$TOOLS/research_context_manager.py" add "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    fi
     progress_done
     advance_phase "connect"
     ;;
@@ -800,6 +869,16 @@ RANK_FOCUS
     progress_step "Building claim ledger"
     python3 "$TOOLS/research_verify.py" "$PROJECT_ID" claim_ledger > "$ART/claim_ledger.json" 2>> "$PWD/log.txt" || true
     [ -s "$ART/claim_ledger.json" ] && cp "$ART/claim_ledger.json" "$PROJ_DIR/verify/" 2>/dev/null || true
+    # Core 10: AEM claim state machine, contradiction linking, falsification gate (Welle 3)
+    if [ "${RESEARCH_ENABLE_CLAIM_STATE_MACHINE:-0}" = "1" ]; then
+      python3 "$TOOLS/research_claim_state_machine.py" upgrade "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    fi
+    if [ "${RESEARCH_ENABLE_CONTRADICTION_LINKING:-0}" = "1" ]; then
+      python3 "$TOOLS/research_contradiction_linking.py" run "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    fi
+    if [ "${RESEARCH_ENABLE_FALSIFICATION_GATE:-0}" = "1" ]; then
+      python3 "$TOOLS/research_falsification_gate.py" run "$PROJECT_ID" 2>> "$PWD/log.txt" || true
+    fi
     # Counter-evidence: search for contradicting sources for top 3 verified claims (before gate)
     python3 - "$PROJ_DIR" "$ART" "$TOOLS" "$OPERATOR_ROOT" <<'COUNTER_EVIDENCE' 2>> "$PWD/log.txt" || true
 import json, sys, hashlib, subprocess
