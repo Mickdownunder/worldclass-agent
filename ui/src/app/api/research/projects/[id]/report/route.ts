@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
-import { getLatestReportMarkdown } from "@/lib/operator/research";
+import { getLatestReportMarkdownAndFilename } from "@/lib/operator/research";
 
 export const dynamic = "force-dynamic";
 
@@ -13,10 +13,10 @@ export async function GET(
   const id = (await params).id;
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
   try {
-    const markdown = await getLatestReportMarkdown(id);
+    const { markdown, filename } = await getLatestReportMarkdownAndFilename(id);
     if (markdown === null)
       return NextResponse.json({ error: "No report yet" }, { status: 404 });
-    return NextResponse.json({ markdown });
+    return NextResponse.json({ markdown, filename });
   } catch (e) {
     return NextResponse.json(
       { error: String((e as Error).message) },

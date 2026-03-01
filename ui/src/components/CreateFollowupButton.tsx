@@ -35,7 +35,7 @@ export function CreateFollowupButton({ projectId }: { projectId: string }) {
   }
 
   return (
-    <div className="mt-4 space-y-2">
+    <div className="mt-4 space-y-2 min-w-0 max-w-full overflow-hidden">
       <button
         type="button"
         onClick={runFollowup}
@@ -44,9 +44,13 @@ export function CreateFollowupButton({ projectId }: { projectId: string }) {
       >
         {loading ? <LoadingSpinner className="inline-block" /> : "Aus Next Steps neue Projekte erstellen"}
       </button>
-      {message && <p className="text-sm text-tron-muted">{message}</p>}
+      {message && (
+        <p className="text-sm text-tron-muted break-words overflow-hidden max-w-full">
+          {message}
+        </p>
+      )}
       {log && (
-        <pre className="max-h-32 overflow-auto rounded-sm border border-tron-border bg-tron-bg p-2 font-mono text-xs text-tron-dim whitespace-pre-wrap">
+        <pre className="max-h-32 max-w-full overflow-auto overflow-x-hidden rounded-sm border border-tron-border bg-tron-bg p-2 font-mono text-xs text-tron-dim whitespace-pre-wrap break-words">
           {log}
         </pre>
       )}

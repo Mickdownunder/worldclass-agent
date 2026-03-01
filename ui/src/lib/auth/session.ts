@@ -12,7 +12,7 @@ export async function setSession(): Promise<string> {
   const c = await cookies();
   c.set(authConfig.SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
+    secure: process.env.FORCE_INSECURE_COOKIE === "1" ? false : process.env.NODE_ENV === "production",
     sameSite: "lax",
     maxAge: authConfig.SESSION_MAX_AGE,
     path: "/",

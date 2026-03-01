@@ -93,12 +93,18 @@ def run_experiment_loop(project_id: str, max_iterations: int = 5, max_subagents:
         print("Experiment loop disabled by environment (likely a sub-agent). Exiting.")
         sys.exit(0)
 
-    # 1. Get the synthesized report
+    # 1. Get the synthesized report (from project reports/ or job artifacts)
     report_path = proj_dir / "artifacts" / "report.md"
+    if not report_path.exists():
+        reports_dir = proj_dir / "reports"
+        if reports_dir.exists():
+            md_files = sorted(reports_dir.glob("report_*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if md_files:
+                report_path = md_files[0]
     if not report_path.exists():
         print("No report.md found to experiment on.", file=sys.stderr)
         sys.exit(1)
-        
+
     report_text = report_path.read_text(encoding="utf-8")
     project_data = load_project(proj_dir)
     question = project_data.get("question", "")

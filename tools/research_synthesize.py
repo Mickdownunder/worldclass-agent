@@ -248,7 +248,9 @@ def _build_provenance_appendix(claim_ledger: list[dict]) -> str:
     for c in claim_ledger[:50]:
         cid = (c.get("claim_id") or "").strip()
         fids = c.get("source_finding_ids") or []
-        lines.append(f"| {cid} | {', '.join(fids[:15])}{' …' if len(fids) > 15 else ''} |")
+        # Ensure fids is a list of strings
+        fids_str = [str(x) if not isinstance(x, list) else str(x[0]) if x else "" for x in fids]
+        lines.append(f"| {cid} | {', '.join(fids_str[:15])}{' …' if len(fids_str) > 15 else ''} |")
     return "\n".join(lines)
 
 

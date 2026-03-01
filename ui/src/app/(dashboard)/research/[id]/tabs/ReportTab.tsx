@@ -9,6 +9,7 @@ interface ReportTabProps {
   projectId: string;
   initialMarkdown: string | null;
   hasPdf: boolean;
+  hasMasterDossier?: boolean;
   project?: ProjectForReport | null;
   onVerifiedClick: (claimId: string | undefined) => void;
   loading: boolean;
@@ -19,6 +20,7 @@ export function ReportTab({
   projectId,
   initialMarkdown,
   hasPdf,
+  hasMasterDossier = false,
   project,
   onVerifiedClick,
   loading,
@@ -26,6 +28,7 @@ export function ReportTab({
 }: ReportTabProps) {
   const [pdfMessage, setPdfMessage] = useState<string | null>(null);
   const [pdfGenerating, setPdfGenerating] = useState(false);
+  const [masterPdfLoading, setMasterPdfLoading] = useState(false);
   const [critiquePreview, setCritiquePreview] = useState<{ weaknesses: string[] } | null>(null);
   const [critiqueExpanded, setCritiqueExpanded] = useState(false);
 
@@ -119,7 +122,7 @@ export function ReportTab({
                   const url = URL.createObjectURL(blob);
                   const a = document.createElement("a");
                   a.href = url;
-                  a.download = `report-${projectId}.md`;
+                  a.download = d.filename || `report-${projectId}.md`;
                   a.click();
                   URL.revokeObjectURL(url);
                 });
@@ -132,6 +135,43 @@ export function ReportTab({
             <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M6 1v8M2 7l4 4 4-4M1 13h10" /></svg>
             Download .md
           </button>
+          {hasMasterDossier && (
+            <button
+              type="button"
+              disabled={masterPdfLoading}
+              onClick={async () => {
+                setMasterPdfLoading(true);
+                try {
+                  const res = await fetch(`/api/research/projects/${projectId}/report/pdf/master`);
+                  if (!res.ok) {
+                    const d = await res.json().catch(() => ({}));
+                    setPdfMessage(d?.error || "Master PDF failed");
+                    return;
+                  }
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "MASTER_DOSSIER.pdf";
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } finally {
+                  setMasterPdfLoading(false);
+                }
+              }}
+              className="shrink-0 flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] font-semibold transition-colors"
+              style={{ border: "1px solid var(--tron-accent)", color: "var(--tron-accent)", background: "transparent" }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--tron-accent)"; e.currentTarget.style.color = "var(--tron-bg)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--tron-accent)"; }}
+            >
+              {masterPdfLoading ? "…" : (
+                <>
+                  <svg width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M6 1v8M2 7l4 4 4-4M1 13h10" /></svg>
+                  Download Master PDF
+                </>
+              )}
+            </button>
+          )}
           {!hasPdf && (
             <button
               type="button"

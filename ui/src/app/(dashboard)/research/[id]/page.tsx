@@ -6,6 +6,7 @@ import {
   getLatestReportPdf,
   getAudit,
   getCalibratedThresholds,
+  getFollowUpProjectIds,
   type ResearchProjectDetail,
   type CalibratedThresholds,
 } from "@/lib/operator/research";
@@ -19,6 +20,7 @@ import { ExecutionTree } from "@/components/ExecutionTree";
 import { LiveRefresh } from "@/components/LiveRefresh";
 import { LiveElapsedTimer } from "@/components/LiveElapsedTimer";
 import { ActivityFeed } from "@/components/ActivityFeed";
+import { CouncilRoom } from "@/components/CouncilRoom";
 import { ResearchDetailTabs } from "./ResearchDetailTabs";
 import { PreferredDomainsTabs } from "@/components/PreferredDomainsTabs";
 
@@ -45,11 +47,12 @@ export default async function ResearchProjectPage({
   const project = await getResearchProject(id);
   if (!project) notFound();
 
-  const [markdown, pdfInfo, audit, calibratedThresholds] = await Promise.all([
+  const [markdown, pdfInfo, audit, calibratedThresholds, followUpIds] = await Promise.all([
     getLatestReportMarkdown(id),
     getLatestReportPdf(id),
     project.status === "pending_review" ? getAudit(id) : Promise.resolve(null),
     getCalibratedThresholds(),
+    getFollowUpProjectIds(id),
   ]);
   const TERMINAL_STATUSES = new Set(["done", "failed", "cancelled"]);
   const isTerminal = TERMINAL_STATUSES.has(project.status) || project.status.startsWith("failed");
@@ -91,10 +94,28 @@ export default async function ResearchProjectPage({
               {project.question || "Untitled Research"}
             </h1>
             <LiveRefresh enabled={isActive} intervalMs={5000} showIndicator={true} projectId={project.id} />
-            <div className="w-full mt-1 flex items-center gap-2">
+            <div className="w-full mt-1 flex flex-wrap items-center gap-2">
               <span className="font-mono text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
                 {id}
               </span>
+              {project.parent_project_id && (
+                <span className="text-[11px]" style={{ color: "var(--tron-text-muted)" }}>
+                  Follow-up von{" "}
+                  <Link href={`/research/${project.parent_project_id}`} className="font-mono text-tron-accent hover:underline">
+                    {project.parent_project_id}
+                  </Link>
+                </span>
+              )}
+              {followUpIds.length > 0 && (
+                <span className="text-[11px]" style={{ color: "var(--tron-text-muted)" }}>
+                  Follow-up-Projekte:{" "}
+                  {followUpIds.map((fid) => (
+                    <Link key={fid} href={`/research/${fid}`} className="font-mono text-tron-accent hover:underline mr-1">
+                      {fid}
+                    </Link>
+                  ))}
+                </span>
+              )}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2 flex-wrap">
@@ -252,6 +273,15 @@ export default async function ResearchProjectPage({
           experimentSummary={project.experiment_summary ?? null}
         />
       </div>
+
+      {/* ── Council Room (If this is a parent project with follow-ups) ─── */}
+      {(followUpIds.length > 0 || project.has_master_dossier || project.council_status) && (
+        <CouncilRoom 
+          projectId={id} 
+          councilStatus={project.council_status} 
+          hasMasterDossier={!!project.has_master_dossier} 
+        />
+      )}
 
       {/* ── Gate Metrics (inline, lightweight) ───────────────── */}
       <GateMetricsInline project={project} calibratedThresholds={calibratedThresholds ?? undefined} />

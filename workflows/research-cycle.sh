@@ -1574,5 +1574,10 @@ BRAIN_REFLECT
     ;;
 esac
 
+# Check if this completion triggers a Council Meeting
+if [ "$PHASE" = "done" ] || [[ "$PHASE" == failed* ]] || [[ "$STATUS" == failed* ]] || [ "$STATUS" = "aem_blocked" ]; then
+  python3 "$OPERATOR_ROOT/tools/trigger_council.py" "$PROJECT_ID" >> "$CYCLE_LOG" 2>&1 || true
+fi
+
 echo "Phase $PHASE complete." >> "$CYCLE_LOG"
 echo "done"

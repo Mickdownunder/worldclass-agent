@@ -1,5 +1,7 @@
 # System prüfen: Funktioniert es? Ist es Schrott?
 
+**Das ganze System sauber durchtesten:** Siehe **`docs/SYSTEMTEST_ANLEITUNG.md`** (Reihenfolge: Script → UI/Login → E2E → Research-Durchlauf → Memory → optional Experiment). Schnell-Check: `./scripts/run-system-check.sh`.
+
 Kurze Checkliste, um **a) Funktion** und **b) Qualität** zu prüfen.
 
 ---

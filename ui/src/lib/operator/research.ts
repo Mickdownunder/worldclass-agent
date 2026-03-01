@@ -1,4 +1,5 @@
-import { readdir, readFile, rm, writeFile } from "fs/promises";
+import { readdir, readFile, rm, writeFile, access } from "fs/promises";
+import { constants } from "fs";
 import path from "path";
 import { execFileSync, execSync } from "child_process";
 import { OPERATOR_ROOT } from "./config";
@@ -178,6 +179,10 @@ export interface ResearchProjectDetail extends ResearchProjectSummary {
     subagents_spawned: number;
     has_history?: boolean;
   };
+  /** When this project was created as follow-up from another */
+  parent_project_id?: string;
+  council_status?: string;
+  has_master_dossier?: boolean;
 }
 
 export async function listResearchProjects(): Promise<ResearchProjectSummary[]> {
@@ -408,9 +413,36 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
       fact_check_summary: factCheckSummary,
       claim_ledger_summary: claimLedgerSummary,
       experiment_summary: experimentSummary,
+      parent_project_id:
+        typeof data.parent_project_id === "string" ? data.parent_project_id : undefined,
+      council_status:
+        typeof data.council_status === "string" ? data.council_status : undefined,
+      has_master_dossier:
+        await access(path.join(projPath, "MASTER_DOSSIER.md"), constants.F_OK).then(() => true).catch(() => false),
     };
   } catch {
     return null;
+  }
+}
+
+/** Return project IDs that are follow-ups of the given parent (parent_project_id = parentId). */
+export async function getFollowUpProjectIds(parentId: string): Promise<string[]> {
+  try {
+    const entries = await readdir(RESEARCH_ROOT, { withFileTypes: true });
+    const ids: string[] = [];
+    for (const e of entries) {
+      if (!e.isDirectory() || !e.name.startsWith("proj-")) continue;
+      try {
+        const raw = await readFile(path.join(RESEARCH_ROOT, e.name, "project.json"), "utf8");
+        const data = JSON.parse(raw) as { parent_project_id?: string };
+        if (data.parent_project_id === parentId) ids.push(e.name);
+      } catch {
+        // ignore
+      }
+    }
+    return ids;
+  } catch {
+    return [];
   }
 }
 
@@ -559,8 +591,19 @@ interface ReportManifestEntry {
   is_final?: boolean;
 }
 
-export async function getLatestReportMarkdown(projectId: string): Promise<string | null> {
+export async function getLatestReportMarkdownAndFilename(projectId: string): Promise<{ markdown: string | null; filename: string | null }> {
   const projPath = safeProjectPath(projectId);
+  
+  // If a Research Council MASTER_DOSSIER exists, it is the primary report
+  try {
+    const masterPath = path.join(projPath, "MASTER_DOSSIER.md");
+    await access(masterPath, constants.F_OK);
+    const content = await readFile(masterPath, "utf8");
+    return { markdown: content, filename: "MASTER_DOSSIER.md" };
+  } catch {
+    // No master dossier, proceed to normal reports
+  }
+
   const reportsDir = path.join(projPath, "reports");
   try {
     const manifestPath = path.join(reportsDir, "manifest.json");
@@ -578,14 +621,19 @@ export async function getLatestReportMarkdown(projectId: string): Promise<string
     if (!chosenFile) {
       const files = await readdir(reportsDir);
       const mdFiles = files.filter((f) => f.endsWith(".md")).sort().reverse();
-      if (mdFiles.length === 0) return null;
+      if (mdFiles.length === 0) return { markdown: null, filename: null };
       chosenFile = mdFiles[0];
     }
     const content = await readFile(path.join(reportsDir, chosenFile), "utf8");
-    return content;
+    return { markdown: content, filename: chosenFile };
   } catch {
-    return null;
+    return { markdown: null, filename: null };
   }
+}
+
+export async function getLatestReportMarkdown(projectId: string): Promise<string | null> {
+  const { markdown } = await getLatestReportMarkdownAndFilename(projectId);
+  return markdown;
 }
 
 /**
@@ -605,6 +653,20 @@ export async function getLatestReportPdf(
       path: path.join(reportsDir, filename),
       filename,
     };
+  } catch {
+    return null;
+  }
+}
+
+/** Returns path to Master Dossier PDF if it exists (reports/MASTER_DOSSIER.pdf). */
+export async function getMasterReportPdf(
+  projectId: string
+): Promise<{ path: string; filename: string } | null> {
+  const projPath = safeProjectPath(projectId);
+  const pdfPath = path.join(projPath, "reports", "MASTER_DOSSIER.pdf");
+  try {
+    await access(pdfPath, constants.F_OK);
+    return { path: pdfPath, filename: "MASTER_DOSSIER.pdf" };
   } catch {
     return null;
   }

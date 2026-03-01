@@ -45,6 +45,7 @@ export interface AuditClaim {
 }
 
 export interface ProjectForReport {
+  has_master_dossier?: boolean;
   last_phase_at?: string;
   current_spend?: number;
   quality_gate?: {

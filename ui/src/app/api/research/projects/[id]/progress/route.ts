@@ -9,8 +9,6 @@ export const dynamic = "force-dynamic";
 const RESEARCH_ROOT = path.join(OPERATOR_ROOT, "research");
 const HEARTBEAT_FRESH_MS = 30_000;
 const STUCK_NO_PROGRESS_MS = 300_000;
-/** Only show FAILED (process_exited) when heartbeat is this old. Avoids false "Lauf abgebrochen" when UI runs on another host (pid not in /proc). */
-const PROCESS_EXITED_FAILED_AGE_MS = 5 * 60 * 1000; // 5 min
 const ERROR_LOOP_WINDOW_MS = 5 * 60 * 1000;
 const ERROR_LOOP_COUNT = 3;
 const MAX_EVENTS = 200;
@@ -249,19 +247,9 @@ export async function GET(
       events
     );
 
-    // If project still "active" but process is dead and heartbeat very stale → run failed, show FAILED in UI.
-    // Use 5 min threshold so we don't show FAILED when UI runs on another host (pid not in /proc) or between progress writes.
-    const heartbeatAgeMs = heartbeatMs > 0 ? nowMs - heartbeatMs : Infinity;
-    if (
-      state === "IDLE" &&
-      projectStatus === "active" &&
-      !pid_alive &&
-      typeof progressData.pid === "number" &&
-      heartbeatAgeMs >= PROCESS_EXITED_FAILED_AGE_MS
-    ) {
-      state = "FAILED";
-      stuck_reason = "process_exited";
-    }
+    // Do NOT set FAILED for projectStatus "active" based on pid/heartbeat alone:
+    // the cycle may run in child processes so the stored pid can be dead while the run continues.
+    // Only show FAILED when project.json status is actually failed/cancelled (handled in computeState).
 
     const is_running = state === "RUNNING";
     const eventsSlice = events.slice(-MAX_EVENTS);

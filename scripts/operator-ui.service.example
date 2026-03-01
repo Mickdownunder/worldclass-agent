@@ -1,0 +1,25 @@
+# Example systemd unit for the Operator UI.
+# Copy to /etc/systemd/system/operator-ui.service and adjust:
+#   sudo cp operator/scripts/operator-ui.service.example /etc/systemd/system/operator-ui.service
+#   sudo sed -i 's|/root/operator|/path/to/your/operator|g' /etc/systemd/system/operator-ui.service
+#   sudo nano /etc/systemd/system/operator-ui.service   # set UI_PASSWORD_HASH, UI_SESSION_SECRET
+#   sudo systemctl daemon-reload && sudo systemctl enable operator-ui && sudo systemctl start operator-ui
+
+[Unit]
+Description=Operator Next.js UI
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/operator/ui
+Environment=OPERATOR_ROOT=/root/operator
+Environment=UI_PASSWORD_HASH=REPLACE_WITH_SHA256_HEX
+Environment=UI_SESSION_SECRET=REPLACE_WITH_RANDOM_SECRET
+Environment=PORT=3000
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

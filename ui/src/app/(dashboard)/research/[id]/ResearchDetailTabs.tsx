@@ -138,6 +138,7 @@ export function ResearchDetailTabs({
             projectId={projectId}
             initialMarkdown={initialMarkdown}
             hasPdf={hasPdf}
+            hasMasterDossier={!!project?.has_master_dossier}
             project={project}
             onVerifiedClick={(claimId) => setSlideoverTarget({ open: true, claimId })}
             loading={loading.report}
