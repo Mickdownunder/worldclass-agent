@@ -27,6 +27,34 @@ Die Focus-Phase wird in `research-cycle.sh` im `case "focus")` ausgeführt. Reih
 
 ---
 
+## 1.1 Verbindung mit Vorgänger- und Nachfolger-Phase
+
+### Explore → Focus
+
+| Was Explore an Focus übergibt | Wo | Verwendung in Focus |
+|-------------------------------|-----|----------------------|
+| **Phase** | `project.json` nach `advance_phase "focus"` (inkl. Conductor Gate) | Nächster Cycle startet in `focus)` |
+| **Coverage** | `coverage_round3.json` → `round2` → `round1` in **PROJ_DIR** (Explore kopiert nach jeder Runde: `cp "$ART/coverage_roundN.json" "$PROJ_DIR/..."`) | Focus sucht COV_FILE zuerst in PROJ_DIR, dann ART; Gap-Fill liest `uncovered_topics` |
+| **research_plan.json** | Bereits in PROJ_DIR (von Init/Explore) | `research_planner.py --gap-fill` liest `topics`, `entities`, `perspectives` |
+| **sources/** und **findings/** | PROJ_DIR (Explore hat gesucht, gelesen, Findings geschrieben) | Focus ergänzt neue sources (FOCUS_SAVE), rankt nur **unread** (keine _content.json); neue Findings mit `read_phase=focus` |
+| **explore/read_stats.json** | PROJ_DIR | Wird vom Evidence Gate **nach** Verify gemeinsam mit focus/read_stats genutzt (Focus schreibt nicht in explore/) |
+
+**Sonderfall:** Focus läuft in anderem Job als Explore → ART hat keine coverage_round*.json; Focus liest Coverage aus **PROJ_DIR** (von Explore dorthin kopiert). Wenn Explore für dieses Projekt nie lief: kein COV_FILE → leere focus_queries, nur „weiter lesen“ (siehe §8.3).
+
+### Focus → Connect
+
+| Was Focus an Connect übergibt | Wo | Verwendung in Connect |
+|-------------------------------|-----|------------------------|
+| **Phase** | `project.json` nach `advance_phase "connect"` (inkl. Conductor Gate) | Nächster Cycle startet in `connect)` |
+| **findings/** | PROJ_DIR (Explore + Focus: parallel_reader + deep_extract) | Connect: `research_entity_extract.py` (_load_findings), `research_reason.py contradiction_detection` (_load_findings), `research_reason.py hypothesis_formation` (_load_findings) |
+| **sources/** | PROJ_DIR (Explore + Focus: FOCUS_SAVE + *_content.json) | Connect liest sie nicht direkt; entity_extract/reason nutzen findings; Verify-Phase nutzt sources später |
+| **focus/read_stats.json** | PROJ_DIR | Evidence Gate (Verify) summiert mit explore/read_stats |
+| **project.json** | question, config, phase_history | Connect liest project für hypothesis_formation/contradiction_detection |
+
+Connect erwartet **keine** Connect-spezifischen Dateien von Focus; Connect erzeugt selbst `contradictions.json`, `thesis.json`, `connect/connect_status.json`, `ART/hypotheses.json`. Die Verbindung ist damit **lückenlos**: Focus hinterlässt angereicherte findings/ und sources/, Connect arbeitet nur auf findings/ (und schreibt neue Artefakte).
+
+---
+
 ## 2. Beteiligte Dateien
 
 ### Pro Projekt (`research/<project_id>/`)
@@ -42,13 +70,13 @@ Die Focus-Phase wird in `research-cycle.sh` im `case "focus")` ausgeführt. Reih
 | `governor_lane.json` | research-cycle.sh (Token Governor) | cheap/mid/strong |
 | `conductor_decisions.json` | research_conductor (shadow/gate) | Entscheidungen pro Run |
 | `conductor_overrides.json` | research_conductor gate | z.B. `focus->connect: N` |
-| `verify/deepening_queries.json` | Verify bei Loop-back zu Focus | **Wird in Focus derzeit nicht gelesen** (siehe Abschnitt 4) |
+| `verify/deepening_queries.json` | Verify bei Loop-back; Focus liest und merged | Queries aus gap_analysis (suggested_search); vor gap-fill in focus_queries.json gemerged |
 
 ### Temporär im Job (Artifacts)
 
 | Datei | Verwendung |
 |-------|------------|
-| `focus_queries.json` | Ausgabe Planner --gap-fill; Eingabe Web Search |
+| `focus_queries.json` | Ausgabe: Planner --gap-fill (oder leer); ggf. überschrieben durch Merge (deepening + gap-fill). Eingabe: Web Search, RANK_FOCUS |
 | `focus_search.json` | Rohe Suchergebnisse; Eingabe FOCUS_SAVE |
 | `focus_read_order.txt` | Sortierte Source-Pfade für parallel_reader |
 
@@ -92,15 +120,15 @@ Die Focus-Phase wird in `research-cycle.sh` im `case "focus")` ausgeführt. Reih
 
 ### 4.1 Bugs / Lücken
 
-1. **Verify→Focus Loop-back nutzt deepening_queries nicht:** Wenn das Evidence Gate in Verify failt und `research_reason.py gap_analysis` high-priority Gaps mit `suggested_search` liefert, schreibt der Cycle `verify/deepening_queries.json` und ruft `advance_phase "focus"` auf. Die **nächste** Focus-Runde liest aber ausschließlich aus Coverage (`--gap-fill $COV_FILE`) und ignoriert `verify/deepening_queries.json`. Die vom Verify-Gap-Analysis erzeugten Suchanfragen werden nie ausgeführt. **Empfehlung:** In Focus: wenn `verify/deepening_queries.json` existiert und nicht leer, diese Queries zusätzlich oder vorrangig für Web Search nutzen (oder erste Focus-Runde nach Verify-Loop mit deepening_queries füllen).
+1. **Verify→Focus Loop-back nutzt deepening_queries:** Umgesetzt. Wenn `verify/deepening_queries.json` existiert, merged research-cycle.sh diese Queries mit dem Gap-Fill-Ergebnis (deepening zuerst, Dedupe nach Query-Text) und schreibt das Ergebnis nach `artifacts/focus_queries.json`. Web Search und folgende Schritte nutzen die gemergte Liste.
 
 2. **Focus ohne Coverage:** Wenn Explore in einem anderen Job lief, liegen unter Umständen keine `coverage_round*.json` im Projekt. Dann wird `focus_queries.json = {"queries":[]}` gesetzt. Web Search liefert nichts; Ranking liefert nur bereits vorhandene, noch nicht gelesene Quellen. Das ist dokumentiert (RESEARCH_AUTONOMOUS.md) und bewusst kein Abbruch – aber inhaltlich macht Focus dann nur „weiter lesen was da ist“, kein gezieltes Gap-Fill.
 
-3. **read_stats für Focus nicht persistiert:** Explore schreibt `explore/read_stats.json` aus Round-1-Read. Focus schreibt FOCUS_STATS nur ins Log und in Shell-Variablen; es gibt kein `focus/read_stats.json`. Für ein einheitliches Evidence-Gate oder Metriken wäre kumulierte oder phasenspezifische Read-Statistik nützlich.
+3. **read_stats für Focus:** Umgesetzt. Nach dem Focus-Parallel-Read schreibt research-cycle.sh `focus/read_stats.json` (read_attempts, read_successes, read_failures) analog zu explore/read_stats.json.
 
 ### 4.2 Konsistenz / UX
 
-4. **UI ExecutionTree:** Focus wird als „Relevance filtering“ beschrieben. Inhaltlich ist Focus „targeted deep-dive from coverage gaps“ (Gap-Fill + Lesen). Die Beschreibung sollte auf „Gap-fill & deep read“ o.ä. angepasst werden (siehe Regel docs-sync-with-code).
+4. **UI ExecutionTree:** Bereits angepasst: Focus wird als „Gap-fill & deep read“ beschrieben (ExecutionTree.tsx).
 
 5. **Conductor focus->connect:** ACTION_TO_PHASE["read_more"] = "focus". Wenn der Conductor also „read_more“ will und wir gerade von Focus nach Connect wollen, bleibt die Phase focus (Override). Das ist gewollt (nochmal lesen). Wenn er „verify“ will, Override-Phase = verify – dann würde der nächste Cycle in **verify** starten, nicht in focus. Korrekt so.
 
@@ -120,7 +148,7 @@ Die Focus-Phase wird in `research-cycle.sh` im `case "focus")` ausgeführt. Reih
 - **Gleicher Read-Stack wie Explore:** research_web_search, FOCUS_SAVE, Domain-Rank/Blocklist, research_parallel_reader (mode=focus), research_deep_extract.
 - **Conductor Gate:** Hybrid-Entscheidung vor advance_phase (focus→connect mit max 2 Overrides).
 - **Token Governor:** Optional gleiche Lane-Logik wie in Explore.
-- **Loop-back von Verify:** Bei Evidence-Gate-Fail und high-priority Gaps → advance_phase "focus" (deepening_queries werden derzeit nicht genutzt).
+- **Loop-back von Verify:** Bei Evidence-Gate-Fail und high-priority Gaps → advance_phase "focus"; nächste Focus-Runde merged `verify/deepening_queries.json` in focus_queries und nutzt sie für Web Search.
 
 ---
 
@@ -128,9 +156,9 @@ Die Focus-Phase wird in `research-cycle.sh` im `case "focus")` ausgeführt. Reih
 
 ### 6.1 Sofort umsetzbar
 
-- **Deepening-Queries in Focus nutzen:** Wenn `verify/deepening_queries.json` existiert (z.B. nach Loop-back von Verify), in Focus diese Queries mit in die Web Search geben (z.B. focus_queries = gap_fill_queries + deepening_queries, oder erste Priorität deepening).
-- **Focus read_stats persistieren:** `focus/read_stats.json` mit read_attempts/successes/failures schreiben (analog explore/read_stats.json) für Metriken und Evidence Gate.
-- **UI:** ExecutionTree-Beschreibung für Focus auf „Gap-fill & deep read“ (oder vergleichbar) ändern; UI_OVERVIEW ggf. einen Satz zu Focus ergänzen.
+- **Deepening-Queries in Focus:** Erledigt (Merge deepening + gap_fill, Dedupe, deepening zuerst).
+- **Focus read_stats:** Erledigt (`focus/read_stats.json` wird nach Focus-Read geschrieben).
+- **UI:** ExecutionTree bereits „Gap-fill & deep read“; UI_OVERVIEW ggf. einen Satz zu Focus ergänzen.
 
 ### 6.2 Mittelfristig (SOTA)
 
@@ -153,3 +181,75 @@ Die Focus-Phase wird in `research-cycle.sh` im `case "focus")` ausgeführt. Reih
 - Coverage-Struktur: `tools/research_coverage.py` (assess_coverage → uncovered_topics)
 - Loop-back Verify→Focus: `workflows/research-cycle.sh` (Evidence Gate fail + LOOPCHECK + advance_phase "focus")
 - Phase-Reihenfolge: `tools/research_advance_phase.py` (order), `docs/UI_OVERVIEW.md`
+
+---
+
+## 8. Alle erdenklichen Situationen (Was passiert wo, wann, warum, worauf hat was Einfluss)
+
+Dieser Abschnitt geht systematisch jede erdenkliche Situation durch: **Wo** werden Daten geschrieben/gelesen, **wann** tritt welcher Pfad ein, **warum**, und **worauf** hat jede Sache Einfluss.
+
+### 8.1 Orte: PROJ_DIR vs. ART
+
+| Ort | Bedeutung | Wer schreibt | Wer liest (in Focus) |
+|-----|------------|--------------|----------------------|
+| **PROJ_DIR** = `research/<project_id>/` | Projektzustand, persistent über Jobs hinweg | Explore (coverage, sources, findings, explore/read_stats), Verify (verify/*, deepening_queries.json), Focus (sources, findings, focus/read_stats), advance_phase (project.json) | Focus: project.json, research_plan.json, coverage_round*.json, verify/deepening_queries.json, sources/, focus/ (read_stats schreiben) |
+| **ART** = `$PWD/artifacts` | Job-lokale Artefakte; bei neuem Job leer bzw. nur was dieser Job erzeugt | Dieser research-cycle (focus_queries.json, focus_search.json, focus_read_order.txt) | Focus: focus_queries.json (nach Gap-Fill und Merge), focus_search.json, focus_read_order.txt |
+
+- **Folge:** Wenn Focus in einem **anderen Job** als Explore läuft: `ART` hat keine coverage_round*.json aus Explore. Daher sucht Focus zuerst in **PROJ_DIR** (round3→2→1), dann in ART. Explore kopiert nach jeder Coverage-Runde nach PROJ_DIR (`cp … "$PROJ_DIR/coverage_roundN.json"`), also ist Coverage in PROJ_DIR vorhanden, sofern Explore jemals für dieses Projekt gelaufen ist.
+- **Folge:** Wenn Explore für dieses Projekt **noch nie** gelaufen ist (z. B. manuell phase=focus gesetzt): Kein COV_FILE → focus_queries = [] (siehe 8.3).
+
+### 8.2 Wann kommt Focus dran?
+
+| Situation | Auslöser | Nächster Schritt nach Focus |
+|-----------|----------|----------------------------|
+| Normal nach Explore | Explore beendet mit `advance_phase "focus"` (inkl. Conductor Gate) | Focus läuft → am Ende `advance_phase "connect"` |
+| Loop-back von Verify | Evidence Gate fail + high-priority Gaps + `phase_history.count("focus") < 2` → `advance_phase "focus"` | Focus läuft; dabei wird `verify/deepening_queries.json` (von Verify geschrieben) mit Gap-Fill gemerged |
+| Conductor-Override (Focus→Connect) | Beim `advance_phase "connect"` gibt Conductor z. B. `read_more` zurück → next_phase = focus (ACTION_TO_PHASE["read_more"]) | Nächster Cycle startet wieder in Focus („nochmal lesen“); max 2 solche Overrides, dann wird durchgelassen |
+| Loop-Schutz in advance_phase | `phase_history.count(new_phase) > 3` | Automatisches Bump zur nächsten Phase (kein dritter Focus-Loop nur durch Conductor) |
+
+### 8.3 Focus ohne Coverage (kein COV_FILE)
+
+| Schritt | Was passiert |
+|--------|----------------|
+| COV_FILE | Keine Datei in PROJ_DIR/ART → `focus_queries.json` = `{"queries":[]}` |
+| Merge deepening | Falls `verify/deepening_queries.json` existiert: Nur diese Queries landen in focus_queries.json (Gap-Fill war leer). **Ohne** deepening bleibt focus_queries = [] |
+| Web Search | Liefert keine neuen Treffer (leere Query-Liste) |
+| FOCUS_SAVE | Fügt keine neuen sources hinzu |
+| RANK_FOCUS | Sortiert nur **bereits vorhandene** sources, die noch keine `*_content.json` haben (unread first) |
+| Parallel Read | Liest bis zu 15 dieser unread sources (oder weniger, wenn weniger da sind) |
+| focus/read_stats.json | Wird trotzdem geschrieben (attempts/successes/failures; können 0/0/0 sein wenn keine Kandidaten) |
+
+**Einfluss:** Evidence Gate nutzt `_load_read_stats_combined`: Explore- und Focus-Read-Statistik werden summiert (read_attempts, read_successes, read_failures) für adaptive findings_count_min und Reader-Pipeline-Fail-Erkennung.
+
+### 8.4 deepening_queries.json: Wer schreibt, Format, wer liest
+
+| Aspekt | Detail |
+|--------|--------|
+| **Wer schreibt** | Verify-Phase, im Block „Evidence gate failed“: LOOPCHECK schreibt `proj_dir/verify/deepening_queries.json` nur wenn high_gaps und loopback_count < 2 und `queries` (aus suggested_search) nicht leer. |
+| **Format** | Verify schreibt `{"queries": [str, str, ...]}` (reine Strings von `g.get("suggested_search")`). Das Merge-Skript in Focus akzeptiert **sowohl** Strings **als auch** Dicts (`{"query": "...", "topic_id", "type", "perspective"}`), damit beide Formate funktionieren. |
+| **Wer liest** | Nur Focus: wenn Datei existiert, Merge (deepening zuerst, dann Gap-Fill, Dedupe nach Query-Text lower 200 Zeichen) → Überschreibt `artifacts/focus_queries.json`. |
+| **Wann wird es genutzt?** | Genau in der **nächsten** Focus-Runde nach dem Verify-Loop-back. Einmal gemerged, werden die Queries mit Web Search ausgeführt; die Datei wird vom Merge-Skript nicht gelöscht (könnte bei erneutem Focus ohne Loop-back nochmal mit drin sein – dann Dedupe verhindert Doppelungen). |
+
+### 8.5 Abhängigkeiten und Einflüsse (Überblick)
+
+| Ding | Hat Einfluss auf |
+|------|-------------------|
+| **project.json phase** | Welcher case im research-cycle läuft (focus vs. connect vs. …). |
+| **project.json status** | Terminal-Status (failed/cancelled/abandoned) → Cycle wird übersprungen. |
+| **phase_history** | Loop-back-Zähler (focus count < 2 für Verify→Focus); advance_phase Loop-Schutz (>3 gleiche Phase → Bump). |
+| **coverage_round*.json** (PROJ_DIR/ART) | Ob Gap-Fill Queries liefert; ob Focus inhaltlich „Gap-Fill + Lesen“ oder nur „weiter lesen“ macht. |
+| **verify/deepening_queries.json** | Ob zusätzliche gezielte Queries (aus Verify gap_analysis) in focus_queries landen. |
+| **research_plan.json** | Wird von `--gap-fill` gelesen (topics, perspectives, entities). |
+| **sources/** (ohne _content) | RANK_FOCUS: Nur unread (keine _content.json) werden sortiert und in focus_read_order.txt geschrieben. |
+| **Conductor Gate** | Nächste Phase nach Focus (connect vs. erneut focus/verify/synthesize); max 2 Overrides focus→connect. |
+| **RESEARCH_ENABLE_TOKEN_GOVERNOR** | Ob Governor-Lane gesetzt wird (governor_lane.json, RESEARCH_GOVERNOR_LANE). |
+| **explore/read_stats.json** | Evidence Gate (findings_count_min adaptiv, Metriken). |
+| **focus/read_stats.json** | Wird mit explore/read_stats in `_load_read_stats_combined` summiert; Evidence Gate nutzt die kombinierte Statistik. |
+
+### 8.6 Edge Cases kurz
+
+- **deepening_queries.json existiert, aber queries = []:** Merge läuft, Ergebnis = nur Gap-Fill (oder leer).
+- **deepening_queries.json malformed:** try/except im Merge → queries aus dieser Datei ignoriert, Gap-Fill bleibt.
+- **focus_queries.json leer nach Merge:** Web Search liefert nichts; Rest wie 8.3.
+- **parallel_reader liefert kein JSON / Stderr-only:** FOCUS_STATS leer → focus_read_attempts/successes/failures = 0; focus_read_failures per Fallback attempts−successes; read_stats.json wird trotzdem geschrieben.
+- **Conductor gibt leer oder Fehler:** advance_phase nutzt dann die angeforderte Phase (connect); kein Override.

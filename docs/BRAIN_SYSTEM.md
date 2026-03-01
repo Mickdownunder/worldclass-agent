@@ -9,17 +9,18 @@ Das **Brain** ist die **kognitive Zentrale** des Operators: Es nimmt den Systemz
 Der Brain folgt einem festen Ablauf:
 
 ```
-Perceive → Think → Decide → Act → Reflect → Remember
+Perceive → Understand → Think → Decide → Act → Reflect → Remember
 ```
 
-| Phase      | Was passiert |
-|-----------|----------------|
-| **Perceive** | Sammelt den aktuellen Zustand: System-Health (Disk, Load), letzte Jobs, Research-Projekte (Phase, Status), Clients, Workflows, Ziele, Prioritäten, **Memory** (Episodes, Reflections, Playbooks) und ggf. **strategische Prinzipien** aus vergangenen Projekten. |
-| **Think**    | Schickt diesen Zustand + ein **Goal** an ein **LLM**. Das LLM liefert einen Plan (JSON): Analyse, Prioritäten, konkrete Aktionen (z. B. `research-cycle` mit Projekt-ID), Risiken, Confidence. Es nutzt Research-Playbooks und strategische Prinzipien, wenn vorhanden. |
-| **Decide**   | Wählt die **erste geplante Aktion** aus und prüft sie gegen den **Governance-Level** (0–3). Bei Level 2 (Standard) wird die Aktion genehmigt und ausgeführt. |
-| **Act**      | Führt die Aktion aus: Ruft `op job new --workflow <id> --request <text>` und dann `op run` auf. Typische Aktion: `research-cycle` mit Projekt-ID, um eine Research-Phase voranzutreiben. |
-| **Reflect**  | Bewertet das Ergebnis (Job-Status, Log, Artifacts) per LLM: Was lief gut, was schief, Learnings, Quality-Score, Playbook-Update. Das wird ins Memory geschrieben. |
-| **Remember** | Episodes und Reflections landen in der **Memory**-Datenbank; Playbooks und Prinzipien werden für zukünftige **Think**-Phasen genutzt. |
+| Phase        | Was passiert |
+|-------------|----------------|
+| **Perceive**   | Sammelt den aktuellen Zustand: System-Health (Disk, Load), letzte Jobs, Research-Projekte (Phase, Status), Clients, Workflows, Ziele, Prioritäten, **Memory** (Episodes, Reflections, Playbooks) und ggf. **strategische Prinzipien** aus vergangenen Projekten. |
+| **Understand** | Erzeugt eine **strukturierte Verstehens-Darstellung** aus Perceive + abgerufenen Memories: Situation, relevante Episoden, was half/schadete, Unsicherheiten, Optionen. Keine Aktion ohne vorheriges Understand (Grounding). |
+| **Think**      | Schickt **Understanding** (und State-Zusammenfassung) + Goal an ein **LLM**. Das LLM liefert einen Plan (JSON): Analyse, Prioritäten, konkrete Aktionen (z. B. `research-cycle` mit Projekt-ID), Risiken, Confidence. Nutzt Research-Playbooks und strategische Prinzipien. |
+| **Decide**     | Wählt die **erste geplante Aktion** aus und prüft sie gegen den **Governance-Level** (0–3). Bei Level 2 (Standard) wird die Aktion genehmigt und ausgeführt. Speichert **retrieved_memory_ids** (Explainability). |
+| **Act**        | Führt die Aktion aus: Ruft `op job new --workflow <id> --request <text>` und dann `op run` auf. Typische Aktion: `research-cycle` mit Projekt-ID. |
+| **Reflect**    | Bewertet das Ergebnis (Job-Status, Log, Artifacts) per LLM: Was lief gut, was schief, Learnings, Quality-Score, Playbook-Update. Das wird ins Memory geschrieben. |
+| **Remember**   | Episodes und Reflections landen in der **Memory**-Datenbank; Playbooks und Prinzipien werden für zukünftige **Understand/Think**-Phasen genutzt. |
 
 Ein **einziger** solcher Durchlauf heißt **ein Cycle** („Brain Cycle“).
 
@@ -29,7 +30,7 @@ Ein **einziger** solcher Durchlauf heißt **ein Cycle** („Brain Cycle“).
 
 ### A) **Brain Cycle** (`brain cycle [--goal "..."]`)
 
-- **Ein vollständiger SCL-Durchlauf:** Perceive → Think → Decide → Act → Reflect.
+- **Ein vollständiger SCL-Durchlauf:** Perceive → Understand → Think → Decide → Act → Reflect.
 - **Wird gestartet von:**
   - **UI:** Button „Brain Cycle“ im Command Center → `POST /api/actions/brain-cycle` → startet einen Prozess `brain cycle --goal "Decide and execute the most impactful next action"`.
   - **Cron / Autopilot:** z. B. `autopilot-infra.sh` oder Daily-Run ruft `brain cycle --goal "Autonomous maintenance cycle: ..."` auf.
@@ -65,10 +66,10 @@ Beim **Brain Cycle** aus der UI oder aus Autopilot wird in der Regel Level 2 ver
 ## 4. Memory — was der Brain speichert und nutzt
 
 - **Episodes:** Kurze Ereignis-Log-Einträge (z. B. „cycle_start“, „job_complete“, „research_complete“, „perceive“, „cycle_complete“).
-- **Decisions:** Jeder Schritt im Cycle (perceive, think, decide) wird als Decision mit Phase, Reasoning, Confidence und trace_id gespeichert → in der UI unter „Brain Cognitive Traces“ sichtbar.
+- **Decisions:** Jeder Schritt im Cycle (perceive, understand, think, decide) wird als Decision mit Phase, Reasoning, Confidence, trace_id und ggf. **retrieved_memory_ids** (Explainability) gespeichert → in der UI unter „Brain Cognitive Traces“ sichtbar.
 - **Reflections:** Die vom Brain (LLM) erzeugten Reflexionen zu Jobs: Outcome, Learnings, Quality-Score, Playbook-Update.
-- **Playbooks:** Strategien pro Domaine/Workflow; werden in **Think** mit in den Kontext gegeben.
-- **Strategic Principles:** Aus vergangenen Projekten gelernte „guiding“ / „cautionary“ Prinzipien; fließen in **Think** ein.
+- **Playbooks:** Strategien pro Domaine/Workflow; werden in **Understand/Think** mit in den Kontext gegeben.
+- **Strategic Principles:** Aus vergangenen Projekten gelernte „guiding“ / „cautionary“ Prinzipien; fließen in **Understand/Think** ein.
 
 Die UI **Brain & Memory** zeigt Episodes, Decisions, Reflections, Playbooks und Qualitäts-Trends.
 

@@ -42,7 +42,7 @@ Wenn du **mehrere** Research-Projekte hast (z. B. mehrere „Suggested Next Step
 **Conductor (Next Level Architecture):**
 
 - **Shadow Mode (Standard):** Bei jedem research-cycle wird der **Research Conductor** parallel ausgeführt. Er liest den aktuellen State (6 Metriken), entscheidet per LLM die nächste Aktion (`search_more`, `read_more`, `verify`, `synthesize`) und schreibt die Entscheidung in `research/proj-*/conductor_decisions.json`. Die Bash-Pipeline bleibt Master; der Conductor loggt nur.
-- **Conductor als Master (Phase C):** `RESEARCH_USE_CONDUCTOR=1` — dann steuert der Conductor den Ablauf (max 25 Schritte, 4 Aktionen, Context Manager + Supervisor). Bash-Pipeline ist Fallback mit `RESEARCH_USE_CONDUCTOR=0`. **Hinweis:** Im Conductor-Modus wird die volle Bash-Explore-Pipeline (3 Runden, Coverage, Refinement/Gap/Depth) nicht ausgeführt; es ist ein vereinfachter Aktionen-Loop. Details und Bewertung: `docs/EXPLORE_PHASE_DEEP_DIVE.md` Abschnitt 8.
+- **Conductor als Master (Phase C):** `RESEARCH_USE_CONDUCTOR=1` — dann steuert der Conductor den Ablauf (max 25 Schritte, 4 Aktionen, Context Manager + Supervisor). Bash-Pipeline ist Fallback mit `RESEARCH_USE_CONDUCTOR=0`. Bei Conductor-Override (Gate sagt „nochmal Phase X“) setzt research-cycle.sh `RESEARCH_ADVANCE_SKIP_LOOP_LIMIT=1`, damit advance_phase die Conductor-Entscheidung nicht nach 4 Runden überschreibt. **Hinweis:** Im Conductor-Modus wird die volle Bash-Explore-Pipeline (3 Runden, Coverage, Refinement/Gap/Depth) nicht ausgeführt; es ist ein vereinfachter Aktionen-Loop. Details und Bewertung: `docs/EXPLORE_PHASE_DEEP_DIVE.md` Abschnitt 8.
 
 **Skript:** `tools/run-scheduled-research.sh`
 
@@ -117,12 +117,35 @@ Feature-Flag und Verhalten:
   - `domain_rank_overrides` für Source-Ranking
 - Fallback: ohne Flag oder bei Fehlern läuft der bestehende statische Pfad weiter (kein Hard-Fail).
 
+### Memory-Konsolidierung (empfohlen, offline)
+
+- Skript: `tools/memory_consolidate.py` — oder über Brain-CLI: **`brain memory-consolidate`** (ruft dasselbe Skript auf).
+- Zweck: erzeugt/aktualisiert datenbasierte Strategy-Profile pro Domain (`empirical-*`) und synthetisiert wiederkehrende guiding/cautionary Principles aus `run_episodes`.
+- Ausgabe: `memory/consolidation_last.json` + Decision-Log `memory_consolidation_run`.
+
+Beispiel:
+
+```bash
+cd /root/operator
+python3 tools/memory_consolidate.py --min-samples 3 --min-principle-count 3
+# oder (venv/OPERATOR_ROOT wird von brain gesetzt):
+brain memory-consolidate --min-samples 3 --min-principle-count 3
+```
+
+Optional per Cron (z. B. nachts):
+
+```bash
+30 2 * * * cd /root/operator && /usr/bin/python3 tools/memory_consolidate.py >> /root/operator/logs/memory-consolidate.log 2>&1
+# alternativ mit Brain-CLI (venv):
+30 2 * * * cd /root/operator && ./bin/brain memory-consolidate >> /root/operator/logs/memory-consolidate.log 2>&1
+```
+
 ## Bekannte Laufzeit-Themen
 
 - **HTTP 429 (Rate Limit):** Semantic Scholar und arXiv können in der Explore-Phase 429 zurückgeben. Das Skript loggt WARN und fährt fort; ggf. weniger parallele Jobs oder Backoff.
 - **Job-Timeout (z. B. 300s):** Synthesize-Phase kann bei langen Reports den Job-Timeout treffen. Timeout beim Start des Jobs erhöhen (z. B. `op run … --timeout 900`) oder Report-Umfang begrenzen.
 - **Focus ohne Coverage:** Wenn Explore in einem anderen Job lief und keine Coverage-Datei im Projekt liegt, nutzt Focus leere Queries und macht nur Lese-Schritte; kein Abbruch mehr.
-- **Verify→Focus Loop-back:** Bei Evidence-Gate-Fail mit high-priority Gaps wird `advance_phase "focus"` aufgerufen; `verify/deepening_queries.json` wird geschrieben, wird von der Focus-Phase derzeit aber noch nicht gelesen (Gap-Fill nutzt nur Coverage). Siehe `docs/FOCUS_PHASE_DEEP_DIVE.md`.
+- **Verify→Focus Loop-back:** Bei Evidence-Gate-Fail mit high-priority Gaps wird `advance_phase "focus"` aufgerufen; `verify/deepening_queries.json` wird geschrieben und in der nächsten Focus-Runde mit Gap-Fill gemerged und für Web Search genutzt. Siehe `docs/FOCUS_PHASE_DEEP_DIVE.md`.
 
 ---
 

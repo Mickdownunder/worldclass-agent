@@ -43,7 +43,7 @@ cd /root/operator
 **Erfolg:** Projekt wird angelegt, Phasen laufen automatisch, Report erscheint.  
 **Schrott:** Init schlägt fehl, Phase bleibt hängen, kein Report, viele Fehler in `jobs/*/log.txt`.
 
-**Conductor (Shadow):** Pro Cycle wird `tools/research_conductor.py shadow <project_id> <phase>` aufgerufen. Log: `research/proj-*/conductor_shadow.log`, Entscheidungen: `research/proj-*/conductor_decisions.json`. Bei `RESEARCH_USE_CONDUCTOR=1` übernimmt der Conductor die Steuerung (`run_cycle`).
+**Conductor (Shadow):** Pro Cycle wird `tools/research_conductor.py shadow <project_id> <phase>` aufgerufen. Log: `research/proj-*/conductor_shadow.log`, Entscheidungen: `research/proj-*/conductor_decisions.json`. Bei `RESEARCH_USE_CONDUCTOR=1` übernimmt der Conductor die Steuerung (`run_cycle`). In diesem Modus schreibt run_cycle nach search_more/read_more Coverage nach `coverage_conductor.json`, setzt Fortschritt per `research_progress` (UI zeigt z. B. „Conductor: reading more sources“) und bricht nach mehreren aufeinanderfolgenden Tool-Fehlern ab (Status `failed_conductor_tool_errors`, Log `conductor_tool_errors.log`). **steps_taken:** Wenn `conductor_state.json` existiert, wird die Schrittanzahl dort gelesen; sonst aus `phase_history`.
 
 **PDF-Reports:** Die Pipeline erzeugt nach dem Report eine PDF (WeasyPrint). Wenn WeasyPrint fehlt, steht im Job-Log „PDF generation failed (install weasyprint? …)“ und es wird keine PDF geschrieben. Dann: `pip install weasyprint` (oder `pip install -r requirements-research.txt`). Anschließend im Report-Tab **„Generate PDF“** klicken, um die PDF nachträglich zu erzeugen.
 
@@ -170,6 +170,20 @@ if v2:
   print('last_mode:', d.get('mode'), 'fallback_reason:', d.get('fallback_reason'))
 "
 # Erwartung: mindestens ein v2_mode-Eintrag nach einem research-cycle-Run; mode ist v2_applied|v2_fallback|v2_disabled
+
+# 7. (Optional) Memory-Konsolidierung läuft?
+python3 tools/memory_consolidate.py --min-samples 3 --min-principle-count 3
+# oder: brain memory-consolidate --min-samples 3 --min-principle-count 3
+python3 -c "
+import json
+from pathlib import Path
+p = Path('/root/operator/memory/consolidation_last.json')
+print('consolidation_file:', p.exists())
+if p.exists():
+  d = json.loads(p.read_text())
+  print('domains_processed:', len(d.get('domains') or []))
+"
+# Erwartung: consolidation_file: True; domains_processed >= 0
 ```
 
 Wenn alle vier durchlaufen ohne Fehler und mit sinnvollen Werten: **Funktion (a) gegeben.** Qualität (b) beurteilst du an Hand der obigen Tabellen (Reports, Findings, Avg quality, Learnings, Playbooks).

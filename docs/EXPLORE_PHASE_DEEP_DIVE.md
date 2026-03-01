@@ -117,7 +117,7 @@ Jede Datei, die in der Explore-Phase eine Rolle spielt — ob Skript, Artefakt o
 | **governor_lane.json** | research-cycle.sh (Token Governor) | Tools, die RESEARCH_GOVERNOR_LANE lesen | **Lane-Empfehlung:** Kosten/Qualität-Routing. |
 | **conductor_decisions.json** | research_conductor shadow/gate | Conductor read_state (steps_taken, deltas) | **Entscheidungslog:** Nachvollziehbarkeit und Deltas. |
 | **conductor_overrides.json** | research_conductor gate | Conductor gate_check (Caps) | **Override-Zähler:** Begrenzt Wiederholungen. |
-| **conductor_state.json** | research_conductor | read_state (steps_taken) | **Aktueller Conductor-Stand.** |
+| **conductor_state.json** | research_conductor (write_conductor_step_count, save_conductor_state) | read_state (steps_taken) | **Aktueller Conductor-Stand.** steps_taken: Wenn diese Datei existiert, wird steps_taken nur hier gelesen; sonst aus phase_history (nur Phasenverlauf). |
 | **progress.json** | research_progress | API/UI (Fortschritt, STUCK-Erkennung) | **Laufzeit-Anzeige.** |
 | **events.jsonl** | research_progress | API/UI (Timeline) | **Ereignis-Verlauf.** |
 
@@ -384,5 +384,7 @@ project.json (phase, question)
 5. **advance_phase loop_count:** Optional einen Parameter oder Env (z. B. RESEARCH_FORCE_PHASE_ADVANCE_AFTER_LOOPS=3), oder bei Conductor-Override die loop_count-Logik überspringen, damit der Conductor die volle Kontrolle behält.
 
 ---
+
+**Aktionsplan zur Umsetzung:** Siehe `docs/EXPLORE_PIPELINE_SOTA_ACTION_PLAN.md` — priorisierte Phasen (Korrektheit, Conductor konsistent, Beobachtbarkeit, Optional SOTA) mit konkreten Änderungen und Akzeptanz.
 
 *Letzte Aktualisierung: Stand Code/Repo; bei Änderungen an Routen, Phasen oder Flags die übrigen Docs (UI_OVERVIEW.md, RESEARCH_QUALITY_SLO.md, RESEARCH_AUTONOMOUS.md, SYSTEM_CHECK.md) anpassen.*
