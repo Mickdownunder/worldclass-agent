@@ -179,7 +179,7 @@ SCHEMA_SQL = """
     );
     CREATE TABLE IF NOT EXISTS run_episodes (
         id TEXT PRIMARY KEY,
-        project_id TEXT UNIQUE NOT NULL,
+        project_id TEXT NOT NULL,
         question TEXT NOT NULL,
         domain TEXT,
         status TEXT NOT NULL,
@@ -193,10 +193,21 @@ SCHEMA_SQL = """
         what_hurt_json TEXT DEFAULT '[]',
         strategy_profile_id TEXT,
         created_at TEXT NOT NULL,
+        run_index INTEGER DEFAULT 1,
         memory_mode TEXT,
         strategy_confidence REAL,
         verified_claim_count INTEGER,
         claim_support_rate REAL
+    );
+    CREATE TABLE IF NOT EXISTS memory_utility_context (
+        memory_type TEXT NOT NULL,
+        memory_id TEXT NOT NULL,
+        context_key TEXT NOT NULL,
+        utility_score REAL DEFAULT 0.5,
+        retrieval_count INTEGER DEFAULT 0,
+        helpful_count INTEGER DEFAULT 0,
+        last_updated TEXT,
+        PRIMARY KEY (memory_type, memory_id, context_key)
     );
     CREATE TABLE IF NOT EXISTS strategy_profiles (
         id TEXT PRIMARY KEY,
@@ -281,8 +292,11 @@ SCHEMA_SQL = """
 def init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     conn.commit()
+    migrate_run_episodes_project_unique(conn)
     migrate_research_findings_quality(conn)
     migrate_run_episodes_memory_value(conn)
+    migrate_run_episodes_run_index(conn)
+    migrate_read_urls_signature(conn)
 
 
 def migrate_research_findings_quality(conn: sqlite3.Connection) -> None:
@@ -322,4 +336,102 @@ def migrate_run_episodes_memory_value(conn: sqlite3.Connection) -> None:
     ]:
         if name not in existing:
             conn.execute(f"ALTER TABLE run_episodes ADD COLUMN {name} {typ}")
+    conn.commit()
+
+
+def migrate_run_episodes_run_index(conn: sqlite3.Connection) -> None:
+    """Add run_index to run_episodes for per-project run history ordering."""
+    cur = conn.execute("PRAGMA table_info(run_episodes)")
+    existing = {row[1] for row in cur.fetchall()}
+    if "run_index" not in existing:
+        conn.execute("ALTER TABLE run_episodes ADD COLUMN run_index INTEGER DEFAULT 1")
+    conn.commit()
+
+
+def migrate_read_urls_signature(conn: sqlite3.Connection) -> None:
+    """Add question_signature for semantic-ish dedup (similar questions return same URLs)."""
+    cur = conn.execute("PRAGMA table_info(read_urls)")
+    existing = {row[1] for row in cur.fetchall()}
+    if "question_signature" not in existing:
+        conn.execute("ALTER TABLE read_urls ADD COLUMN question_signature TEXT DEFAULT ''")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_read_urls_signature ON read_urls(question_signature)")
+    conn.commit()
+
+
+def migrate_run_episodes_project_unique(conn: sqlite3.Connection) -> None:
+    """
+    Remove old UNIQUE(project_id) constraint on run_episodes.
+    Older DBs used one-row-per-project semantics (INSERT OR REPLACE); rebuild table once.
+    """
+    cur = conn.execute("PRAGMA index_list(run_episodes)")
+    idx_rows = cur.fetchall()
+    has_project_unique = False
+    for row in idx_rows:
+        idx_name = row[1]
+        is_unique = int(row[2]) == 1
+        if not is_unique:
+            continue
+        cols = conn.execute(f"PRAGMA index_info({idx_name!r})").fetchall()
+        col_names = [c[2] for c in cols]
+        if col_names == ["project_id"]:
+            has_project_unique = True
+            break
+    if not has_project_unique:
+        return
+
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(run_episodes)").fetchall()}
+    run_index_expr = "COALESCE(run_index, 1)" if "run_index" in cols else "1"
+
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS run_episodes_new (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            question TEXT NOT NULL,
+            domain TEXT,
+            status TEXT NOT NULL,
+            plan_query_mix_json TEXT DEFAULT '{}',
+            source_mix_json TEXT DEFAULT '{}',
+            gate_metrics_json TEXT DEFAULT '{}',
+            critic_score REAL,
+            user_verdict TEXT,
+            fail_codes_json TEXT DEFAULT '[]',
+            what_helped_json TEXT DEFAULT '[]',
+            what_hurt_json TEXT DEFAULT '[]',
+            strategy_profile_id TEXT,
+            created_at TEXT NOT NULL,
+            run_index INTEGER DEFAULT 1,
+            memory_mode TEXT,
+            strategy_confidence REAL,
+            verified_claim_count INTEGER,
+            claim_support_rate REAL
+        );
+        """
+    )
+    conn.execute(
+        f"""
+        INSERT INTO run_episodes_new (
+            id, project_id, question, domain, status, plan_query_mix_json, source_mix_json,
+            gate_metrics_json, critic_score, user_verdict, fail_codes_json, what_helped_json,
+            what_hurt_json, strategy_profile_id, created_at, run_index, memory_mode,
+            strategy_confidence, verified_claim_count, claim_support_rate
+        )
+        SELECT
+            id, project_id, question, domain, status, plan_query_mix_json, source_mix_json,
+            gate_metrics_json, critic_score, user_verdict, fail_codes_json, what_helped_json,
+            what_hurt_json, strategy_profile_id, created_at, {run_index_expr},
+            memory_mode, strategy_confidence, verified_claim_count, claim_support_rate
+        FROM run_episodes
+        """
+    )
+    conn.executescript(
+        """
+        DROP TABLE run_episodes;
+        ALTER TABLE run_episodes_new RENAME TO run_episodes;
+        CREATE INDEX IF NOT EXISTS idx_run_episodes_domain ON run_episodes(domain);
+        CREATE INDEX IF NOT EXISTS idx_run_episodes_status ON run_episodes(status);
+        CREATE INDEX IF NOT EXISTS idx_run_episodes_created ON run_episodes(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_run_episodes_project ON run_episodes(project_id, created_at DESC);
+        """
+    )
     conn.commit()

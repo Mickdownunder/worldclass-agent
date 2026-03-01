@@ -16,9 +16,11 @@ interface ReflectionRow {
 export function ActivityTab({
   episodes,
   reflections,
+  consolidation,
 }: {
   episodes: EpisodeRow[];
   reflections: ReflectionRow[];
+  consolidation?: any;
 }) {
   const [episodePage, setEpisodePage] = useState(1);
   const [reflectionPage, setReflectionPage] = useState(1);
@@ -36,8 +38,21 @@ export function ActivityTab({
   const displayedReflections = allReflections.slice((reflectionPage - 1) * reflectionsPerPage, reflectionPage * reflectionsPerPage);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div className="tron-panel p-6 flex flex-col">
+    <div className="space-y-6">
+      {consolidation && (
+        <div className="tron-panel p-4 flex flex-wrap items-center gap-4 text-sm" style={{ borderLeft: "4px solid var(--tron-success)" }}>
+          <span className="font-bold text-tron-muted">Letzte Konsolidierung:</span>
+          {consolidation.ts && <span className="text-tron-dim">{new Date(consolidation.ts * 1000).toLocaleString()}</span>}
+          {consolidation.domains && <span className="text-tron-accent">Domains: {consolidation.domains.length}</span>}
+          {consolidation.synthesized_principles !== undefined && (
+            <span style={{ color: "var(--tron-success)" }}>Synthesized: {consolidation.synthesized_principles}</span>
+          )}
+          {consolidation.elapsed_sec && <span className="text-tron-dim text-xs ml-auto">Dauer: {consolidation.elapsed_sec.toFixed(1)}s</span>}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="tron-panel p-6 flex flex-col">
         <h2 className="mb-4 text-lg font-medium text-tron-muted">Letzte Ereignisse</h2>
         <div className="flex-1">
           <ul className="space-y-2">
@@ -80,6 +95,7 @@ export function ActivityTab({
           <Pagination currentPage={reflectionPage} totalPages={reflectionTotalPages} onPageChange={setReflectionPage} />
         </div>
       </div>
+    </div>
     </div>
   );
 }

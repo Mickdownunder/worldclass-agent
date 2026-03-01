@@ -14,6 +14,29 @@ async function brainJson(args: string[]): Promise<unknown> {
   return JSON.parse(stdout) as unknown;
 }
 
+export interface MemoryValueScore {
+  memory_value: number | null;
+  applied_avg: number | null;
+  fallback_avg: number | null;
+  applied_count: number;
+  fallback_count: number;
+}
+
+export interface RunEpisodeRow {
+  id: string;
+  project_id: string;
+  question: string;
+  domain: string;
+  status: string;
+  critic_score: number | null;
+  what_helped: string;
+  what_hurt: string;
+  strategy_profile_id: string | null;
+  run_index: number;
+  created_at: string;
+  memory_mode: string | null;
+}
+
 export interface MemorySummary {
   totals: {
     episodes: number;
@@ -22,9 +45,13 @@ export interface MemorySummary {
     avg_quality: number;
     principles?: number | string;
     outcomes?: number | string;
+    run_episodes?: number;
+    memory_value?: MemoryValueScore;
   };
   recent_episodes: Array<{ kind: string; content: string; ts: string }>;
   recent_reflections: Array<{ job_id: string; quality: number; learnings?: string; ts: string }>;
+  recent_run_episodes?: RunEpisodeRow[];
+  consolidation?: any;
   playbooks: Array<{ domain: string; strategy: string; success_rate: number }>;
 }
 
@@ -38,14 +65,6 @@ export async function getMemorySummary(): Promise<MemorySummary | null> {
   } catch {
     return null;
   }
-}
-
-export interface MemoryValueScore {
-  memory_value: number | null;
-  applied_avg: number | null;
-  fallback_avg: number | null;
-  applied_count: number;
-  fallback_count: number;
 }
 
 export async function getMemoryValueScore(): Promise<MemoryValueScore | null> {
@@ -149,6 +168,8 @@ export interface BrainDecision {
   trace_id?: string;
   ts?: string;
   inputs?: string;
+  /** JSON string or object; may contain retrieved_memory_ids (principle_ids, finding_ids, episode_ids) for explainability */
+  metadata?: string | { retrieved_memory_ids?: { principle_ids?: string[]; finding_ids?: string[]; episode_ids?: string[] } };
 }
 
 export async function getDecisions(limit = 30): Promise<BrainDecision[]> {

@@ -1,8 +1,9 @@
 """Strategic principles (EvolveR-style): guiding and cautionary principles from trajectories."""
 import json
+import re
 import sqlite3
 
-from .common import utcnow, hash_id
+from .common import utcnow, hash_id, cosine_similarity
 
 
 class Principles:
@@ -35,23 +36,62 @@ class Principles:
         row = self._conn.execute("SELECT * FROM strategic_principles WHERE id = ?", (principle_id,)).fetchone()
         return dict(row) if row else None
 
-    def search(self, query: str, limit: int = 10, domain: str | None = None, principle_type: str | None = None) -> list[dict]:
-        """Keyword search on description. Returns list of principles with id, description, metric_score, etc."""
-        terms = query.lower().split()
-        conditions = ["LOWER(description) LIKE ?" for _ in terms]
-        params = [f"%{t}%" for t in terms]
+    def search(
+        self,
+        query: str,
+        limit: int = 10,
+        domain: str | None = None,
+        principle_type: str | None = None,
+        query_embedding: list[float] | None = None,
+    ) -> list[dict]:
+        """Hybrid lexical + optional semantic (embedding_json) search on principle descriptions."""
+        terms = [t for t in re.findall(r"[a-z0-9]{3,}", (query or "").lower())]
+        if not terms and not query_embedding:
+            return []
+        where = []
+        params: list = []
         if domain:
-            conditions.append("(domain = ? OR domain = '')")
+            where.append("(domain = ? OR domain = '')")
             params.append(domain)
         if principle_type:
-            conditions.append("principle_type = ?")
+            where.append("principle_type = ?")
             params.append(principle_type)
-        params.append(limit)
-        rows = self._conn.execute(
-            f"SELECT * FROM strategic_principles WHERE {' AND '.join(conditions)} ORDER BY metric_score DESC, created_at DESC LIMIT ?",
-            params,
-        ).fetchall()
-        return [dict(r) for r in rows]
+        sql = "SELECT * FROM strategic_principles"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        rows = self._conn.execute(sql).fetchall()
+        by_id: dict[str, dict] = {}
+        for r in rows:
+            d = dict(r)
+            desc = (d.get("description") or "").lower()
+            lex_score = 0.0
+            if terms:
+                hit = sum(1 for t in terms if t in desc)
+                if hit <= 0 and not query_embedding:
+                    continue
+                if hit > 0:
+                    token_set = set(re.findall(r"[a-z0-9]{3,}", desc))
+                    jacc = len(set(terms) & token_set) / max(1, len(set(terms) | token_set))
+                    contains_phrase = 1.0 if " ".join(terms[:3]) in desc else 0.0
+                    lex_score = round(min(1.0, 0.6 * (hit / max(1, len(terms))) + 0.3 * jacc + 0.1 * contains_phrase), 4)
+            else:
+                lex_score = 0.5
+            emb_score = 0.0
+            if query_embedding:
+                ej = d.get("embedding_json")
+                if ej:
+                    try:
+                        vec = json.loads(ej) if isinstance(ej, str) else ej
+                        if isinstance(vec, list) and len(vec) == len(query_embedding):
+                            emb_score = cosine_similarity(query_embedding, vec)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        pass
+            if lex_score <= 0 and emb_score <= 0:
+                continue
+            d["similarity_score"] = round(max(lex_score, emb_score, 0.7 * emb_score + 0.3 * lex_score if (lex_score and emb_score) else (lex_score or emb_score)), 4)
+            by_id[d["id"]] = d
+        out = sorted(by_id.values(), key=lambda x: (x.get("similarity_score", 0.0), x.get("metric_score", 0.0), x.get("created_at", "")), reverse=True)
+        return out[: max(1, int(limit))]
 
     def list_recent(self, limit: int = 50, domain: str | None = None) -> list[dict]:
         if domain:

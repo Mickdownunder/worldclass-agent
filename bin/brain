@@ -20,6 +20,7 @@ Usage:
   brain outcomes [--limit N]
   brain decisions [--limit N]
   brain memory-value
+  brain memory-consolidate [--min-samples N] [--min-principle-count N]
 """
 import os
 import sys
@@ -175,6 +176,55 @@ def cmd_decisions(args: list[str]):
         print(json.dumps({"decisions": decisions}, indent=2, default=str))
 
 
+def cmd_strategies(args: list[str]):
+    limit = 20
+    if "--limit" in args:
+        limit = int(args[args.index("--limit") + 1])
+    domain = None
+    if "--domain" in args:
+        domain = args[args.index("--domain") + 1]
+    with Memory() as mem:
+        res = mem.list_strategy_profiles(domain=domain, limit=limit)
+        print(json.dumps({"strategies": res}, indent=2, default=str))
+
+def cmd_utility(args: list[str]):
+    limit = 50
+    if "--limit" in args:
+        limit = int(args[args.index("--limit") + 1])
+    mtype = None
+    if "--type" in args:
+        mtype = args[args.index("--type") + 1]
+    with Memory() as mem:
+        res = mem.get_top_utility(memory_type=mtype, limit=limit)
+        print(json.dumps({"utility": res}, indent=2, default=str))
+
+def cmd_graph(args: list[str]):
+    limit = 100
+    if "--limit" in args:
+        limit = int(args[args.index("--limit") + 1])
+    with Memory() as mem:
+        res = mem.get_graph_edges(limit=limit)
+        print(json.dumps({"edges": res}, indent=2, default=str))
+
+def cmd_memory_consolidate(args: list[str]):
+    """Run offline memory consolidation (empirical strategies, principle synthesis)."""
+    import subprocess
+    import os as _os
+    root = _os.path.join(_operator_root, "")
+    tool = _os.path.join(_operator_root, "tools", "memory_consolidate.py")
+    argv = [sys.executable, tool]
+    if "--min-samples" in args:
+        i = args.index("--min-samples") + 1
+        if i < len(args):
+            argv.extend(["--min-samples", args[i]])
+    if "--min-principle-count" in args:
+        i = args.index("--min-principle-count") + 1
+        if i < len(args):
+            argv.extend(["--min-principle-count", args[i]])
+    result = subprocess.run(argv, cwd=_operator_root)
+    sys.exit(result.returncode)
+
+
 def cmd_memory_value(args: list[str]):
     with Memory() as mem:
         score = mem.get_memory_value_score()
@@ -247,6 +297,10 @@ def main():
         "outcomes": cmd_outcomes,
         "decisions": cmd_decisions,
         "memory-value": cmd_memory_value,
+        "memory-consolidate": cmd_memory_consolidate,
+        "strategies": cmd_strategies,
+        "utility": cmd_utility,
+        "graph": cmd_graph,
     }
 
     if cmd in commands:

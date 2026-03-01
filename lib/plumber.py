@@ -36,6 +36,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from collections import Counter
 from datetime import datetime, timezone
@@ -692,6 +693,16 @@ def diagnose_tool_references() -> dict:
                             "severity": CRITICAL,
                         })
 
+    # Also scan research_conductor.py: it calls research_*.py via run_tool/_run_tool
+    conductor_py = TOOLS / "research_conductor.py"
+    if conductor_py.exists():
+        try:
+            content = conductor_py.read_text()
+            for m in re.finditer(r'["\'](research_[\w_]+\.py)["\']', content):
+                referenced.add(m.group(1))
+        except OSError:
+            pass
+
     # Dead tools: exist but never referenced
     for tool in sorted(existing):
         if tool not in referenced and tool.startswith("research_"):
@@ -702,6 +713,34 @@ def diagnose_tool_references() -> dict:
         "existing_count": len(existing),
         "missing_refs": missing_refs,
         "dead_tools": dead_tools,
+        "referenced_tools": sorted(referenced),
+    }
+
+
+def diagnose_tool_contracts() -> dict:
+    """
+    Check that every research tool referenced in workflows has a contract in
+    research_tool_registry. Tools without a contract cannot be validated for
+    correct env/argv and may be misused.
+    """
+    ref_info = diagnose_tool_references()
+    referenced = set(ref_info.get("referenced_tools", []))
+    research_tools = [t for t in referenced if t.startswith("research_") and t.endswith(".py")]
+    missing_contracts: list[str] = []
+    registered_count = 0
+    try:
+        sys.path.insert(0, str(BASE))
+        from tools.research_tool_registry import TOOL_CONTRACTS
+        registered_count = len(TOOL_CONTRACTS)
+        for name in research_tools:
+            if name not in TOOL_CONTRACTS:
+                missing_contracts.append(name)
+    except ImportError:
+        pass
+    return {
+        "referenced_research_tools": len(research_tools),
+        "registered_contracts": registered_count,
+        "missing_contracts": missing_contracts,
     }
 
 
@@ -1726,6 +1765,22 @@ def run_plumber(
     if ref_info.get("dead_tools"):
         cat_refs["status"] = "info"
     categories["tool_references"] = cat_refs
+
+    # ── Category 5b: Tool contracts (registry coverage) ───────────────
+    cat_contracts = {"status": "clean", "issues": [], "missing_contracts": []}
+    contract_info = diagnose_tool_contracts()
+    cat_contracts["missing_contracts"] = contract_info.get("missing_contracts", [])
+    for tool_name in contract_info.get("missing_contracts", []):
+        issues_found += 1
+        diag_msg = f"Research tool {tool_name} has no contract in research_tool_registry (env/argv cannot be validated)"
+        entry = {"type": "missing_tool_contract", "target": tool_name, "severity": "medium",
+                 "fixed": False, "diagnosis": diag_msg, "action": "Add entry to tools/research_tool_registry.py TOOL_CONTRACTS"}
+        results.append(entry)
+        cat_contracts["issues"].append(entry)
+        cat_contracts["status"] = "issues_found"
+    if not cat_contracts["issues"]:
+        cat_contracts["registered_contracts"] = contract_info.get("registered_contracts", 0)
+    categories["tool_contracts"] = cat_contracts
 
     # ── Category 6: Process health ────────────────────────────────────
     cat_proc = {"status": "clean", "issues": []}

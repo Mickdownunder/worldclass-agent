@@ -1,9 +1,10 @@
 """Research findings, admission events, and cross-links."""
 import json
+import re
 import time
 import sqlite3
 
-from .common import utcnow, hash_id
+from .common import utcnow, hash_id, cosine_similarity
 
 
 class ResearchFindings:
@@ -79,26 +80,54 @@ class ResearchFindings:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def search_by_query(self, query: str, limit: int = 50) -> list[dict]:
-        """Return accepted findings whose content_preview or title matches query terms (keyword AND).
-         Used for prior-knowledge seeding so discovery and standard runs only get topic-relevant findings."""
-        terms = [t for t in query.lower().split() if len(t) >= 2]
-        if not terms:
-            return []
-        conditions = " AND ".join(
-            "(LOWER(COALESCE(content_preview,'')) LIKE ? OR LOWER(COALESCE(title,'')) LIKE ?)"
-            for _ in terms
-        )
-        params = [f"%{t}%" for t in terms for _ in (0, 1)]
-        params.append(limit)
+    def search_by_query(self, query: str, limit: int = 50, query_embedding: list[float] | None = None) -> list[dict]:
+        """Hybrid lexical + optional semantic (embedding_json) retrieval for accepted findings."""
+        terms = [t for t in re.findall(r"[a-z0-9]{3,}", (query or "").lower())]
         rows = self._conn.execute(
-            """SELECT id, project_id, finding_key, content_preview, url, title, relevance_score, importance_score
-               FROM research_findings WHERE admission_state = 'accepted' AND """
-            + conditions
-            + " ORDER BY ts DESC LIMIT ?",
-            params,
+            """SELECT id, project_id, finding_key, content_preview, embedding_json, url, title, relevance_score, importance_score, ts
+               FROM research_findings WHERE admission_state = 'accepted' ORDER BY ts DESC LIMIT 800""",
         ).fetchall()
-        return [dict(r) for r in rows]
+        out: list[dict] = []
+        for row in rows:
+            d = dict(row)
+            text = f"{d.get('title') or ''} {d.get('content_preview') or ''}".lower()
+            lex_score = 0.0
+            if terms:
+                hit = sum(1 for t in terms if t in text)
+                if hit <= 0 and not query_embedding:
+                    continue
+                if hit > 0:
+                    tset = set(re.findall(r"[a-z0-9]{3,}", text))
+                    jacc = len(set(terms) & tset) / max(1, len(set(terms) | tset))
+                    lex_score = round(min(1.0, 0.65 * (hit / max(1, len(terms))) + 0.35 * jacc), 4)
+            else:
+                lex_score = 0.5 if query_embedding else 0.0
+            emb_score = 0.0
+            if query_embedding:
+                ej = d.get("embedding_json")
+                if ej:
+                    try:
+                        vec = json.loads(ej) if isinstance(ej, str) else ej
+                        if isinstance(vec, list) and len(vec) == len(query_embedding):
+                            emb_score = cosine_similarity(query_embedding, vec)
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        pass
+            if lex_score <= 0 and emb_score <= 0:
+                continue
+            d["similarity_score"] = round(
+                max(lex_score, emb_score, 0.7 * emb_score + 0.3 * lex_score if (lex_score and emb_score) else (lex_score or emb_score)),
+                4,
+            )
+            out.append(d)
+        out.sort(
+            key=lambda x: (
+                x.get("similarity_score", 0.0),
+                x.get("relevance_score", 0.0) if isinstance(x.get("relevance_score"), (int, float)) else 0.0,
+                x.get("ts", ""),
+            ),
+            reverse=True,
+        )
+        return out[: max(1, int(limit))]
 
     def insert_cross_link(
         self,

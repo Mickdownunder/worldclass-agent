@@ -109,3 +109,38 @@ def test_memory_v2_select_strategy_includes_confidence_drivers(tmp_path):
     drivers = selected.get("confidence_drivers") or {}
     assert "strategy_score" in drivers
     assert "query_overlap" in drivers
+
+
+def test_memory_v2_keeps_multiple_run_episodes_per_project(tmp_path):
+    db_path = tmp_path / "memory" / "operator.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    mem = Memory(db_path=str(db_path))
+    e1 = mem.record_run_episode(
+        project_id="proj-repeat",
+        question="Q1",
+        domain="general",
+        status="done",
+    )
+    e2 = mem.record_run_episode(
+        project_id="proj-repeat",
+        question="Q1 follow-up",
+        domain="general",
+        status="done",
+    )
+    rows = mem._conn.execute(
+        "SELECT id, run_index FROM run_episodes WHERE project_id='proj-repeat' ORDER BY run_index ASC"
+    ).fetchall()
+    mem.close()
+    assert e1 != e2
+    assert len(rows) == 2
+    assert [int(r["run_index"]) for r in rows] == [1, 2]
+
+
+def test_memory_v2_read_urls_signature_handles_reordered_question(tmp_path):
+    db_path = tmp_path / "memory" / "operator.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    mem = Memory(db_path=str(db_path))
+    mem.record_read_urls("How to improve battery life in EV fleets", ["https://example.com/a"])
+    urls = mem.get_read_urls_for_question("Improve EV fleet battery life how")
+    mem.close()
+    assert "https://example.com/a" in urls

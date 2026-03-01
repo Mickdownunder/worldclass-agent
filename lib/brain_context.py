@@ -29,9 +29,14 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
     """
     if query and hasattr(memory, "retrieve_with_utility"):
         # Utility-ranked retrieval: two-phase semantic + utility re-rank
-        reflections = memory.retrieve_with_utility(query, "reflection", k=max_reflections)
-        findings = memory.retrieve_with_utility(query, "finding", k=20)
-        principles = memory.retrieve_with_utility(query, "principle", k=5)
+        reflections = memory.retrieve_with_utility(query, "reflection", k=max_reflections, context_key=query)
+        findings = memory.retrieve_with_utility(query, "finding", k=20, context_key=query)
+        principles = memory.retrieve_with_utility(query, "principle", k=5, context_key=query)
+        memory_trace = {
+            "reflection_ids": [r.get("id") for r in reflections if r.get("id")],
+            "finding_ids": [f.get("id") for f in findings if f.get("id")],
+            "principle_ids": [p.get("id") for p in principles if p.get("id")],
+        }
         by_project: dict[str, list] = {}
         for f in findings:
             pid = f.get("project_id") or ""
@@ -40,6 +45,7 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
             if len(by_project[pid]) >= max_findings_per_project:
                 continue
             by_project[pid].append({
+                "id": f.get("id"),
                 "finding_key": f.get("finding_key"),
                 "preview": (f.get("content_preview") or "")[:200],
                 "url": f.get("url"),
@@ -55,7 +61,7 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
                 for r in reflections
             ],
             "strategic_principles": [
-                {"description": (p.get("description") or "")[:200], "principle_type": p.get("principle_type"), "metric_score": p.get("metric_score")}
+                {"id": p.get("id"), "description": (p.get("description") or "")[:200], "principle_type": p.get("principle_type"), "metric_score": p.get("metric_score")}
                 for p in principles_sorted
             ],
             "totals": {
@@ -64,6 +70,7 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
                 "reflections_above_threshold": len(reflections),
                 "principles_count": len(principles),
             },
+            "memory_trace": memory_trace,
         }
     # Fallback: static retrieval (no query or no retrieve_with_utility)
     all_accepted = memory.get_research_findings_accepted(project_id=None, limit=max_projects * max_findings_per_project * 2)
@@ -75,6 +82,7 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
         if len(by_project[pid]) >= max_findings_per_project:
             continue
         by_project[pid].append({
+            "id": f.get("id"),
             "finding_key": f.get("finding_key"),
             "preview": (f.get("content_preview") or "")[:200],
             "url": f.get("url"),
@@ -89,6 +97,11 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
     if hasattr(memory, "list_principles"):
         principles = memory.list_principles(limit=10)
     principles_sorted = sorted(principles, key=lambda p: (0 if (p.get("principle_type") or "").lower() == "causal" else 1, -(p.get("metric_score") or 0)))
+    memory_trace = {
+        "principle_ids": [p.get("id") for p in principles if p.get("id")],
+        "finding_ids": [f.get("id") for fl in by_project.values() for f in fl if f.get("id")],
+        "reflection_ids": [],
+    }
 
     return {
         "accepted_findings_by_project": by_project,
@@ -97,7 +110,7 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
             for r in high_reflections
         ],
         "strategic_principles": [
-            {"description": (p.get("description") or "")[:200], "principle_type": p.get("principle_type"),
+            {"id": p.get("id"), "description": (p.get("description") or "")[:200], "principle_type": p.get("principle_type"),
              "metric_score": p.get("metric_score"), "domain": p.get("domain", "")}
             for p in principles_sorted
         ],
@@ -107,4 +120,5 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
             "reflections_above_threshold": len(high_reflections),
             "principles_count": len(principles),
         },
+        "memory_trace": memory_trace,
     }

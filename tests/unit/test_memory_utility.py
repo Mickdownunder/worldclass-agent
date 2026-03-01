@@ -64,3 +64,21 @@ def test_update_from_outcome_missing_row_skipped(memory_conn):
     u = UtilityTracker(memory_conn)
     u.update_from_outcome("principle", ["never-retrieved-id"], outcome_score=0.9)
     assert u.get("principle", "never-retrieved-id") is None
+
+
+def test_contextual_utility_rows(memory_conn):
+    """Context-key retrieval tracks and updates per-context utility independently."""
+    u = UtilityTracker(memory_conn)
+    u.record_retrieval("principle", "pid-ctx", context_key="medical trial safety")
+    row = u.get("principle", "pid-ctx", context_key="medical trial safety")
+    assert row is not None
+    assert row["retrieval_count"] == 1
+    u.update_from_outcome(
+        "principle",
+        ["pid-ctx"],
+        outcome_score=0.9,
+        context_key="medical trial safety",
+    )
+    row2 = u.get("principle", "pid-ctx", context_key="medical trial safety")
+    assert row2 is not None
+    assert row2["helpful_count"] == 1

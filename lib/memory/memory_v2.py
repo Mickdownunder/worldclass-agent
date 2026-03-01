@@ -26,6 +26,33 @@ def _tokenize(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9]{3,}", (text or "").lower())}
 
 
+_STOPWORDS = {
+    "the", "and", "for", "with", "that", "this", "from", "into", "about", "what", "when", "where", "which",
+    "wie", "und", "der", "die", "das", "den", "dem", "ein", "eine", "einer", "eines", "mit", "auf", "ist",
+    "sind", "von", "zu", "in", "an", "im", "am", "als",
+}
+
+
+def _question_signature(question: str) -> str:
+    """
+    Normalize questions for read-URL dedup across paraphrases:
+    lowercase, tokenized, stopword-filtered, sorted unique terms.
+    """
+    raw = [t for t in re.findall(r"[a-z0-9]{3,}", (question or "").lower()) if t not in _STOPWORDS]
+    tokens: list[str] = []
+    for t in raw:
+        s = t
+        # Very lightweight stemming for paraphrase robustness (plural/tense variants).
+        for suf in ("ing", "ed", "es", "s"):
+            if len(s) >= 5 and s.endswith(suf):
+                s = s[: -len(suf)]
+                break
+        tokens.append(s)
+    if not tokens:
+        return (question or "").strip().lower()
+    return " ".join(sorted(set(tokens)))
+
+
 class MemoryV2:
     def __init__(self, conn: sqlite3.Connection):
         self._conn = conn
@@ -50,18 +77,23 @@ class MemoryV2:
         verified_claim_count: int | None = None,
         claim_support_rate: float | None = None,
     ) -> str:
-        episode_id = hash_id(f"episode:{project_id}")
         now = utcnow()
+        episode_id = hash_id(f"episode:{project_id}:{now}:{question[:64]}")
+        run_row = self._conn.execute(
+            "SELECT COALESCE(MAX(run_index), 0) AS m FROM run_episodes WHERE project_id=?",
+            (project_id,),
+        ).fetchone()
+        run_index = int(run_row["m"] or 0) + 1
         mode_val = (memory_mode or "fallback").strip().lower()
         if mode_val not in ("applied", "fallback"):
             mode_val = "fallback"
         self._conn.execute(
-            """INSERT OR REPLACE INTO run_episodes
+            """INSERT INTO run_episodes
                (id, project_id, question, domain, status, plan_query_mix_json, source_mix_json,
                 gate_metrics_json, critic_score, user_verdict, fail_codes_json,
                 what_helped_json, what_hurt_json, strategy_profile_id, created_at,
-                memory_mode, strategy_confidence, verified_claim_count, claim_support_rate)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                run_index, memory_mode, strategy_confidence, verified_claim_count, claim_support_rate)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 episode_id,
                 project_id,
@@ -78,12 +110,23 @@ class MemoryV2:
                 _safe_json(what_hurt, []),
                 strategy_profile_id,
                 now,
+                run_index,
                 mode_val,
                 strategy_confidence,
                 verified_claim_count,
                 claim_support_rate,
             ),
         )
+        if strategy_profile_id:
+            # Keep episode<->strategy graph linkage consistent even if caller forgets.
+            self.record_graph_edge(
+                edge_type="used_in",
+                from_node_type="strategy_profile",
+                from_node_id=strategy_profile_id,
+                to_node_type="run_episode",
+                to_node_id=episode_id,
+                project_id=project_id,
+            )
         self._conn.commit()
         return episode_id
 
@@ -310,22 +353,42 @@ class MemoryV2:
     def _strategy_episodes_for_causal(
         self, strategy_profile_id: str, domain: str | None, limit: int = 30
     ) -> list[dict]:
-        """Episodes that used this strategy in same/similar domain for what_helped/what_hurt/fail_codes."""
+        """Episodes that used this strategy in same/similar domain (via graph used_in, fallback strategy_profile_id)."""
         try:
-            if domain:
-                rows = self._conn.execute(
-                    """SELECT question, domain, what_helped_json, what_hurt_json, fail_codes_json, critic_score
-                       FROM run_episodes WHERE strategy_profile_id=? AND domain=?
-                       ORDER BY created_at DESC LIMIT ?""",
-                    (strategy_profile_id, domain, limit),
-                ).fetchall()
+            # Prefer graph: episodes linked by memory_graph_edges (used_in strategy -> episode)
+            episode_ids = self.get_episode_ids_for_strategy(strategy_profile_id, domain=domain, limit=limit)
+            if episode_ids:
+                placeholders = ",".join("?" * len(episode_ids))
+                if domain:
+                    rows = self._conn.execute(
+                        f"""SELECT question, domain, what_helped_json, what_hurt_json, fail_codes_json, critic_score
+                           FROM run_episodes WHERE id IN ({placeholders}) AND domain=?
+                           ORDER BY created_at DESC LIMIT ?""",
+                        (*episode_ids, domain, limit),
+                    ).fetchall()
+                else:
+                    rows = self._conn.execute(
+                        f"""SELECT question, domain, what_helped_json, what_hurt_json, fail_codes_json, critic_score
+                           FROM run_episodes WHERE id IN ({placeholders})
+                           ORDER BY created_at DESC LIMIT ?""",
+                        (*episode_ids, limit),
+                    ).fetchall()
             else:
-                rows = self._conn.execute(
-                    """SELECT question, domain, what_helped_json, what_hurt_json, fail_codes_json, critic_score
-                       FROM run_episodes WHERE strategy_profile_id=?
-                       ORDER BY created_at DESC LIMIT ?""",
-                    (strategy_profile_id, limit),
-                ).fetchall()
+                # Fallback when no graph edges yet (e.g. older DBs)
+                if domain:
+                    rows = self._conn.execute(
+                        """SELECT question, domain, what_helped_json, what_hurt_json, fail_codes_json, critic_score
+                           FROM run_episodes WHERE strategy_profile_id=? AND domain=?
+                           ORDER BY created_at DESC LIMIT ?""",
+                        (strategy_profile_id, domain, limit),
+                    ).fetchall()
+                else:
+                    rows = self._conn.execute(
+                        """SELECT question, domain, what_helped_json, what_hurt_json, fail_codes_json, critic_score
+                           FROM run_episodes WHERE strategy_profile_id=?
+                           ORDER BY created_at DESC LIMIT ?""",
+                        (strategy_profile_id, limit),
+                    ).fetchall()
             out = []
             for r in rows:
                 try:
@@ -543,6 +606,32 @@ class MemoryV2:
         self._conn.commit()
         return eid
 
+    def get_episode_ids_for_strategy(
+        self, strategy_profile_id: str, domain: str | None = None, limit: int = 50
+    ) -> list[str]:
+        """Episodes linked to this strategy via graph (used_in). If domain given, only episodes in that domain."""
+        try:
+            if domain:
+                rows = self._conn.execute(
+                    """SELECT e.to_node_id FROM memory_graph_edges e
+                       INNER JOIN run_episodes r ON r.id = e.to_node_id
+                       WHERE e.from_node_type = 'strategy_profile' AND e.from_node_id = ?
+                         AND e.to_node_type = 'run_episode' AND r.domain = ?
+                       ORDER BY e.ts DESC LIMIT ?""",
+                    (strategy_profile_id, domain, limit),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    """SELECT to_node_id FROM memory_graph_edges
+                       WHERE from_node_type = 'strategy_profile' AND from_node_id = ?
+                         AND to_node_type = 'run_episode'
+                       ORDER BY ts DESC LIMIT ?""",
+                    (strategy_profile_id, limit),
+                ).fetchall()
+            return [str(r[0]) for r in rows if r and r[0]]
+        except Exception:
+            return []
+
     def update_source_domain_stats_v2(
         self,
         domain: str,
@@ -644,15 +733,175 @@ class MemoryV2:
             return {}
         return {k: round(v / total, 3) for k, v in c.items()}
 
+    def build_empirical_policy(self, domain: str, min_samples: int = 3) -> dict | None:
+        """
+        Build a data-derived strategy policy from successful episodes in a domain.
+        This is intentionally conservative and bounded for production safety.
+        """
+        rows = self._conn.execute(
+            """SELECT plan_query_mix_json, source_mix_json, critic_score, claim_support_rate
+               FROM run_episodes
+               WHERE domain=? AND status='done' AND critic_score IS NOT NULL
+               ORDER BY created_at DESC LIMIT 200""",
+            (domain or "general",),
+        ).fetchall()
+        if len(rows) < max(1, int(min_samples)):
+            return None
+
+        qmix_sum: Counter[str] = Counter()
+        smix_sum: Counter[str] = Counter()
+        critics: list[float] = []
+        supports: list[float] = []
+        used = 0
+        for r in rows:
+            try:
+                qmix = json.loads(r["plan_query_mix_json"] or "{}")
+                smix = json.loads(r["source_mix_json"] or "{}")
+            except Exception:
+                qmix, smix = {}, {}
+            if not isinstance(qmix, dict):
+                qmix = {}
+            if not isinstance(smix, dict):
+                smix = {}
+            used += 1
+            for k, v in qmix.items():
+                try:
+                    qmix_sum[str(k).lower()] += float(v)
+                except Exception:
+                    continue
+            for k, v in smix.items():
+                try:
+                    smix_sum[str(k).lower()] += float(v)
+                except Exception:
+                    continue
+            if isinstance(r["critic_score"], (int, float)):
+                critics.append(float(r["critic_score"]))
+            if isinstance(r["claim_support_rate"], (int, float)):
+                supports.append(float(r["claim_support_rate"]))
+        if used < max(1, int(min_samples)):
+            return None
+
+        def _normalize_counter(cn: Counter[str], top_n: int = 6) -> dict[str, float]:
+            if not cn:
+                return {}
+            items = cn.most_common(top_n)
+            total = sum(v for _, v in items) or 1.0
+            return {k: round(v / total, 3) for k, v in items}
+
+        preferred_query_types = _normalize_counter(qmix_sum, top_n=3)
+        required_source_mix = _normalize_counter(smix_sum, top_n=4)
+        critic_avg = sum(critics) / len(critics) if critics else 0.55
+        support_avg = sum(supports) / len(supports) if supports else 0.55
+        policy = {
+            "preferred_query_types": preferred_query_types or {"web": 0.6, "academic": 0.4},
+            "required_source_mix": required_source_mix,
+            "critic_threshold": round(_clamp(critic_avg * 0.95, 0.50, 0.65), 3),
+            "relevance_threshold": round(_clamp(0.50 + 0.15 * support_avg, 0.50, 0.65), 3),
+            "revise_rounds": int(_clamp(2 + (1 if support_avg < 0.55 else 0), 1, 4)),
+            "source": "empirical",
+            "samples": used,
+        }
+        return policy
+
+    def upsert_empirical_strategy(self, domain: str, min_samples: int = 3) -> str | None:
+        policy = self.build_empirical_policy(domain=domain, min_samples=min_samples)
+        if not policy:
+            return None
+        score = _clamp(0.55 + 0.2 * float(policy.get("critic_threshold", 0.55)), 0.0, 1.0)
+        confidence = _clamp(min(1.0, float(policy.get("samples", 0)) / 20.0), 0.25, 0.9)
+        return self.upsert_strategy_profile(
+            name=f"empirical-{(domain or 'general').strip().lower()}",
+            domain=domain or "general",
+            policy=policy,
+            score=score,
+            confidence=confidence,
+            metadata={"profile_type": "empirical", "samples": policy.get("samples", 0)},
+        )
+
+    def synthesize_principles_from_episodes(self, domain: str, min_count: int = 3) -> list[str]:
+        """
+        Generate conservative guiding/cautionary principles from frequent what_helped/what_hurt signals.
+        Returns inserted principle ids.
+        """
+        rows = self._conn.execute(
+            """SELECT project_id, what_helped_json, what_hurt_json
+               FROM run_episodes WHERE domain=? ORDER BY created_at DESC LIMIT 200""",
+            (domain or "general",),
+        ).fetchall()
+        helped_counter: Counter[str] = Counter()
+        hurt_counter: Counter[str] = Counter()
+        recent_project = None
+        for r in rows:
+            recent_project = recent_project or (r["project_id"] or "unknown")
+            try:
+                helped = json.loads(r["what_helped_json"] or "[]")
+                hurt = json.loads(r["what_hurt_json"] or "[]")
+            except Exception:
+                continue
+            if isinstance(helped, list):
+                for item in helped:
+                    s = str(item).strip().lower()
+                    if len(s) >= 8:
+                        helped_counter[s] += 1
+            if isinstance(hurt, list):
+                for item in hurt:
+                    s = str(item).strip().lower()
+                    if len(s) >= 8:
+                        hurt_counter[s] += 1
+
+        inserted: list[str] = []
+        if not recent_project:
+            return inserted
+
+        def _maybe_insert(ptype: str, text: str, cnt: int) -> None:
+            if cnt < min_count:
+                return
+            desc = (
+                f"[{domain or 'general'}] Frequent signal ({cnt} runs): {text}. "
+                f"Treat this as {'recommended practice' if ptype == 'guiding' else 'risk pattern'}."
+            )[:500]
+            existing = self._conn.execute(
+                "SELECT id FROM strategic_principles WHERE domain=? AND description=? LIMIT 1",
+                (domain or "", desc),
+            ).fetchone()
+            if existing:
+                return
+            pid = hash_id(f"sp:{recent_project}:{ptype}:{desc}:{utcnow()}")
+            self._conn.execute(
+                """INSERT INTO strategic_principles
+                   (id, principle_type, description, domain, source_project_id, evidence_json, metric_score, usage_count, success_count, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?)""",
+                (
+                    pid,
+                    ptype,
+                    desc,
+                    domain or "",
+                    recent_project,
+                    _safe_json([{"source": "episode_synthesis", "count": cnt, "signal": text}], []),
+                    _clamp(0.45 + 0.05 * min(cnt, 8), 0.45, 0.85),
+                    utcnow(),
+                ),
+            )
+            inserted.append(pid)
+
+        for txt, cnt in helped_counter.most_common(5):
+            _maybe_insert("guiding", txt, cnt)
+        for txt, cnt in hurt_counter.most_common(5):
+            _maybe_insert("cautionary", txt, cnt)
+        if inserted:
+            self._conn.commit()
+        return inserted
+
     def _question_hash(self, question: str) -> str:
-        """Stable hash for dedup: same question text -> same key across runs."""
-        return hash_id("read_urls:" + (question or "").lower().strip())
+        """Stable hash for semantic-ish dedup: normalized token signature across paraphrases."""
+        return hash_id("read_urls:" + _question_signature(question))
 
     def record_read_urls(self, question: str, urls: list[str]) -> None:
-        """Store read URLs for this question so future runs can skip them."""
+        """Store read URLs for this question so future runs can skip them (with signature for similar-question dedup)."""
         if not urls:
             return
         qh = self._question_hash(question)
+        sig = _question_signature(question)
         now = utcnow()
         for url in urls:
             u = (url or "").strip()
@@ -660,21 +909,58 @@ class MemoryV2:
                 continue
             try:
                 self._conn.execute(
-                    "INSERT OR IGNORE INTO read_urls (question_hash, url, created_at) VALUES (?, ?, ?)",
-                    (qh, u[:2048], now),
+                    "INSERT OR IGNORE INTO read_urls (question_hash, url, created_at, question_signature) VALUES (?, ?, ?, ?)",
+                    (qh, u[:2048], now, sig[:2000] if sig else ""),
                 )
             except Exception:
-                pass
+                try:
+                    self._conn.execute(
+                        "INSERT OR IGNORE INTO read_urls (question_hash, url, created_at) VALUES (?, ?, ?)",
+                        (qh, u[:2048], now),
+                    )
+                except Exception:
+                    pass
         self._conn.commit()
 
-    def get_read_urls_for_question(self, question: str) -> set[str]:
-        """Return set of URLs already read for this question (for skip/dedup)."""
+    def get_read_urls_for_question(self, question: str, similar_threshold: float = 0.6) -> set[str]:
+        """Return URLs already read for this question (exact hash) or for similar questions (signature token overlap)."""
         qh = self._question_hash(question)
+        sig = _question_signature(question)
+        tokens = set((sig or "").split())
+        out: set[str] = set()
         try:
             rows = self._conn.execute(
                 "SELECT url FROM read_urls WHERE question_hash = ?",
                 (qh,),
             ).fetchall()
-            return {str(r["url"] or "").strip() for r in rows if r["url"]}
+            for r in rows:
+                if r["url"]:
+                    out.add(str(r["url"] or "").strip())
         except Exception:
-            return set()
+            pass
+        try:
+            cur = self._conn.execute(
+                "SELECT DISTINCT question_signature FROM read_urls WHERE question_signature IS NOT NULL AND question_signature != '' LIMIT 5000"
+            )
+            similar_sigs: list[str] = []
+            for row in cur.fetchall():
+                s = (row["question_signature"] or "").strip()
+                if not s or s == sig:
+                    continue
+                row_tokens = set(s.split())
+                inter = len(tokens & row_tokens)
+                union = len(tokens | row_tokens)
+                if union > 0 and inter / union >= similar_threshold:
+                    similar_sigs.append(s)
+            if similar_sigs:
+                placeholders = ",".join("?" * len(similar_sigs))
+                rows2 = self._conn.execute(
+                    f"SELECT url FROM read_urls WHERE question_signature IN ({placeholders})",
+                    similar_sigs,
+                ).fetchall()
+                for r in rows2:
+                    if r["url"]:
+                        out.add(str(r["url"] or "").strip())
+        except Exception:
+            pass
+        return out

@@ -2,11 +2,12 @@ import React, { useState } from "react";
 import { Pagination } from "./Pagination";
 
 const PHASE_META: Record<string, { icon: string; color: string }> = {
-  perceive: { icon: "👁", color: "#3b82f6" },
-  think:    { icon: "🧠", color: "#8b5cf6" },
-  decide:   { icon: "⚡", color: "#f59e0b" },
-  act:      { icon: "🚀", color: "#22c55e" },
-  reflect:  { icon: "💡", color: "#ec4899" },
+  perceive:   { icon: "👁", color: "#3b82f6" },
+  understand: { icon: "🔍", color: "#06b6d4" },
+  think:      { icon: "🧠", color: "#8b5cf6" },
+  decide:     { icon: "⚡", color: "#f59e0b" },
+  act:        { icon: "🚀", color: "#22c55e" },
+  reflect:    { icon: "💡", color: "#ec4899" },
 };
 
 function ConfidenceRing({ value }: { value: number }) {
@@ -36,6 +37,12 @@ function ConfidenceRing({ value }: { value: number }) {
   );
 }
 
+interface RetrievedMemoryIds {
+  principle_ids?: string[];
+  finding_ids?: string[];
+  episode_ids?: string[];
+}
+
 interface MemoryDecision {
   id?: string;
   trace_id?: string;
@@ -43,6 +50,7 @@ interface MemoryDecision {
   ts?: string;
   reasoning?: string;
   confidence?: number;
+  metadata?: string | { retrieved_memory_ids?: RetrievedMemoryIds };
 }
 
 export function BrainTab({ decisions, loading }: { decisions: unknown[] | null; loading: boolean }) {
@@ -84,8 +92,16 @@ export function BrainTab({ decisions, loading }: { decisions: unknown[] | null; 
   const totalPages = Math.ceil(allItems.length / itemsPerPage);
   const displayedItems = allItems.slice((page - 1) * itemsPerPage, page * itemsPerPage);
 
+  const getRetrievedIds = (d: MemoryDecision): RetrievedMemoryIds | null => {
+    const raw = d.metadata;
+    if (!raw) return null;
+    const obj = typeof raw === "string" ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : raw;
+    return (obj?.retrieved_memory_ids as RetrievedMemoryIds) ?? null;
+  };
+
   const renderDecision = (d: MemoryDecision, i: number) => {
     const meta = PHASE_META[d.phase?.toLowerCase() ?? ""] || { icon: "●", color: "var(--tron-dim)" };
+    const ids = getRetrievedIds(d);
 
     return (
       <li key={d.id ?? i} className="relative pl-10 pb-4">
@@ -113,6 +129,24 @@ export function BrainTab({ decisions, loading }: { decisions: unknown[] | null; 
           </div>
         </div>
 
+        {ids && (ids.principle_ids?.length || ids.finding_ids?.length || ids.episode_ids?.length) ? (
+          <div className="mt-2 flex items-center gap-2 text-[11px] p-2 rounded-lg bg-tron-bg-panel/50 border border-tron-border/30">
+            <span className="text-tron-dim shrink-0 uppercase tracking-widest text-[9px] font-semibold">Basierend auf:</span>
+            <div className="flex flex-wrap gap-1.5 flex-1">
+              {ids.principle_ids?.slice(0, 5).map((pid) => (
+                <button key={pid} onClick={() => { document.getElementById('tab-principles')?.click(); }} className="rounded-full px-2 py-0.5 font-mono text-[10px] text-[#c678ff] bg-[#c678ff]/10 border border-[#c678ff]/30 hover:bg-[#c678ff]/20 transition-colors shadow-[0_0_5px_rgba(198,120,255,0.2)]" title="Principle">P:{pid.slice(0, 8)}</button>
+              ))}
+              {ids.finding_ids?.slice(0, 5).map((fid) => (
+                <button key={fid} onClick={() => { document.getElementById('tab-knowledge')?.click(); }} className="rounded-full px-2 py-0.5 font-mono text-[10px] text-tron-accent bg-tron-accent/10 border border-tron-accent/30 hover:bg-tron-accent/20 transition-colors shadow-[0_0_5px_rgba(0,212,255,0.2)]" title="Finding">F:{fid.slice(0, 8)}</button>
+              ))}
+              {ids.episode_ids?.slice(0, 3).map((eid) => (
+                <button key={eid} onClick={() => { document.getElementById('tab-runs')?.click(); }} className="rounded-full px-2 py-0.5 font-mono text-[10px] text-tron-text bg-tron-text/10 border border-tron-text/30 hover:bg-tron-text/20 transition-colors shadow-[0_0_5px_rgba(255,255,255,0.1)]" title="Episode">E:{eid.slice(0, 8)}</button>
+              ))}
+            </div>
+            <span className="text-[9px] text-tron-dim/50 ml-auto shrink-0 hidden sm:inline">(clickable)</span>
+          </div>
+        ) : null}
+
         {d.reasoning != null && (
           <details className="mt-2 group cursor-pointer">
             <summary className="text-sm hover:text-tron-accent transition-colors select-none outline-none" style={{ color: "var(--tron-text-muted)" }}>
@@ -137,7 +171,7 @@ export function BrainTab({ decisions, loading }: { decisions: unknown[] | null; 
         Cognitive Traces
       </h2>
       <p className="mb-4 text-[12px]" style={{ color: "var(--tron-text-dim)" }}>
-        Jeder Trace = ein Cycle-Durchlauf (Perceive → Think → Decide → Act → Reflect)
+        Jeder Trace = ein Cycle-Durchlauf (Perceive → Understand → Think → Decide → Act → Reflect). Bei Entscheidungen: angezeigte IDs = abgerufene Memories (Explainability).
       </p>
 
       <div className="space-y-6">

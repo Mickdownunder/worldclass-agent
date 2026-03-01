@@ -8,13 +8,20 @@ import { SourcesTab } from "./tabs/SourcesTab";
 import { BrainTab } from "./tabs/BrainTab";
 import { KnowledgeTab } from "./tabs/KnowledgeTab";
 import { PlumberTab } from "./tabs/PlumberTab";
+import { RunsTab } from "./tabs/RunsTab";
+import { StrategiesTab } from "./tabs/StrategiesTab";
+import { UtilityTab } from "./tabs/UtilityTab";
+import { GraphTab } from "./tabs/GraphTab";
 
-type TabId = "activity" | "principles" | "sources" | "brain" | "plumber" | "knowledge";
+type TabId = "activity" | "runs" | "strategies" | "principles" | "sources" | "brain" | "utility" | "graph" | "plumber" | "knowledge";
 
 export function BrainTabs({ memorySummary }: { memorySummary: MemorySummary | null }) {
   const [activeTab, setActiveTab] = useState<TabId>("activity");
 
   const [principles, setPrinciples] = useState<unknown[] | null>(null);
+  const [strategies, setStrategies] = useState<unknown[] | null>(null);
+  const [utility, setUtility] = useState<unknown[] | null>(null);
+  const [graphEdges, setGraphEdges] = useState<unknown[] | null>(null);
   const [credibility, setCredibility] = useState<unknown[] | null>(null);
   const [decisions, setDecisions] = useState<unknown[] | null>(null);
   const [entities, setEntities] = useState<unknown[] | null>(null);
@@ -22,15 +29,43 @@ export function BrainTabs({ memorySummary }: { memorySummary: MemorySummary | nu
   
   const [loading, setLoading] = useState<Record<TabId, boolean>>({
     activity: false,
+    runs: false,
+    strategies: false,
     principles: false,
     sources: false,
     brain: false,
+    utility: false,
+    graph: false,
     plumber: false,
     knowledge: false,
   });
 
   useEffect(() => {
     /* eslint-disable react-hooks/set-state-in-effect -- lazy-load per tab: set loading then fetch */
+    if (activeTab === "strategies" && strategies === null) {
+      setLoading((l) => ({ ...l, strategies: true }));
+      fetch("/api/memory/strategies")
+        .then((r) => r.json())
+        .then((d) => setStrategies((d as { strategies?: unknown[] }).strategies ?? (d as unknown[]) ?? []))
+        .catch(() => setStrategies([]))
+        .finally(() => setLoading((l) => ({ ...l, strategies: false })));
+    }
+    if (activeTab === "utility" && utility === null) {
+      setLoading((l) => ({ ...l, utility: true }));
+      fetch("/api/memory/utility")
+        .then((r) => r.json())
+        .then((d) => setUtility((d as { utility?: unknown[] }).utility ?? (d as unknown[]) ?? []))
+        .catch(() => setUtility([]))
+        .finally(() => setLoading((l) => ({ ...l, utility: false })));
+    }
+    if (activeTab === "graph" && graphEdges === null) {
+      setLoading((l) => ({ ...l, graph: true }));
+      fetch("/api/memory/graph")
+        .then((r) => r.json())
+        .then((d) => setGraphEdges((d as { edges?: unknown[] }).edges ?? (d as unknown[]) ?? []))
+        .catch(() => setGraphEdges([]))
+        .finally(() => setLoading((l) => ({ ...l, graph: false })));
+    }
     if (activeTab === "principles" && principles === null) {
       setLoading((l) => ({ ...l, principles: true }));
       fetch("/api/memory/principles")
@@ -72,18 +107,22 @@ export function BrainTabs({ memorySummary }: { memorySummary: MemorySummary | nu
         .finally(() => setLoading((l) => ({ ...l, knowledge: false })));
     }
     /* eslint-enable react-hooks/set-state-in-effect */
-  }, [activeTab, principles, credibility, decisions, entities, outcomes]);
+  }, [activeTab, strategies, utility, graphEdges, principles, credibility, decisions, entities, outcomes]);
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "activity", label: "Activity" },
+    { id: "runs", label: "Run Timeline" },
+    { id: "graph", label: "Network Graph" },
+    { id: "utility", label: "Utility Ranking" },
+    { id: "strategies", label: "Strategies" },
     { id: "principles", label: "Principles" },
     { id: "sources", label: "Sources" },
-    { id: "brain", label: "Brain" },
+    { id: "brain", label: "Cognitive Traces" },
+    { id: "knowledge", label: "Knowledge Base" },
     { id: "plumber", label: "🔧 Plumber" },
-    { id: "knowledge", label: "Knowledge" },
   ];
 
-  const { recent_episodes = [], recent_reflections = [], playbooks = [] } = memorySummary ?? {};
+  const { recent_episodes = [], recent_reflections = [], recent_run_episodes = [], playbooks = [] } = memorySummary ?? {};
 
   return (
     <div className="space-y-0 mt-6">
@@ -94,6 +133,7 @@ export function BrainTabs({ memorySummary }: { memorySummary: MemorySummary | nu
         {tabs.map((t) => (
           <button
             key={t.id}
+            id={`tab-${t.id}`}
             type="button"
             onClick={() => setActiveTab(t.id)}
             className="relative shrink-0 px-4 py-2.5 text-[12px] font-semibold uppercase tracking-wider transition-colors"
@@ -114,7 +154,14 @@ export function BrainTabs({ memorySummary }: { memorySummary: MemorySummary | nu
           <ActivityTab
             episodes={recent_episodes}
             reflections={recent_reflections}
+            consolidation={memorySummary?.consolidation}
           />
+        )}
+        {activeTab === "runs" && (
+          <RunsTab runs={recent_run_episodes} />
+        )}
+        {activeTab === "strategies" && (
+          <StrategiesTab strategies={strategies} loading={loading.strategies} />
         )}
         {activeTab === "principles" && (
           <PrinciplesTab principles={principles} loading={loading.principles} />
@@ -124,6 +171,12 @@ export function BrainTabs({ memorySummary }: { memorySummary: MemorySummary | nu
         )}
         {activeTab === "brain" && (
           <BrainTab decisions={decisions} loading={loading.brain} />
+        )}
+        {activeTab === "utility" && (
+          <UtilityTab utility={utility} loading={loading.utility} />
+        )}
+        {activeTab === "graph" && (
+          <GraphTab edges={graphEdges} loading={loading.graph} />
         )}
         {activeTab === "plumber" && <PlumberTab />}
         {activeTab === "knowledge" && (
