@@ -31,16 +31,43 @@ def main() -> None:
     try:
         from lib.memory import Memory
         mem = Memory()
-        principles = mem.retrieve_with_utility(question, "principle", k=5)
-        findings = mem.retrieve_with_utility(question, "finding", k=10)
-        for p in principles:
-            if p.get("id"):
-                mem.record_retrieval("principle", p["id"])
-        for f in findings:
-            if f.get("id"):
-                mem.record_retrieval("finding", str(f["id"]))
+        principles = mem.retrieve_with_utility(question, "principle", k=5, context_key=question)
+        findings = mem.retrieve_with_utility(question, "finding", k=10, context_key=question)
+        
+        lateral_principles = []
+        research_mode = d.get("config", {}).get("research_mode", "standard")
+        if research_mode == "discovery":
+            try:
+                top_utils = mem.get_top_utility(memory_type="principle", limit=15)
+                # Filter out ones already in principles
+                existing_ids = {p.get("id") for p in principles if p.get("id")}
+                for tu in top_utils:
+                    pid = tu.get("memory_id")
+                    if pid and pid not in existing_ids:
+                        row = mem._conn.execute("SELECT * FROM strategic_principles WHERE id = ?", (pid,)).fetchone()
+                        if row:
+                            lateral_principles.append(dict(row))
+                        if len(lateral_principles) >= 3:
+                            break
+            except Exception as le:
+                print(f"Lateral inspiration failed: {le}", file=sys.stderr)
+
         principle_ids = [p["id"] for p in principles if p.get("id")]
         finding_ids = [str(f["id"]) for f in findings if f.get("id")]
+        mem.record_memory_decision(
+            decision_type="knowledge_seed_retrieval",
+            details={
+                "question": question[:240],
+                "retrieved_memory_ids": {
+                    "principle_ids": principle_ids,
+                    "finding_ids": finding_ids,
+                },
+                "counts": {"principles": len(principle_ids), "findings": len(finding_ids)},
+            },
+            project_id=project_id,
+            phase="knowledge_seed",
+            confidence=0.75,
+        )
         mem.close()
     except Exception as e:
         print(f"Knowledge seed failed (non-fatal): {e}", file=sys.stderr)
@@ -50,6 +77,10 @@ def main() -> None:
             {"description": (p.get("description") or "")[:500], "principle_type": p.get("principle_type"), "metric_score": p.get("metric_score")}
             for p in principles
         ],
+        "lateral_principles": [
+            {"description": (p.get("description") or "")[:500], "domain": p.get("domain")}
+            for p in lateral_principles
+        ] if lateral_principles else [],
         "findings": [
             {"finding_key": f.get("finding_key"), "preview": (f.get("content_preview") or "")[:300], "url": f.get("url"), "project_id": f.get("project_id")}
             for f in findings

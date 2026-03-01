@@ -75,3 +75,86 @@ def test_apply_verified_tags_adds_only_for_verified():
     assert "[VERIFIED" in out
     # "Other text" should not get [VERIFIED]
     assert out.count("[VERIFIED") == 1
+
+
+def test_build_claim_ledger_fact_check_disputed(tmp_project):
+    """Phase 1: fact_check disputed fact matching claim (Jaccard >= 0.4) -> dispute -> UNVERIFIED."""
+    (tmp_project / "verify").mkdir(exist_ok=True)
+    (tmp_project / "verify" / "claim_verification.json").write_text(json.dumps({
+        "claims": [{
+            "claim": "The vaccine efficacy rate was 95 percent in trials",
+            "supporting_sources": ["https://a.com", "https://b.com"],
+            "verified": True,
+        }]
+    }))
+    (tmp_project / "verify" / "source_reliability.json").write_text(json.dumps({
+        "sources": [
+            {"url": "https://a.com", "reliability_score": 0.8},
+            {"url": "https://b.com", "reliability_score": 0.7},
+        ]
+    }))
+    # Disputed fact with overlapping words (vaccine, efficacy, rate, trials)
+    (tmp_project / "verify" / "fact_check.json").write_text(json.dumps({
+        "facts": [{
+            "statement": "Vaccine efficacy rate in trials was 95 percent",
+            "verification_status": "disputed",
+            "source": "multiple",
+        }]
+    }))
+    result = build_claim_ledger(tmp_project, {})
+    assert len(result["claims"]) == 1
+    assert result["claims"][0]["verification_tier"] == "UNVERIFIED"
+    assert result["claims"][0]["is_verified"] is False
+    assert "disputed" in result["claims"][0].get("verification_reason", "").lower()
+
+
+def test_build_claim_ledger_cove_overlay_force_unverified(tmp_project):
+    """Phase 3: cove_overlay cove_supports False -> force UNVERIFIED."""
+    (tmp_project / "verify").mkdir(exist_ok=True)
+    (tmp_project / "verify" / "claim_verification.json").write_text(json.dumps({
+        "claims": [{
+            "claim": "Claim that would be verified by sources",
+            "supporting_sources": ["https://a.com", "https://b.com"],
+            "verified": True,
+        }]
+    }))
+    (tmp_project / "verify" / "source_reliability.json").write_text(json.dumps({
+        "sources": [
+            {"url": "https://a.com", "reliability_score": 0.8},
+            {"url": "https://b.com", "reliability_score": 0.7},
+        ]
+    }))
+    (tmp_project / "verify" / "cove_overlay.json").write_text(json.dumps({
+        "claims": [{"claim_text_prefix": "Claim that would be verified by sources", "cove_supports": False}]
+    }))
+    result = build_claim_ledger(tmp_project, {})
+    assert len(result["claims"]) == 1
+    assert result["claims"][0]["verification_tier"] == "UNVERIFIED"
+    assert result["claims"][0]["is_verified"] is False
+    assert "CoVe" in result["claims"][0].get("verification_reason", "")
+
+
+def test_build_claim_ledger_supporting_evidence_and_credibility(tmp_project):
+    """Phase 1/2: ledger has supporting_evidence (snippets) and credibility_weight."""
+    (tmp_project / "findings").mkdir(exist_ok=True)
+    (tmp_project / "findings" / "f1.json").write_text(json.dumps({
+        "url": "https://a.com", "finding_id": "f1", "excerpt": "Relevant excerpt for claim.",
+        "title": "Source A",
+    }))
+    (tmp_project / "verify").mkdir(exist_ok=True)
+    (tmp_project / "verify" / "claim_verification.json").write_text(json.dumps({
+        "claims": [{"claim": "Fact X", "supporting_sources": ["https://a.com"]}]
+    }))
+    (tmp_project / "verify" / "source_reliability.json").write_text(json.dumps({
+        "sources": [{"url": "https://a.com", "reliability_score": 0.75}]
+    }))
+    result = build_claim_ledger(tmp_project, {})
+    assert len(result["claims"]) == 1
+    c = result["claims"][0]
+    assert "supporting_evidence" in c
+    assert isinstance(c["supporting_evidence"], list)
+    if c["supporting_evidence"]:
+        assert "url" in c["supporting_evidence"][0]
+        assert "snippet" in c["supporting_evidence"][0]
+    assert "credibility_weight" in c
+    assert 0 <= c["credibility_weight"] <= 1

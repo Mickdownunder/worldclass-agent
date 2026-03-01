@@ -33,9 +33,11 @@ def main() -> None:
         finding_ids = []
     project_json = proj_dir / "project.json"
     critic_score = 0.5
+    question = ""
     if project_json.exists():
         try:
             d = json.loads(project_json.read_text())
+            question = str(d.get("question") or "")
             c = d.get("quality_gate", {}).get("critic_score")
             if c is not None:
                 critic_score = float(c)
@@ -54,9 +56,9 @@ def main() -> None:
         from lib.memory import Memory
         mem = Memory()
         if principle_ids:
-            mem.update_utilities_from_outcome("principle", principle_ids, critic_score)
+            mem.update_utilities_from_outcome("principle", principle_ids, critic_score, context_key=question or None)
         if finding_ids:
-            mem.update_utilities_from_outcome("finding", finding_ids, critic_score)
+            mem.update_utilities_from_outcome("finding", finding_ids, critic_score, context_key=question or None)
 
         # Memory v2: strategy reinforcement from verified outcomes.
         if project_json.exists() and strategy_profile_id:

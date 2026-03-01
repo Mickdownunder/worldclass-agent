@@ -13,11 +13,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import project_dir, load_project, ensure_project_layout, llm_call
+from tools.research_common import project_dir, load_project, ensure_project_layout, llm_call, model_for_lane
 
 
 def _model():
-    return os.environ.get("RESEARCH_CRITIQUE_MODEL", "gpt-5.2")
+    return model_for_lane("critic")
 
 
 def _threshold() -> float:
@@ -108,8 +108,8 @@ Return only valid JSON with keys: score, weaknesses, suggestions, pass, dimensio
         system = f"""You are a research quality reviewer. Evaluate the report and return JSON only.
 
 1) Overall: "score" (0.0-1.0), "weaknesses" (list), "suggestions" (list), "pass" (true if score >= {thresh:.2f}).
-
-2) Per-dimension (array "dimensions"): for each dimension give "dimension", "score" (0-1), "remediation_action" (exactly one of: search_more, read_more, verify, synthesize).
+2) For weaknesses that refer to a specific section, prefix with "Section N: " or "Section <title>: " (e.g. "Section 3: fehlende Tiefe", "Section Executive Summary: zu lang") so revision can target them.
+3) Per-dimension (array "dimensions"): for each dimension give "dimension", "score" (0-1), "remediation_action" (exactly one of: search_more, read_more, verify, synthesize).
 Dimensions and suggested actions:
 - coverage: topic/source coverage; low -> search_more
 - depth: substantive vs superficial; low -> read_more
@@ -160,6 +160,7 @@ def revise_report(proj_path: Path, critique: dict, art_path: Path | None = None,
 CRITICAL RULES:
 - Output the COMPLETE revised markdown report. Do NOT omit or drop any sections.
 - Keep ALL existing sections. Only modify the content within sections that need improvement.
+- If a weakness is prefixed with "Section N: " or "Section <title>: ", address that section first and explicitly.
 - If a section is fine, include it unchanged.
 - The revised report must have AT LEAST as many sections as the original.
 - Never create tables with "TBD" or empty placeholders. Use prose instead."""

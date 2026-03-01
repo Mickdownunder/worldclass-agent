@@ -99,6 +99,7 @@ function computeState(
   }
   if (
     projectStatus === "cancelled" ||
+    projectStatus === "aem_blocked" ||
     projectStatus.startsWith("failed_") ||
     projectStatus === "failed"
   ) {

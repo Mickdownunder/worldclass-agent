@@ -161,6 +161,16 @@ export interface ResearchProjectDetail extends ResearchProjectSummary {
       key_hypothesis?: string;
     };
   };
+  /** Connect phase: thesis (current hypothesis) */
+  thesis?: { current?: string; alternatives?: string[]; confidence?: number };
+  /** Connect phase: contradictions between sources */
+  contradictions?: { contradictions?: Array<{ claim?: string; source_a?: string; source_b?: string; summary?: string }> };
+  /** Token Governor: lane used for Verify/Synthesize/Critic (cheap | mid | strong) */
+  governor_lane?: string;
+  /** Verify: fact_check summary (confirmed / disputed / unverifiable counts) */
+  fact_check_summary?: { confirmed: number; disputed: number; unverifiable: number; total: number };
+  /** Verify: claim ledger summary for UI */
+  claim_ledger_summary?: { total: number; verified: number; authoritative: number; unverified: number; in_contradiction: number };
 }
 
 export async function listResearchProjects(): Promise<ResearchProjectSummary[]> {
@@ -272,6 +282,69 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
         // ignore
       }
     }
+    let thesis: ResearchProjectDetail["thesis"];
+    try {
+      const thesisRaw = await readFile(path.join(projPath, "thesis.json"), "utf8");
+      const th = JSON.parse(thesisRaw) as { current?: string; alternatives?: string[]; confidence?: number };
+      if (th && typeof th === "object") thesis = th;
+    } catch {
+      // ignore
+    }
+    let contradictions: ResearchProjectDetail["contradictions"];
+    try {
+      const contraRaw = await readFile(path.join(projPath, "contradictions.json"), "utf8");
+      const c = JSON.parse(contraRaw) as { contradictions?: Array<{ claim?: string; source_a?: string; source_b?: string; summary?: string }> };
+      if (c && typeof c === "object") contradictions = c;
+    } catch {
+      // ignore
+    }
+    let governorLane: string | undefined;
+    try {
+      const glRaw = await readFile(path.join(projPath, "governor_lane.json"), "utf8");
+      const s = JSON.parse(glRaw);
+      if (typeof s === "string") governorLane = s;
+    } catch {
+      // ignore
+    }
+    let factCheckSummary: ResearchProjectDetail["fact_check_summary"];
+    try {
+      const fcRaw = await readFile(path.join(projPath, "verify", "fact_check.json"), "utf8");
+      const fc = JSON.parse(fcRaw) as { facts?: Array<{ verification_status?: string }> };
+      const facts = fc?.facts ?? [];
+      let confirmed = 0, disputed = 0, unverifiable = 0;
+      for (const f of facts) {
+        const s = (f.verification_status ?? "").toLowerCase();
+        if (s === "confirmed" || s === "supported") confirmed++;
+        else if (s === "disputed") disputed++;
+        else unverifiable++;
+      }
+      factCheckSummary = { confirmed, disputed, unverifiable, total: facts.length };
+    } catch {
+      // ignore
+    }
+    let claimLedgerSummary: ResearchProjectDetail["claim_ledger_summary"];
+    try {
+      const clRaw = await readFile(path.join(projPath, "verify", "claim_ledger.json"), "utf8");
+      const cl = JSON.parse(clRaw) as { claims?: Array<{ is_verified?: boolean; verification_tier?: string; in_contradiction?: boolean }> };
+      const claims = cl?.claims ?? [];
+      let verified = 0, authoritative = 0, unverified = 0, inContradiction = 0;
+      for (const c of claims) {
+        const tier = (c.verification_tier ?? "").toUpperCase();
+        if (tier === "VERIFIED" || (c.is_verified && tier !== "UNVERIFIED")) verified++;
+        else if (tier === "AUTHORITATIVE") authoritative++;
+        else unverified++;
+        if (c.in_contradiction) inContradiction++;
+      }
+      claimLedgerSummary = {
+        total: claims.length,
+        verified,
+        authoritative,
+        unverified,
+        in_contradiction: inContradiction,
+      };
+    } catch {
+      // ignore
+    }
     return {
       id: typeof data.id === "string" ? data.id : projectId,
       question: typeof data.question === "string" ? data.question : "",
@@ -307,6 +380,11 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
       prior_knowledge: priorKnowledge,
       memory_applied: memoryApplied,
       discovery_analysis: discoveryAnalysis,
+      thesis,
+      contradictions,
+      governor_lane: governorLane,
+      fact_check_summary: factCheckSummary,
+      claim_ledger_summary: claimLedgerSummary,
     };
   } catch {
     return null;
@@ -448,14 +526,39 @@ export async function cancelResearchProject(projectId: string): Promise<{ killed
   return { killed, jobsReconciled, status: "cancelled" };
 }
 
+/** Manifest entry from reports/manifest.json (post-process / pipeline). */
+interface ReportManifestEntry {
+  filename: string;
+  generated_at?: string;
+  is_revised?: boolean;
+  quality_score?: number;
+  path?: string;
+  is_final?: boolean;
+}
+
 export async function getLatestReportMarkdown(projectId: string): Promise<string | null> {
   const projPath = safeProjectPath(projectId);
+  const reportsDir = path.join(projPath, "reports");
   try {
-    const reportsDir = path.join(projPath, "reports");
-    const files = await readdir(reportsDir);
-    const mdFiles = files.filter((f) => f.endsWith(".md")).sort().reverse();
-    if (mdFiles.length === 0) return null;
-    const content = await readFile(path.join(reportsDir, mdFiles[0]), "utf8");
+    const manifestPath = path.join(reportsDir, "manifest.json");
+    let chosenFile: string | null = null;
+    try {
+      const manifestRaw = await readFile(manifestPath, "utf8");
+      const manifest = JSON.parse(manifestRaw) as { reports?: ReportManifestEntry[] };
+      const reports = manifest.reports ?? [];
+      const finalEntry = reports.find((r) => r.is_final);
+      const entry = finalEntry ?? reports[reports.length - 1];
+      if (entry?.filename) chosenFile = entry.filename;
+    } catch {
+      // no manifest or invalid — fallback to dir listing
+    }
+    if (!chosenFile) {
+      const files = await readdir(reportsDir);
+      const mdFiles = files.filter((f) => f.endsWith(".md")).sort().reverse();
+      if (mdFiles.length === 0) return null;
+      chosenFile = mdFiles[0];
+    }
+    const content = await readFile(path.join(reportsDir, chosenFile), "utf8");
     return content;
   } catch {
     return null;

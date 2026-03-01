@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Update project.json to the next research phase. Called from research-cycle.sh.
 Usage: research_advance_phase.py <proj_dir> <next_phase>
+
+When RESEARCH_ADVANCE_SKIP_LOOP_LIMIT=1 (e.g. Conductor override), the loop_count > 3
+forced advance is skipped so the Conductor's phase choice is respected.
 """
 import json
+import os
 import sys
 from pathlib import Path
 from datetime import datetime, timezone
@@ -36,7 +40,7 @@ def advance(proj_dir: Path, new_phase: str) -> None:
 
     d.setdefault("phase_history", []).append(new_phase)
     loop_count = d["phase_history"].count(new_phase)
-    if loop_count > 3:
+    if os.environ.get("RESEARCH_ADVANCE_SKIP_LOOP_LIMIT") != "1" and loop_count > 3:
         order = ["explore", "focus", "connect", "verify", "synthesize", "done"]
         try:
             idx = order.index(new_phase)

@@ -15,7 +15,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import project_dir, load_project, llm_call, get_claims_for_synthesis
+from tools.research_common import project_dir, load_project, llm_call, get_claims_for_synthesis, model_for_lane
 
 MAX_FINDINGS = 80
 EXCERPT_CHARS = 2000
@@ -24,7 +24,7 @@ SECTION_WORDS_MIN, SECTION_WORDS_MAX = 500, 1500
 
 
 def _model() -> str:
-    return os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gemini-3.1-pro-preview")
+    return model_for_lane("synthesize")
 
 
 def _relevance_score(finding: dict, question: str) -> float:
@@ -35,6 +35,87 @@ def _relevance_score(finding: dict, question: str) -> float:
     if not q_words or not f_words:
         return 0.0
     return len(q_words & f_words) / len(q_words)
+
+
+def _embed_texts(texts: list[str], project_id: str = "") -> list[list[float]]:
+    """Embed texts with OpenAI text-embedding-3-small. Returns one embedding per input; [] on failure or if disabled."""
+    if not texts:
+        return []
+    try:
+        from openai import OpenAI
+        from tools.research_common import load_secrets
+        secrets = load_secrets()
+        key = secrets.get("OPENAI_API_KEY")
+        if not key:
+            return []
+        client = OpenAI(api_key=key)
+        model = os.environ.get("RESEARCH_EMBEDDING_MODEL", "text-embedding-3-small")
+        out: list[list[float]] = []
+        batch_size = 20
+        for i in range(0, len(texts), batch_size):
+            slice_ = texts[i : i + batch_size]
+            batch = [t[:8000] for t in slice_ if (t or "").strip()]
+            if not batch:
+                out.extend([[]] * len(slice_))
+                continue
+            resp = client.embeddings.create(model=model, input=batch)
+            by_idx = {item.index: item.embedding for item in resp.data}
+            idx_in_batch = 0
+            for t in slice_:
+                if (t or "").strip():
+                    out.append(by_idx.get(idx_in_batch, []))
+                    idx_in_batch += 1
+                else:
+                    out.append([])
+        if project_id and out:
+            try:
+                from tools.research_budget import track_usage
+                total = sum(len(e) for e in out) * 4  # rough token estimate
+                track_usage(project_id, "embedding", total, 0)
+            except Exception:
+                pass
+        return out[:len(texts)]
+    except Exception:
+        return []
+
+
+def _semantic_relevance_sort(
+    question: str, findings: list[dict], project_id: str,
+) -> list[dict]:
+    """Re-sort findings by hybrid (keyword + semantic) when RESEARCH_SYNTHESIS_SEMANTIC=1. Returns unchanged on failure."""
+    if not question or not findings or os.environ.get("RESEARCH_SYNTHESIS_SEMANTIC") != "1":
+        return findings
+    q_emb = _embed_texts([question], project_id)
+    if not q_emb or not q_emb[0]:
+        return findings
+    q_vec = q_emb[0]
+    texts = [((f.get("excerpt") or "") + " " + (f.get("title") or ""))[:8000].strip() for f in findings]
+    f_embs = _embed_texts(texts, project_id)
+    if len(f_embs) != len(findings) or not all(f_embs):
+        return findings
+
+    def cosine(a: list[float], b: list[float]) -> float:
+        if not a or not b or len(a) != len(b):
+            return 0.0
+        dot = sum(x * y for x, y in zip(a, b))
+        na = sum(x * x for x in a) ** 0.5
+        nb = sum(x * x for x in b) ** 0.5
+        if na * nb == 0:
+            return 0.0
+        return dot / (na * nb)
+
+    keyword_scores = [_relevance_score(f, question) for f in findings]
+    semantic_scores = [max(0.0, cosine(q_vec, e)) for e in f_embs]
+    alpha = 0.5
+    try:
+        alpha = float(os.environ.get("RESEARCH_SYNTHESIS_SEMANTIC_WEIGHT", "0.5"))
+        alpha = max(0.0, min(1.0, alpha))
+    except ValueError:
+        pass
+    combined = [alpha * s + (1 - alpha) * k for k, s in zip(keyword_scores, semantic_scores)]
+    indexed = list(zip(combined, findings))
+    indexed.sort(key=lambda x: x[0], reverse=True)
+    return [f for _, f in indexed]
 
 
 def _load_findings(proj_path: Path, max_items: int = MAX_FINDINGS, question: str = "") -> list[dict]:
@@ -102,13 +183,25 @@ Each finding index must appear in exactly one cluster. Preserve all indices."""
     return [list(range(i, min(i + 5, len(findings)))) for i in range(0, len(findings), 5)]
 
 
-def _outline_sections(question: str, clusters: list[list[int]], playbook_instructions: str | None, project_id: str) -> list[str]:
-    """Return section titles for deep analysis (one per cluster)."""
+def _outline_sections(
+    question: str,
+    clusters: list[list[int]],
+    playbook_instructions: str | None,
+    project_id: str,
+    report_sections: list[str] | None = None,
+    entity_context: str | None = None,
+) -> list[str]:
+    """Return section titles for deep analysis (one per cluster). Optionally constrained by report_sections (config/playbook). Connect Phase 2: entity_context from entity graph."""
     cluster_summaries = [f"Cluster {i+1}: {len(c)} findings" for i, c in enumerate(clusters)]
     extra = f"\nPlaybook instructions: {playbook_instructions}" if playbook_instructions else ""
+    if entity_context:
+        extra += f"\nKey entities and relations (consider covering these in sections): {entity_context}"
+    section_constraint = ""
+    if report_sections:
+        section_constraint = f"\nPrefer these section titles in order when they fit the clusters: {json.dumps(report_sections)}. Return one title per cluster; use these when applicable or add missing ones."
     system = """You are a research analyst. Given the research question and cluster summary, propose section titles for the deep analysis.
 Return JSON: {"sections": ["Section Title One", "Section Title Two", ...]} with one title per cluster, in order.
-If the research question clearly involves drug pricing, PBMs, list prices, or manufacturer duopoly, set the last section title to exactly: 'Historischer Praezedenz (historical precedent)'."""
+If the research question clearly involves drug pricing, PBMs, list prices, or manufacturer duopoly, set the last section title to exactly: 'Historischer Praezedenz (historical precedent)'.""" + section_constraint
     user = f"QUESTION: {question}\n\nCLUSTERS: {json.dumps(cluster_summaries)}{extra}\n\nReturn only valid JSON."
     try:
         result = llm_call(_model(), system, user, project_id=project_id)
@@ -157,6 +250,34 @@ def _build_provenance_appendix(claim_ledger: list[dict]) -> str:
         fids = c.get("source_finding_ids") or []
         lines.append(f"| {cid} | {', '.join(fids[:15])}{' …' if len(fids) > 15 else ''} |")
     return "\n".join(lines)
+
+
+def _ensure_source_finding_ids(claim_ledger: list[dict], proj_path: Path) -> list[dict]:
+    """Ensure every claim has source_finding_ids when it has supporting_source_ids (AEM ledger may omit them)."""
+    findings_dir = proj_path / "findings"
+    url_to_finding_ids: dict[str, list[str]] = {}
+    if findings_dir.exists():
+        for p in findings_dir.glob("*.json"):
+            try:
+                d = json.loads(p.read_text())
+                u = (d.get("url") or "").strip()
+                fid = (d.get("finding_id") or "").strip()
+                if u and fid:
+                    url_to_finding_ids.setdefault(u, []).append(fid)
+            except Exception:
+                pass
+    out = []
+    for c in claim_ledger:
+        c = dict(c)
+        if not c.get("source_finding_ids") and c.get("supporting_source_ids"):
+            fids = []
+            for u in (c.get("supporting_source_ids") or []):
+                u = (u or "").strip()
+                if u:
+                    fids.extend(url_to_finding_ids.get(u, []))
+            c["source_finding_ids"] = list(dict.fromkeys(fids))[:50]
+        out.append(c)
+    return out
 
 
 def _build_ref_map(findings: list[dict], claim_ledger: list[dict]) -> tuple[dict[str, int], list[tuple[str, str]]]:
@@ -332,8 +453,14 @@ def _synthesize_section(
     full_block = "\n\n".join(full_content) if full_content else "(no full content)"
 
     claim_block = _claim_ledger_block(claim_ledger)
+    
+    from tools.research_common import get_optimized_system_prompt
+    domain = project_id.split("-")[0] if "-" in project_id else "general" # fallback domain parsing or we can just pass it
+    # We don't have domain easily accessible here without project.json, but we can pass it down.
+    # Actually, let's just read it from project_id if it's there or load project.
+    
     if research_mode == "discovery":
-        system = """You are a research innovation analyst. Write a single analytical section that identifies novel patterns, emerging concepts, and unexplored connections.
+        base_system = """You are a research innovation analyst. Write a single analytical section that identifies novel patterns, emerging concepts, and unexplored connections.
 
 Structure your analysis around:
 1. What is genuinely new or different about this approach/idea?
@@ -347,7 +474,7 @@ Focus on connections between ideas that sources don't make explicitly.
 Do NOT repeat ideas from previous sections.
 End with '**Key insights:**' -- 2-3 bullet points on what is genuinely novel here."""
     else:
-        system = """You are a research analyst. Write a single analytical section of a professional report.
+        base_system = """You are a research analyst. Write a single analytical section of a professional report.
 Use inline citations as [1], [2] etc. to match the reference list provided. Write 500–1500 words.
 State confidence where relevant (e.g. "HIGH confidence (3 sources)" or "LOW (single source)").
 Do not repeat URLs in the body; use only [N] references.
@@ -359,6 +486,15 @@ CRITICAL RULES:
 - Do NOT create tables or matrices with "TBD", "N/A", or empty cells. If you lack data for a comparison, write prose explaining what is known and what is missing instead.
 - Do NOT promise data you do not have. If country-specific or granular data is absent from the findings, say so explicitly rather than creating placeholder structures.
 At the end of the section, add a short block '**Key findings:**' with 2–3 bullet points that summarize the main evidence-based conclusions of this section."""
+
+    # Apply auto-prompt optimization if available
+    try:
+        project_data = json.loads((proj_path / "project.json").read_text())
+        domain = project_data.get("domain", "general")
+    except Exception:
+        domain = "general"
+    system = get_optimized_system_prompt(domain, base_system)
+
     if epistemic_profile:
         system += f"""
 
@@ -413,9 +549,21 @@ CLAIM LEDGER (you MUST use these exact refs for every claim-bearing sentence; in
 Write the section markdown (no title repeated; start with body). Every sentence that states a factual claim must contain [claim_ref: id@version] from the list above."""
     else:
         user += "\nWrite the section markdown (no title repeated; start with body)."
+    if os.environ.get("RESEARCH_SYNTHESIS_STRUCTURED_SECTIONS") == "1":
+        user += "\n\nReturn JSON only: {\"body_md\": \"<full section markdown>\", \"claim_refs_used\": [\"cl_1@1\", ...], \"key_points\": [\"...\", ...]}."
     try:
         result = llm_call(_model(), system, user, project_id=project_id)
         text = (result.text or "").strip()
+        if os.environ.get("RESEARCH_SYNTHESIS_STRUCTURED_SECTIONS") == "1" and text:
+            try:
+                if "```" in text:
+                    text = re.sub(r"^```(?:json)?\s*", "", text).split("```")[0].strip()
+                parsed = json.loads(text)
+                if isinstance(parsed.get("body_md"), str) and len(parsed["body_md"]) > 50:
+                    text = parsed["body_md"]
+                    # claim_refs_used / key_points could be stored for provenance; currently we still extract refs from body
+            except (json.JSONDecodeError, TypeError):
+                pass
         if text and len(text) > 100:
             last_line = text.rstrip().splitlines()[-1].strip()
             if last_line and len(last_line) > 20 and last_line[-1] not in '.!?:)]*>"–':
@@ -594,8 +742,14 @@ Return JSON only: {"conclusions": "markdown", "next_steps": "markdown"}"""
         user = f"QUESTION: {question}\nTHESIS: {thesis.get('current', '')}\nCONTRADICTIONS: {json.dumps(contradictions)[:1500]}\nDISCOVERY KEY HYPOTHESIS: {discovery_brief.get('key_hypothesis', '')}\n\nReturn only valid JSON."
     else:
         system = """You are a research analyst. Given thesis and contradictions, produce two sections.
-Return JSON: {"conclusions": "markdown text 300-500 words", "next_steps": "markdown text 200-400 words, prioritized list with [HIGH]/[MEDIUM]."}"""
+Return JSON: {"conclusions": "markdown text 300-500 words", "next_steps": "markdown text 200-400 words, prioritized list with [HIGH]/[MEDIUM]."}
+If alternative hypotheses are provided, include a short 'Alternative hypotheses' or 'Position A vs B' subsection in conclusions where relevant."""
         user = f"QUESTION: {question}\nTHESIS: {thesis.get('current', '')} (confidence: {thesis.get('confidence', 0)})\nCONTRADICTIONS: {json.dumps(contradictions)[:2000]}\n\nReturn only valid JSON."
+        alts = thesis.get("alternatives") or []
+        if alts:
+            user += f"\nALTERNATIVE HYPOTHESES (consider mentioning): {json.dumps(alts, ensure_ascii=False)[:1500]}"
+        if thesis.get("contradiction_summary"):
+            user += f"\nCONTRADICTION SUMMARY: {thesis.get('contradiction_summary', '')[:500]}"
         if epistemic_profile:
             user += f"\nEPISTEMIC PROFILE: {epistemic_profile}. If TENTATIVE+UNVERIFIED > 60% of claims, frame conclusions as emerging patterns, not confirmed facts."
     try:
@@ -716,6 +870,51 @@ def _sentence_contains_valid_claim_ref(sentence: str, valid_refs: set[str]) -> b
             if r and r in valid_refs:
                 return True
     return False
+
+
+def _factuality_guard(report_body: str, findings: list[dict], claim_ledger: list[dict]) -> dict:
+    """Check numeric and quoted spans in report against findings and claim texts. Observe-only (no block)."""
+    corpus_parts = []
+    for f in findings[:80]:
+        excerpt = (f.get("excerpt") or "")[:2000]
+        if excerpt:
+            corpus_parts.append(excerpt.lower())
+    for c in claim_ledger:
+        text = (c.get("text") or "")[:500]
+        if text:
+            corpus_parts.append(text.lower())
+    corpus = " ".join(corpus_parts)
+    corpus_norm = re.sub(r"\s+", " ", corpus)
+    if not corpus_norm.strip():
+        return {"unsupported_spans": [], "checked_count": 0, "unsupported_count": 0, "enabled": False}
+
+    # Extract candidate factual spans: numbers with % or units, years, short quoted phrases
+    candidates = []
+    # Numbers and percentages (e.g. 12.5%, 1.2 million, 2024)
+    for m in re.finditer(r"\d{1,3}(?:,\d{3})*(?:\.\d+)?\s*%?", report_body):
+        candidates.append(m.group(0).strip())
+    for m in re.finditer(r"\b(19|20)\d{2}\b", report_body):
+        candidates.append(m.group(0))
+    for m in re.finditer(r'"[^"]{10,80}"', report_body):
+        candidates.append(m.group(0).strip())
+    candidates = list(dict.fromkeys(candidates))[:100]
+    unsupported = []
+    for span in candidates:
+        if len(span) < 4:
+            continue
+        norm_span = re.sub(r"\s+", " ", span.lower().strip())
+        if norm_span in corpus_norm or (len(norm_span) > 15 and norm_span[:20] in corpus_norm):
+            continue
+        # Allow partial match for numbers (e.g. "12.5" might appear as "12,5" or "12.5" in corpus)
+        if re.search(re.escape(norm_span.replace(",", ".")), corpus_norm):
+            continue
+        unsupported.append(span[:100])
+    return {
+        "unsupported_spans": unsupported[:20],
+        "checked_count": len(candidates),
+        "unsupported_count": len(unsupported),
+        "enabled": True,
+    }
 
 
 # Hard synthesis contract (Spec §6.2–6.3): no new claims; every claim-bearing sentence maps to ledger via explicit claim_ref.
@@ -857,6 +1056,8 @@ def run_synthesis(project_id: str) -> str:
     findings = _load_findings(proj_path, question=question)
     sources = _load_sources(proj_path)
     claim_ledger = get_claims_for_synthesis(proj_path)
+    claim_ledger = _ensure_source_finding_ids(claim_ledger, proj_path)
+    findings = _semantic_relevance_sort(question, findings, project_id)
     contradictions = []
     if (proj_path / "contradictions.json").exists():
         try:
@@ -891,6 +1092,11 @@ def run_synthesis(project_id: str) -> str:
         clusters = _cluster_findings(findings, question, project_id)
         playbook_id = (project.get("config") or {}).get("playbook_id")
         playbook_instructions = None
+        report_sections = (project.get("config") or {}).get("report_sections")
+        if isinstance(report_sections, list):
+            report_sections = [str(s) for s in report_sections if s][:15]
+        else:
+            report_sections = None
         if playbook_id:
             playbook_path = proj_path.parent / "playbooks" / f"{playbook_id}.json"
             if not playbook_path.exists():
@@ -899,14 +1105,30 @@ def run_synthesis(project_id: str) -> str:
                 try:
                     pb = json.loads(playbook_path.read_text())
                     playbook_instructions = pb.get("synthesis_instructions")
+                    if report_sections is None and isinstance(pb.get("report_sections"), list):
+                        report_sections = [str(s) for s in pb["report_sections"] if s][:15]
                 except Exception:
                     pass
+        # Connect Phase 2: load entity graph for outline context (key entities and relations)
+        entity_context = None
+        graph_path = proj_path / "connect" / "entity_graph.json"
+        if graph_path.exists():
+            try:
+                graph = json.loads(graph_path.read_text())
+                entities = graph.get("entities", [])[:25]
+                rels = graph.get("relations", [])[:15]
+                names = [e.get("name") for e in entities if e.get("name")]
+                rel_strs = [f"{r.get('from')} {r.get('relation_type', '')} {r.get('to')}" for r in rels if r.get("from") and r.get("to")]
+                if names or rel_strs:
+                    entity_context = "Entities: " + ", ".join(names[:20]) + ("; Relations: " + "; ".join(rel_strs[:10]) if rel_strs else "")
+            except Exception:
+                pass
         try:
             from tools.research_progress import step as progress_step
             progress_step(project_id, "Generating outline")
         except Exception:
             pass
-        section_titles = _outline_sections(question, clusters, playbook_instructions, project_id)
+        section_titles = _outline_sections(question, clusters, playbook_instructions, project_id, report_sections=report_sections, entity_context=entity_context)
         deep_parts = []
         start_index = 0
 
@@ -939,6 +1161,11 @@ def run_synthesis(project_id: str) -> str:
         parts.append("\n---\n\n")
 
     epistemic_profile = _epistemic_profile_from_ledger(claim_ledger)
+    cited_urls: set[str] = set()
+    for c in claim_ledger:
+        for u in (c.get("supporting_source_ids") or []):
+            if (u or "").strip():
+                cited_urls.add((u or "").strip())
     checkpoint_bodies = list(ck["bodies"]) if (ck and ck.get("bodies")) else []
     accumulated_summary: list[str] = []
     accumulated_claim_refs: set[str] = set()
@@ -949,6 +1176,11 @@ def run_synthesis(project_id: str) -> str:
         cluster = clusters[i]
         title = section_titles[i] if i < len(section_titles) else f"Analysis: Topic {i+1}"
         section_findings = [findings[j] for j in cluster if 0 <= j < len(findings)]
+        if cited_urls:
+            section_findings = sorted(
+                section_findings,
+                key=lambda f: (0 if ((f.get("url") or "").strip() in cited_urls) else 1),
+            )
         if not section_findings:
             checkpoint_bodies.append("_No findings for this cluster._")
             deep_parts.append(f"## {title}\n\n_No findings for this cluster._")
@@ -1147,6 +1379,8 @@ def run_synthesis(project_id: str) -> str:
         else:
             report_body += f"[{i}] {url}\n\n"
 
+    # Factuality guard (observe mode): check numeric/quoted spans against findings and ledger
+    factuality = _factuality_guard(report_body, findings, claim_ledger)
     # Hard synthesis contract (Spec §6.2–6.3): explicit claim_ref; validate; enforce/strict block on violation
     mode = (os.environ.get("AEM_ENFORCEMENT_MODE") or "observe").strip().lower()
     if mode not in ("observe", "enforce", "strict"):
@@ -1158,6 +1392,7 @@ def run_synthesis(project_id: str) -> str:
         "unknown_refs": validation.get("unknown_refs", []),
         "unreferenced_claim_sentence_count": validation.get("unreferenced_claim_sentence_count", 0),
         "tentative_labels_ok": validation.get("tentative_labels_ok", True),
+        "factuality_guard": factuality,
         "ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     try:
@@ -1177,13 +1412,19 @@ def run_synthesis(project_id: str) -> str:
 
 
 def main():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    try:
+        from tools.research_tool_registry import ensure_tool_context
+        ensure_tool_context("research_synthesize.py")
+    except ImportError:
+        pass
     if len(sys.argv) < 2:
         print("Usage: research_synthesize.py <project_id>", file=sys.stderr)
         sys.exit(2)
     project_id = sys.argv[1]
     try:
         report = run_synthesis(project_id)
-        print(report)
+        print(report, flush=True)  # so timeout kill does not lose output (stdout is block-buffered when redirected)
     except Exception as e:
         print(f"# Synthesis Error\n\n{e}", file=sys.stderr)
         sys.exit(1)

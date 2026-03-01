@@ -152,6 +152,22 @@ def run_for_project(project_id: str) -> dict:
     count_entities = len(name_to_id)
     count_relations = mem._conn.execute("SELECT COUNT(*) as c FROM entity_relations WHERE source_project = ?", (project_id,)).fetchone()["c"]
     count_mentions = mem._conn.execute("SELECT COUNT(*) as c FROM entity_mentions WHERE project_id = ?", (project_id,)).fetchone()["c"]
+    # Connect Phase 2: export entity graph for Verify/Synthesize and UI
+    try:
+        connect_dir = proj_path / "connect"
+        connect_dir.mkdir(parents=True, exist_ok=True)
+        entities_list = mem.get_entities(project_id=project_id, limit=200)
+        relations_list = mem.get_entity_relations(project_id=project_id, limit=100)
+        graph = {
+            "entities": [{"id": e.get("id"), "name": e.get("name"), "type": e.get("type")} for e in entities_list],
+            "relations": [
+                {"from": r.get("name_a"), "to": r.get("name_b"), "relation_type": r.get("relation_type")}
+                for r in relations_list
+            ],
+        }
+        (connect_dir / "entity_graph.json").write_text(json.dumps(graph, indent=2, ensure_ascii=False))
+    except Exception:
+        pass
     mem.close()
     return {"entities": count_entities, "relations": count_relations, "mentions": count_mentions}
 

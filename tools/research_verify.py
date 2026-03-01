@@ -7,6 +7,8 @@ Usage:
   research_verify.py <project_id> source_reliability
   research_verify.py <project_id> claim_verification
   research_verify.py <project_id> fact_check
+  research_verify.py <project_id> claim_ledger
+  research_verify.py <project_id> claim_verification_cove  # CoVe: independent verification (RESEARCH_ENABLE_COVE_VERIFICATION=1)
 """
 import json
 import os
@@ -16,15 +18,15 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from tools.research_common import project_dir, load_project, ensure_project_layout, llm_call, get_principles_for_research
+from tools.research_common import project_dir, load_project, ensure_project_layout, llm_call, get_principles_for_research, model_for_lane
 
 
 def _model():
-    return os.environ.get("RESEARCH_EXTRACT_MODEL", "gpt-4.1-mini")
+    return model_for_lane("verify")
 
 
 def _verify_model():
-    return os.environ.get("RESEARCH_VERIFY_MODEL", "gpt-5.2")
+    return model_for_lane("verify")
 
 
 def _load_sources(proj_path: Path, max_items: int = 50) -> list[dict]:
@@ -89,15 +91,68 @@ def source_reliability(proj_path: Path, project: dict, project_id: str = "") -> 
     question = project.get("question", "")
     principles_block = get_principles_for_research(question, domain=project.get("domain"), limit=5)
     system = """You are a research analyst evaluating source reliability.
-For each source, return JSON: {"sources": [{"url": "...", "reliability_score": 0.0-1.0, "flags": ["list", "of", "issues or strengths e.g. authoritative_domain"]}]}
+For each source, return JSON: {"sources": [{"url": "...", "reliability_score": 0.0-1.0, "flags": ["list", "of", "issues or strengths e.g. authoritative_domain"], "domain_tier": "high|medium|low|unknown" (optional), "recency_score": 0.0-1.0 (optional)}]}
 Score: 0.3 = low/unreliable, 0.5 = unknown, 0.7+ = decent, 0.9+ = high trust. Consider domain reputation, recency if visible, author if known."""
     if principles_block:
         system += "\n\n" + principles_block
     user = f"SOURCES:\n{payload}\n\nRate each source. Return only valid JSON."
     out = _llm_json(system, user, project_id=project_id, model=_verify_model())
     if isinstance(out, dict) and "sources" in out:
-        return out
-    return {"sources": out if isinstance(out, list) else []}
+        sources_out = out["sources"]
+    else:
+        sources_out = out if isinstance(out, list) else []
+    # Connect Phase 1: mark sources that appear in contradictions (from Connect phase)
+    _, contradiction_urls = _load_connect_context(proj_path)
+    if contradiction_urls:
+        for s in sources_out:
+            url = (s.get("url") or "").strip()
+            title = (s.get("title") or "").strip()
+            in_contra = any(
+                url == u or u in url or title == u or (len(u) > 20 and u in url)
+                for u in contradiction_urls
+            )
+            if in_contra:
+                s["in_contradiction"] = True
+                flags = s.get("flags") or []
+                if "in_contradiction" not in flags:
+                    s["flags"] = flags + ["in_contradiction"]
+    return {"sources": sources_out}
+
+
+def _load_connect_context(proj_path: Path) -> tuple[str, set[str]]:
+    """Load thesis and contradictions from Connect phase. Returns (thesis_current, contradiction_source_urls)."""
+    thesis_current = ""
+    contradiction_urls: set[str] = set()
+    if (proj_path / "thesis.json").exists():
+        try:
+            th = json.loads((proj_path / "thesis.json").read_text())
+            thesis_current = (th.get("current") or "").strip()
+        except Exception:
+            pass
+    if (proj_path / "contradictions.json").exists():
+        try:
+            data = json.loads((proj_path / "contradictions.json").read_text())
+            for c in data.get("contradictions", []):
+                for key in ("source_a", "source_b"):
+                    val = (c.get(key) or "").strip()
+                    if val and (val.startswith("http") or "/" in val):
+                        contradiction_urls.add(val)
+                    if val and len(val) > 10:  # could be title or url
+                        contradiction_urls.add(val)
+        except Exception:
+            pass
+    return thesis_current, contradiction_urls
+
+
+def _thesis_relevance(claim_text: str, thesis_current: str) -> float:
+    """Keyword overlap between claim and thesis; 0..1."""
+    if not thesis_current or not claim_text:
+        return 0.0
+    tw = set(re.findall(r"\b[a-z0-9]{3,}\b", thesis_current.lower()))
+    cw = set(re.findall(r"\b[a-z0-9]{3,}\b", claim_text.lower()))
+    if not tw or not cw:
+        return 0.0
+    return len(tw & cw) / len(tw)
 
 
 def _load_source_metadata(proj_path: Path, max_items: int = 50) -> list[dict]:
@@ -258,6 +313,48 @@ def claim_verification(proj_path: Path, project: dict, project_id: str = "") -> 
     for batch_num in sorted(results_by_batch.keys()):
         all_claims.extend(results_by_batch[batch_num])
     merged = _merge_dedupe_claims(all_claims)
+    # Connect Phase 1: prioritize thesis-relevant claims; persist connect context for build_claim_ledger
+    thesis_current, contradiction_urls = _load_connect_context(proj_path)
+    if thesis_current:
+        merged.sort(
+            key=lambda c: _thesis_relevance((c.get("claim") or "").strip(), thesis_current),
+            reverse=True,
+        )
+    # Connect Phase 2: secondary sort by entity relevance (claims mentioning Connect entities first)
+    entity_names: set[str] = set()
+    graph_path = proj_path / "connect" / "entity_graph.json"
+    if graph_path.exists():
+        try:
+            graph = json.loads(graph_path.read_text())
+            for e in graph.get("entities", []):
+                n = (e.get("name") or "").strip()
+                if n:
+                    entity_names.add(n.lower())
+        except Exception:
+            pass
+    if entity_names:
+        def _entity_score(c: dict) -> int:
+            t = (c.get("claim") or "").lower()
+            return sum(1 for name in entity_names if len(name) > 2 and name in t)
+        merged.sort(
+            key=lambda c: (
+                _thesis_relevance((c.get("claim") or "").strip(), thesis_current),
+                _entity_score(c),
+            ),
+            reverse=True,
+        )
+    verify_dir = proj_path / "verify"
+    verify_dir.mkdir(parents=True, exist_ok=True)
+    connect_ctx = {
+        "thesis_current": thesis_current,
+        "contradiction_source_urls": list(contradiction_urls),
+    }
+    try:
+        (verify_dir / "connect_context.json").write_text(
+            json.dumps(connect_ctx, indent=2, ensure_ascii=False)
+        )
+    except Exception:
+        pass
     return {"claims": merged}
 
 
@@ -318,16 +415,95 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
     )
     findings_dir = proj_path / "findings"
     url_to_finding_ids: dict[str, list[str]] = {}
+    url_to_snippet: dict[str, str] = {}
     if findings_dir.exists():
         for p in findings_dir.glob("*.json"):
             try:
                 d = json.loads(p.read_text())
                 u = (d.get("url") or "").strip()
                 fid = (d.get("finding_id") or "").strip()
+                excerpt = (d.get("excerpt") or "").strip()[:500]
                 if u and fid:
                     url_to_finding_ids.setdefault(u, []).append(fid)
+                if u and excerpt:
+                    url_to_snippet[u] = excerpt
             except Exception:
                 pass
+    # Verify Phase 1: fact_check — match claims to facts (Jaccard >= 0.4); disputed fact -> dispute; confirmed fact -> no downgrade
+    fact_check_facts: list[dict] = []
+    if (verify_dir / "fact_check.json").exists():
+        try:
+            fc = json.loads((verify_dir / "fact_check.json").read_text())
+            fact_check_facts = fc.get("facts", [])
+        except Exception:
+            pass
+
+    def _claim_fact_similarity(claim_text: str, fact_statement: str) -> float:
+        """Jaccard on word tokens; 0..1."""
+        wa = set(re.findall(r"\b[a-z0-9\-\.\%]{2,}\b", (claim_text or "").lower()))
+        wb = set(re.findall(r"\b[a-z0-9\-\.\%]{2,}\b", (fact_statement or "").lower()))
+        if not wa or not wb:
+            return 0.0
+        return len(wa & wb) / len(wa | wb)
+
+    def _claim_matches_disputed_fact(claim_text: str) -> bool:
+        for f in fact_check_facts:
+            if (f.get("verification_status") or "").strip().lower() != "disputed":
+                continue
+            st = (f.get("statement") or "").strip()
+            if st and _claim_fact_similarity(claim_text, st) >= 0.4:
+                return True
+        return False
+
+    def _claim_matches_confirmed_fact(claim_text: str) -> bool:
+        """True if claim matches a confirmed fact (tier bonus: allow AUTHORITATIVE with 1 source)."""
+        for f in fact_check_facts:
+            if (f.get("verification_status") or "").strip().lower() not in ("confirmed", "supported"):
+                continue
+            st = (f.get("statement") or "").strip()
+            if st and _claim_fact_similarity(claim_text, st) >= 0.4:
+                return True
+        return False
+    # Phase 6: entity names from Connect graph for entity_ids per claim
+    entity_names_list: list[str] = []
+    graph_path_ledger = proj_path / "connect" / "entity_graph.json"
+    if graph_path_ledger.exists():
+        try:
+            g = json.loads(graph_path_ledger.read_text())
+            entity_names_list = [(e.get("name") or "").strip() for e in g.get("entities", []) if (e.get("name") or "").strip()]
+        except Exception:
+            pass
+    # Connect Phase 1: load contradiction URLs for in_contradiction flag on claims
+    contradiction_source_urls: set[str] = set()
+    if (verify_dir / "connect_context.json").exists():
+        try:
+            ctx = json.loads((verify_dir / "connect_context.json").read_text())
+            contradiction_source_urls = set(ctx.get("contradiction_source_urls") or [])
+        except Exception:
+            pass
+    if not contradiction_source_urls and (proj_path / "contradictions.json").exists():
+        try:
+            data = json.loads((proj_path / "contradictions.json").read_text())
+            for c in data.get("contradictions", []):
+                for key in ("source_a", "source_b"):
+                    v = (c.get(key) or "").strip()
+                    if v:
+                        contradiction_source_urls.add(v)
+        except Exception:
+            pass
+
+    # Phase 3: CoVe overlay — if CoVe says not supported, force UNVERIFIED (fail-safe: never upgrade)
+    cove_overlay: dict[str, bool] = {}
+    if (verify_dir / "cove_overlay.json").exists():
+        try:
+            cove_data = json.loads((verify_dir / "cove_overlay.json").read_text())
+            for item in cove_data.get("claims", []):
+                prefix = (item.get("claim_text_prefix") or "").strip()[:120]
+                if prefix and item.get("cove_supports") is False:
+                    cove_overlay[prefix] = False
+        except Exception:
+            pass
+
     existing_ledger_path = verify_dir / "claim_ledger.json"
     prev_verified: dict[str, dict] = {}
     if existing_ledger_path.exists():
@@ -358,6 +534,8 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
         distinct_reliable = len(set(reliable_sources))
         dispute = (c.get("disputed") or c.get("verification_status", "") == "disputed" or
                    str(c.get("verification_status", "")).lower() == "disputed")
+        if not dispute and text and _claim_matches_disputed_fact(text):
+            dispute = True
         authoritative_sources = [u for u in reliable_sources if _is_authoritative_source(u)]
         research_mode = ((project.get("config") or {}).get("research_mode") or "standard").strip().lower()
 
@@ -387,6 +565,11 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
             research_mode = ((project.get("config") or {}).get("research_mode") or "standard").lower()
             is_verified = research_mode == "frontier"
             verification_reason = "single authoritative source (primary)"
+        elif distinct_reliable == 1 and not dispute and _claim_matches_confirmed_fact(text):
+            verification_tier = "AUTHORITATIVE"
+            research_mode = ((project.get("config") or {}).get("research_mode") or "standard").lower()
+            is_verified = research_mode == "frontier"
+            verification_reason = "single source + fact_check confirmed"
         elif distinct_reliable < 2:
             total_distinct = len(set(supporting_source_ids))
             verification_tier = "UNVERIFIED"
@@ -400,6 +583,13 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
             is_verified = False
             verification_reason = "not verified"
         key = text[:100]
+        # Apply CoVe overlay: cove_supports False -> force UNVERIFIED (never upgrade on CoVe)
+        for prefix in (text[:80], text[:100], text[:120]):
+            if prefix in cove_overlay and cove_overlay[prefix] is False:
+                verification_tier = "UNVERIFIED"
+                is_verified = False
+                verification_reason = "CoVe independent verification did not support"
+                break
         if not is_verified and key in prev_verified:
             is_verified = True
             verification_tier = prev_verified[key].get("verification_tier", "VERIFIED")
@@ -411,15 +601,45 @@ def build_claim_ledger(proj_path: Path, project: dict) -> dict:
         for u in supporting_source_ids:
             source_finding_ids.extend(url_to_finding_ids.get(u, []))
         source_finding_ids = list(dict.fromkeys(source_finding_ids))[:50]
+        in_contradiction = bool(
+            contradiction_source_urls
+            and any(
+                u in contradiction_source_urls or any(cu in u for cu in contradiction_source_urls)
+                for u in supporting_source_ids
+            )
+        )
+        supporting_evidence = [
+            {
+                "url": u,
+                "snippet": (url_to_snippet.get(u) or "")[:300],
+                "source_id": (url_to_finding_ids.get(u) or [""])[0],
+            }
+            for u in supporting_source_ids[:15]
+        ]
+        # Phase 2: credibility_weight = average reliability of supporting sources (0..1)
+        rels = [rel_by_url.get(u, default_reliability) for u in supporting_source_ids]
+        credibility_weight = round(sum(rels) / len(rels), 3) if rels else 0.5
+        # Phase 6: entity_ids = entity names from Connect graph that appear in claim text
+        claim_entity_ids = []
+        if entity_names_list and text:
+            text_lower = text.lower()
+            for name in entity_names_list:
+                if len(name) > 2 and name.lower() in text_lower:
+                    claim_entity_ids.append(name)
+        claim_entity_ids = list(dict.fromkeys(claim_entity_ids))[:15]
         claims_out.append({
             "claim_id": claim_id,
             "text": text,
             "supporting_source_ids": supporting_source_ids,
             "source_finding_ids": source_finding_ids,
+            "supporting_evidence": supporting_evidence,
+            "entity_ids": claim_entity_ids,
+            "credibility_weight": credibility_weight,
             "is_verified": is_verified,
             "verification_tier": verification_tier,
             "verification_reason": verification_reason,
             "claim_support_rate": claim_support_rate,
+            "in_contradiction": in_contradiction,
         })
     from tools.research_common import audit_log
     audit_log(proj_path, "claim_ledger_built", {
@@ -478,6 +698,82 @@ confirmed = multiple sources agree; disputed = sources disagree; unverifiable = 
     return {"facts": out if isinstance(out, list) else []}
 
 
+# CoVe: batch limit to control cost/time (Phase 3)
+COVE_CLAIM_BATCH_LIMIT = 20
+
+
+def run_claim_verification_cove(proj_path: Path, project: dict, project_id: str = "") -> dict:
+    """
+    Chain-of-Verification (CoVe): generate verification questions, answer from evidence only, compare.
+    Writes verify/cove_overlay.json with cove_supports per claim. Fail-safe: on error write all False (never upgrade).
+    """
+    ensure_project_layout(proj_path)
+    verify_dir = proj_path / "verify"
+    claims_in: list[dict] = []
+    if (verify_dir / "claim_verification.json").exists():
+        try:
+            data = json.loads((verify_dir / "claim_verification.json").read_text())
+            claims_in = data.get("claims", [])[:COVE_CLAIM_BATCH_LIMIT]
+        except Exception:
+            pass
+    if not claims_in:
+        return {"claims": []}
+
+    findings = _load_findings(proj_path, question=project.get("question", ""))
+    if not findings:
+        return {"claims": [{"claim_text_prefix": (c.get("claim") or "")[:120], "cove_supports": False} for c in claims_in]}
+
+    # Build evidence-only text (no claim text) for independent verification
+    evidence_parts = []
+    for f in findings[:40]:
+        url = (f.get("url") or "").strip()
+        excerpt = (f.get("excerpt") or "")[:400]
+        if url and excerpt:
+            evidence_parts.append(f"[{url}]: {excerpt}")
+    evidence_text = "\n\n".join(evidence_parts)[:14000]
+
+    # Pairs: (claim_text_prefix, evidence_snippet for that claim from supporting_sources)
+    pairs: list[tuple[str, str]] = []
+    url_to_snippet: dict[str, str] = {}
+    for f in findings:
+        u = (f.get("url") or "").strip()
+        if u:
+            url_to_snippet[u] = (f.get("excerpt") or "")[:500]
+    for c in claims_in:
+        text = (c.get("claim") or "").strip()[:120]
+        supporting = c.get("supporting_sources") or []
+        if isinstance(supporting, str):
+            supporting = [supporting] if supporting else []
+        snippets = [url_to_snippet.get(u, "") for u in supporting if u][:3]
+        ev = " ".join(s for s in snippets if s).strip() or evidence_text[:800]
+        pairs.append((text, ev))
+
+    try:
+        system = """You are a verifier. Given ONLY the evidence excerpt for each claim, does the evidence support the claim?
+Reply with a JSON object: {"results": [true, false, true, ...]} with exactly one boolean per claim in order.
+true = evidence supports the claim; false = evidence does not support or is inconclusive. No other output."""
+        user_parts = [f"Claim {i+1}: {t}\nEvidence {i+1}: {e[:600]}" for i, (t, e) in enumerate(pairs)]
+        user = "\n\n---\n\n".join(user_parts)[:18000]
+        out = _llm_json(system, user, project_id=project_id, model=_verify_model())
+        results = out.get("results", []) if isinstance(out, dict) else []
+        # Pad or trim to len(pairs)
+        while len(results) < len(pairs):
+            results.append(False)
+        results = results[: len(pairs)]
+        overlay_claims = [
+            {"claim_text_prefix": pairs[i][0][:120], "cove_supports": bool(results[i])}
+            for i in range(len(pairs))
+        ]
+    except Exception:
+        overlay_claims = [{"claim_text_prefix": (c.get("claim") or "")[:120], "cove_supports": False} for c in claims_in]
+
+    verify_dir.mkdir(parents=True, exist_ok=True)
+    (verify_dir / "cove_overlay.json").write_text(
+        json.dumps({"claims": overlay_claims}, indent=2, ensure_ascii=False)
+    )
+    return {"claims": overlay_claims}
+
+
 def _record_progress_error(project_id: str, e: BaseException) -> None:
     try:
         from tools.research_progress import error as progress_error
@@ -494,6 +790,12 @@ def _record_progress_error(project_id: str, e: BaseException) -> None:
 
 
 def main():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    try:
+        from tools.research_tool_registry import ensure_tool_context
+        ensure_tool_context("research_verify.py")
+    except ImportError:
+        pass
     if len(sys.argv) < 3:
         print("Usage: research_verify.py <project_id> <source_reliability|claim_verification|fact_check|claim_ledger>", file=sys.stderr)
         sys.exit(2)
@@ -513,6 +815,8 @@ def main():
             result = fact_check(proj_path, project, project_id=project_id)
         elif mode == "claim_ledger":
             result = build_claim_ledger(proj_path, project)
+        elif mode == "claim_verification_cove":
+            result = run_claim_verification_cove(proj_path, project, project_id=project_id)
         else:
             print(f"Unknown mode: {mode}", file=sys.stderr)
             sys.exit(2)

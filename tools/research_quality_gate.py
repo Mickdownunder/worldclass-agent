@@ -60,6 +60,23 @@ def _load_explore_stats(proj: Path) -> dict:
     return out
 
 
+def _load_read_stats_combined(proj: Path) -> dict:
+    """Load and sum read_attempts/successes/failures from explore and focus read_stats."""
+    out = {"read_attempts": 0, "read_successes": 0, "read_failures": 0}
+    for phase in ("explore", "focus"):
+        path = proj / phase / "read_stats.json"
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text())
+            out["read_attempts"] += data.get("read_attempts", 0)
+            out["read_successes"] += data.get("read_successes", 0)
+            out["read_failures"] += data.get("read_failures", 0)
+        except Exception:
+            pass
+    return out
+
+
 def _effective_findings_min(metrics: dict) -> int:
     """Adaptive floor: lower if read success rate is low."""
     t = _get_thresholds()
@@ -259,8 +276,8 @@ def run_evidence_gate(project_id: str) -> dict:
         "read_successes": 0,
         "read_failures": 0,
     }
-    explore = _load_explore_stats(proj)
-    metrics.update(explore)
+    read_stats = _load_read_stats_combined(proj)
+    metrics.update(read_stats)
 
     effective_findings_min = _effective_findings_min(metrics)
     metrics["findings_count"] = _metrics_findings(findings_dir)
@@ -311,6 +328,12 @@ def run_evidence_gate(project_id: str) -> dict:
 
 
 def main():
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    try:
+        from tools.research_tool_registry import ensure_tool_context
+        ensure_tool_context("research_quality_gate.py")
+    except ImportError:
+        pass
     if len(sys.argv) < 2:
         print("Usage: research_quality_gate.py <project_id>", file=sys.stderr)
         sys.exit(2)

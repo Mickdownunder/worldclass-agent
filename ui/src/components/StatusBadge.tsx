@@ -6,6 +6,8 @@ type StatusVariant =
   | "failed"
   | "failed_insufficient_evidence"
   | "failed_rejected_by_reviewer"
+  | "failed_conductor_tool_errors"
+  | "aem_blocked"
   | "explore"
   | "focus"
   | "connect"
@@ -24,6 +26,8 @@ const variantStyles: Record<StatusVariant, { bg: string; text: string; border: s
   failed:                      { bg: "bg-rose-500/10",   text: "text-rose-400",   border: "border-rose-500/25" },
   failed_insufficient_evidence:{ bg: "bg-rose-500/10",   text: "text-rose-400",   border: "border-rose-500/25" },
   failed_rejected_by_reviewer: { bg: "bg-rose-500/10",   text: "text-rose-400",   border: "border-rose-500/25" },
+  failed_conductor_tool_errors: { bg: "bg-rose-500/10",   text: "text-rose-400",   border: "border-rose-500/25" },
+  aem_blocked:                 { bg: "bg-amber-500/10",  text: "text-amber-400",  border: "border-amber-500/25" },
   pending_review:              { bg: "bg-amber-500/10",  text: "text-amber-400",  border: "border-amber-500/25", dot: "bg-amber-400" },
   verifying:                   { bg: "bg-amber-500/10",  text: "text-amber-400",  border: "border-amber-500/25", dot: "bg-amber-400" },
   verify:                      { bg: "bg-amber-500/10",  text: "text-amber-400",  border: "border-amber-500/25", dot: "bg-amber-400" },
@@ -42,6 +46,8 @@ const ACTIVE_STATUSES = new Set(["active", "running", "explore", "focus", "conne
 const DISPLAY_LABELS: Record<string, string> = {
   failed_insufficient_evidence: "FAILED · INSUFF. EVIDENCE",
   failed_rejected_by_reviewer: "REJECTED BY REVIEWER",
+  failed_conductor_tool_errors: "FAILED · CONDUCTOR TOOL ERRORS",
+  aem_blocked: "AEM BLOCKED",
   pending_review: "PENDING REVIEW",
   verifying: "VERIFYING",
   synthesize: "SYNTHESIZE",
@@ -61,6 +67,8 @@ const DISPLAY_LABELS: Record<string, string> = {
 function toVariant(value: string): StatusVariant {
   const lower = value.toLowerCase().replace(/[-\s]/g, "_");
   if (lower in variantStyles) return lower as StatusVariant;
+  if (lower === "aem_blocked") return "aem_blocked";
+  if (lower === "failed_conductor_tool_errors") return "failed_conductor_tool_errors";
   if (lower.includes("failed_insufficient") || lower.includes("insufficient"))
     return "failed_insufficient_evidence";
   if (lower.includes("fail") || lower.includes("error")) return "failed";

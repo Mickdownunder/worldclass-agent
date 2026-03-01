@@ -99,11 +99,24 @@ export default async function ResearchProjectPage({
           </div>
           <div className="flex shrink-0 items-center gap-2 flex-wrap">
             <StatusBadge status={project.status} />
-            {project.config?.research_mode === "discovery" && (
-              <span className="rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider" style={{ background: "var(--tron-accent)", color: "var(--tron-bg)" }}>
-                Discovery Mode
-              </span>
-            )}
+            {(() => {
+              const mode = project.config?.research_mode ?? "standard";
+              return (
+                <span
+                  className="rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider"
+                  style={
+                    mode === "discovery"
+                      ? { background: "var(--tron-accent)", color: "var(--tron-bg)" }
+                      : mode === "frontier"
+                        ? { background: "color-mix(in srgb, var(--tron-accent) 40%, transparent)", color: "var(--tron-text)" }
+                        : { border: "1px solid var(--tron-border)", color: "var(--tron-text-muted)" }
+                  }
+                  title="Research mode: Evidence Gate and verification rules depend on this."
+                >
+                  {mode === "discovery" ? "Discovery" : mode === "frontier" ? "Frontier" : "Standard"}
+                </span>
+              );
+            })()}
             {isActive && project.status !== "pending_review" && <StartCycleButton projectId={id} />}
             {project.status === "active" && <CancelRunButton projectId={id} />}
             {project.status === "done" && <CreateFollowupButton projectId={id} />}
@@ -242,6 +255,9 @@ export default async function ResearchProjectPage({
       {/* ── Gate Metrics (inline, lightweight) ───────────────── */}
       <GateMetricsInline project={project} calibratedThresholds={calibratedThresholds ?? undefined} />
 
+      {/* ── Research Intelligence (Connect, Verify, Governor) ─── */}
+      <ResearchIntelligencePanel project={project} />
+
       {/* ── Memory Applied ────────────────────────────────────── */}
       <MemoryAppliedPanel project={project} />
 
@@ -321,6 +337,128 @@ export default async function ResearchProjectPage({
   );
 }
 
+/* ── Research Intelligence (Connect, Verify, Governor) ─────────── */
+function ResearchIntelligencePanel({ project }: { project: ResearchProjectDetail }) {
+  const hasGovernor = !!project.governor_lane;
+  const hasThesis = !!project.thesis?.current;
+  const hasContra = (project.contradictions?.contradictions?.length ?? 0) > 0;
+  const hasFactCheck = (project.fact_check_summary?.total ?? 0) > 0;
+  const hasLedger = (project.claim_ledger_summary?.total ?? 0) > 0;
+  if (!hasGovernor && !hasThesis && !hasContra && !hasFactCheck && !hasLedger) return null;
+
+  return (
+    <div
+      className="rounded-lg px-5 py-4"
+      style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg-panel)" }}
+    >
+      <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--tron-accent)" }}>
+        Research Intelligence
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {hasGovernor && (
+          <div>
+            <div className="mb-1 text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-muted)" }}>Token Governor</div>
+            <span
+              className="inline-block rounded px-2 py-0.5 font-mono text-xs font-bold capitalize"
+              style={{
+                background:
+                  project.governor_lane === "strong"
+                    ? "color-mix(in srgb, var(--tron-accent) 25%, transparent)"
+                    : project.governor_lane === "mid"
+                      ? "color-mix(in srgb, var(--tron-accent) 12%, transparent)"
+                      : "var(--tron-bg)",
+                color: "var(--tron-text)",
+                border: "1px solid var(--tron-border)",
+              }}
+            >
+              {project.governor_lane}
+            </span>
+            <p className="mt-0.5 text-[10px]" style={{ color: "var(--tron-text-dim)" }}>
+              Lane used for Verify / Synthesize / Critic
+            </p>
+          </div>
+        )}
+        {hasThesis && (
+          <div className="sm:col-span-2">
+            <div className="mb-1 text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-muted)" }}>Thesis (Connect)</div>
+            <p className="text-sm leading-snug" style={{ color: "var(--tron-text)" }}>
+              {(project.thesis!.current ?? "").slice(0, 280)}
+              {(project.thesis!.current?.length ?? 0) > 280 ? "…" : ""}
+            </p>
+            {typeof project.thesis!.confidence === "number" && (
+              <span className="text-[10px] font-mono" style={{ color: "var(--tron-text-dim)" }}>
+                Confidence: {Math.round(project.thesis!.confidence * 100)}%
+              </span>
+            )}
+          </div>
+        )}
+        {hasContra && (
+          <div className="sm:col-span-2">
+            <div className="mb-1 text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-muted)" }}>Contradictions</div>
+            <p className="text-sm font-mono" style={{ color: "var(--tron-text)" }}>
+              {project.contradictions!.contradictions!.length} source disagreement(s)
+            </p>
+            <ul className="mt-1 space-y-1 text-xs" style={{ color: "var(--tron-text-dim)" }}>
+              {project.contradictions!.contradictions!.slice(0, 3).map((c, i) => {
+                const t = (c.summary || c.claim || "Conflict") ?? "";
+                return (
+                  <li key={i}>
+                    {t.slice(0, 80)}
+                    {t.length > 80 ? "…" : ""}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+        {hasFactCheck && (
+          <div>
+            <div className="mb-1 text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-muted)" }}>Fact-Check</div>
+            <div className="flex flex-wrap gap-1.5">
+              <span className="rounded px-1.5 py-0.5 font-mono text-[10px]" style={{ background: "color-mix(in srgb, var(--tron-success) 15%, transparent)", color: "var(--tron-text)" }}>
+                ✓ {project.fact_check_summary!.confirmed}
+              </span>
+              <span className="rounded px-1.5 py-0.5 font-mono text-[10px]" style={{ background: "color-mix(in srgb, var(--tron-error) 15%, transparent)", color: "var(--tron-text)" }}>
+                ✗ {project.fact_check_summary!.disputed}
+              </span>
+              <span className="rounded px-1.5 py-0.5 font-mono text-[10px]" style={{ background: "var(--tron-bg)", color: "var(--tron-text-dim)" }}>
+                ? {project.fact_check_summary!.unverifiable}
+              </span>
+            </div>
+            <p className="mt-0.5 text-[10px]" style={{ color: "var(--tron-text-dim)" }}>
+              {project.fact_check_summary!.total} facts checked
+            </p>
+          </div>
+        )}
+        {hasLedger && (
+          <div>
+            <div className="mb-1 text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-muted)" }}>Claim Ledger</div>
+            <div className="flex flex-wrap gap-1.5">
+              <span className="rounded px-1.5 py-0.5 font-mono text-[10px]" style={{ background: "color-mix(in srgb, var(--tron-success) 15%, transparent)", color: "var(--tron-text)" }}>
+                Verified {project.claim_ledger_summary!.verified}
+              </span>
+              <span className="rounded px-1.5 py-0.5 font-mono text-[10px]" style={{ background: "color-mix(in srgb, var(--tron-accent) 15%, transparent)", color: "var(--tron-text)" }}>
+                Auth. {project.claim_ledger_summary!.authoritative}
+              </span>
+              <span className="rounded px-1.5 py-0.5 font-mono text-[10px]" style={{ color: "var(--tron-text-dim)" }}>
+                Unver. {project.claim_ledger_summary!.unverified}
+              </span>
+              {(project.claim_ledger_summary!.in_contradiction ?? 0) > 0 && (
+                <span className="rounded px-1.5 py-0.5 font-mono text-[10px]" style={{ background: "color-mix(in srgb, var(--tron-amber, #f59e0b) 15%, transparent)", color: "var(--tron-text)" }}>
+                  Contr. {project.claim_ledger_summary!.in_contradiction}
+                </span>
+              )}
+            </div>
+            <p className="mt-0.5 text-[10px]" style={{ color: "var(--tron-text-dim)" }}>
+              {project.claim_ledger_summary!.total} claims · see Audit tab
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ── Inline Gate Metrics ─────────────────────────────────────── */
 function GateMetricsInline({
   project,
@@ -356,7 +494,7 @@ function GateMetricsInline({
     { label: "Verified Claims", value: metrics.verified_claim_count, minRequired: minVerified },
     { label: "Support Rate", value: `${Math.round(metrics.claim_support_rate * 100)}%`, minRequired: null as number | null },
     { label: "Source Reliability", value: `${Math.round(metrics.high_reliability_source_ratio * 100)}%`, minRequired: null as number | null },
-    { label: "Read Success", value: `${metrics.read_successes}/${metrics.read_attempts}`, minRequired: null as number | null },
+    { label: "Read Success (Explore + Focus)", value: `${metrics.read_successes}/${metrics.read_attempts}`, minRequired: null as number | null },
   ];
 
   return (
