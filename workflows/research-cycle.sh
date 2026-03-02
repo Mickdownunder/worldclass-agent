@@ -49,7 +49,15 @@ export RESEARCH_ENABLE_CLAIM_STATE_MACHINE="${RESEARCH_ENABLE_CLAIM_STATE_MACHIN
 export RESEARCH_ENABLE_CONTRADICTION_LINKING="${RESEARCH_ENABLE_CONTRADICTION_LINKING:-0}"
 export RESEARCH_ENABLE_FALSIFICATION_GATE="${RESEARCH_ENABLE_FALSIFICATION_GATE:-0}"
 
-# Don't send LLM API traffic through HTTP_PROXY (prevents 403 from proxy)
+IS_FOLLOWUP=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print('1' if d.get('hypothesis_to_test') else '0')" 2>/dev/null || echo "0")
+if [ "$IS_FOLLOWUP" = "1" ]; then
+  WORKERS=4
+else
+  WORKERS=8
+fi
+
+# Unset proxy so LLM calls connect directly (avoids "Temporary failure in name resolution" when proxy host is unreachable)
+unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy ALL_PROXY all_proxy 2>/dev/null || true
 export NO_PROXY="${NO_PROXY:+$NO_PROXY,}api.openai.com,openai.com,generativelanguage.googleapis.com"
 export no_proxy="${no_proxy:+$no_proxy,}api.openai.com,openai.com,generativelanguage.googleapis.com"
 
@@ -139,7 +147,7 @@ CYCLE_LOCK="$PROJ_DIR/.cycle.lock"
 exec 9>"$CYCLE_LOCK"
 if ! flock -n 9; then
   log "Another research-cycle is already running for $PROJECT_ID — skipping."
-  exit 0
+  exit 2
 fi
 
 progress_start() { python3 "$TOOLS/research_progress.py" start "$PROJECT_ID" "$1" 2>/dev/null || true; }
@@ -477,7 +485,11 @@ case "$PHASE" in
 
     QUERY_COUNT=$(python3 -c "import json; d=json.load(open('$ART/research_plan.json')); print(len(d.get('queries',[])), end='')" 2>/dev/null || echo "0")
     COMPLEXITY=$(python3 -c "import json; d=json.load(open('$ART/research_plan.json')); print(d.get('complexity','moderate'), end='')" 2>/dev/null || echo "moderate")
-    READ_LIMIT=$(python3 -c "c='$COMPLEXITY'; print(40 if c=='complex' else 25 if c=='moderate' else 15, end='')")
+    if [ "$IS_FOLLOWUP" = "1" ]; then
+      READ_LIMIT=10
+    else
+      READ_LIMIT=$(python3 -c "c='$COMPLEXITY'; print(40 if c=='complex' else 25 if c=='moderate' else 15, end='')")
+    fi
 
     progress_step "Searching $QUERY_COUNT targeted queries"
     python3 "$TOOLS/research_web_search.py" --queries-file "$ART/research_plan.json" --max-per-query 5 > "$ART/web_search_round1.json" 2>> "$CYCLE_LOG" || true
@@ -619,10 +631,10 @@ for p in paths:
 order_file.write_text("\n".join(filtered))
 FILTER_READ_URLS
 
-    log "Starting: parallel_reader explore (limit=$READ_LIMIT workers=8)"
+    log "Starting: parallel_reader explore (limit=$READ_LIMIT workers=$WORKERS)"
     read_attempts=0
     read_successes=0
-    READ_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/read_order_round1.txt" --read-limit "$READ_LIMIT" --workers 8 2>> "$CYCLE_LOG" | tail -1)
+    READ_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/read_order_round1.txt" --read-limit "$READ_LIMIT" --workers "$WORKERS" 2>> "$CYCLE_LOG" | tail -1)
     if [ -n "$READ_STATS" ]; then
       _add=$(echo "$READ_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null) || true
       read -r _a _s <<< "${_add:-0 0}"
@@ -670,7 +682,7 @@ Path('$ART/refinement_urls_to_read.txt').write_text('\n'.join(urls[:10]))
 "
       if [ -s "$ART/refinement_urls_to_read.txt" ]; then
         progress_step "Reading refinement sources"
-        REF_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/refinement_urls_to_read.txt" --read-limit 10 --workers 8 2>> "$CYCLE_LOG" | tail -1)
+        REF_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/refinement_urls_to_read.txt" --read-limit 10 --workers "$WORKERS" 2>> "$CYCLE_LOG" | tail -1)
         if [ -n "$REF_STATS" ]; then
           _add=$(echo "$REF_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null) || true
           read -r _a _s <<< "${_add:-0 0}"
@@ -709,7 +721,7 @@ Path('$ART/gap_urls_to_read.txt').write_text('\n'.join(urls[:10]))
 "
       if [ -s "$ART/gap_urls_to_read.txt" ] && [ "$SATURATION_DETECTED" != "1" ]; then
         progress_step "Reading gap-fill sources"
-        GAP_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/gap_urls_to_read.txt" --read-limit 10 --workers 8 2>> "$CYCLE_LOG" | tail -1)
+        GAP_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/gap_urls_to_read.txt" --read-limit 10 --workers "$WORKERS" 2>> "$CYCLE_LOG" | tail -1)
         if [ -n "$GAP_STATS" ]; then
           _add=$(echo "$GAP_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null) || true
           read -r _a _s <<< "${_add:-0 0}"
@@ -752,7 +764,7 @@ Path('$ART/depth_urls_to_read.txt').write_text('\n'.join(urls[:8]))
 "
         if [ -s "$ART/depth_urls_to_read.txt" ] && [ "$SATURATION_DETECTED" != "1" ]; then
           progress_step "Reading depth sources"
-          DEPTH_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/depth_urls_to_read.txt" --read-limit 8 --workers 8 2>> "$CYCLE_LOG" | tail -1)
+          DEPTH_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" explore --input-file "$ART/depth_urls_to_read.txt" --read-limit 8 --workers "$WORKERS" 2>> "$CYCLE_LOG" | tail -1)
           if [ -n "$DEPTH_STATS" ]; then
             _add=$(echo "$DEPTH_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null) || true
             read -r _a _s <<< "${_add:-0 0}"
@@ -909,7 +921,7 @@ for f in (proj_dir / "sources").glob("*.json"):
 ranked.sort()
 (art / "focus_read_order.txt").write_text("\n".join(path for _, path in ranked))
 RANK_FOCUS
-    FOCUS_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" focus --input-file "$ART/focus_read_order.txt" --read-limit 15 --workers 8 2>> "$CYCLE_LOG" | tail -1)
+    FOCUS_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" focus --input-file "$ART/focus_read_order.txt" --read-limit 15 --workers "$WORKERS" 2>> "$CYCLE_LOG" | tail -1)
     focus_read_attempts=0
     focus_read_successes=0
     focus_read_failures=0
@@ -1091,7 +1103,7 @@ for f in (proj_dir / "sources").glob("*.json"):
 ranked.sort()
 (art / "recovery_read_order.txt").write_text("\n".join(path for _, path in ranked))
 RANK_RECOVERY
-        RECOVERY_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" recovery --input-file "$ART/recovery_read_order.txt" --read-limit 10 --workers 8 2>> "$CYCLE_LOG" | tail -1)
+        RECOVERY_STATS=$(python3 "$TOOLS/research_parallel_reader.py" "$PROJECT_ID" recovery --input-file "$ART/recovery_read_order.txt" --read-limit 10 --workers "$WORKERS" 2>> "$CYCLE_LOG" | tail -1)
         recovery_reads=0
         recovery_successes=0
         [ -n "$RECOVERY_STATS" ] && read -r recovery_reads recovery_successes <<< "$(echo "$RECOVERY_STATS" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('read_attempts',0), d.get('read_successes',0))" 2>/dev/null)" 2>/dev/null || true
@@ -1355,6 +1367,71 @@ AEM_BLOCK
     export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
     # Multi-pass section-by-section synthesis (research-firm-grade report)
     timeout 1800 python3 "$TOOLS/research_synthesize.py" "$PROJECT_ID" > "$ART/report.md" 2>> "$CYCLE_LOG" || true
+    FM=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print((d.get('config') or {}).get('research_mode', 'standard'), end='')" 2>/dev/null || echo "standard")
+    # Discovery fallback: never die on synthesis formatting/runtime errors when evidence gate already passed
+    if [ "$FM" = "discovery" ]; then
+      if [ ! -s "$ART/report.md" ] || python3 -c "import pathlib; t=pathlib.Path('$ART/report.md').read_text(encoding='utf-8', errors='ignore') if pathlib.Path('$ART/report.md').exists() else ''; print(1 if '# Synthesis Error' in t else 0, end='')" 2>/dev/null | grep -q '^1$'; then
+        log "Discovery synth fallback: report missing or synthesis error — generating robust fallback report."
+        python3 - "$PROJ_DIR" "$ART" "$PROJECT_ID" "$QUESTION" <<'DISCOVERY_FALLBACK' 2>> "$CYCLE_LOG" || true
+import json, sys
+from pathlib import Path
+proj_dir, art_dir, project_id, question = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3], sys.argv[4]
+da = proj_dir / "discovery_analysis.json"
+brief = {}
+if da.exists():
+    try:
+        brief = (json.loads(da.read_text(encoding="utf-8", errors="replace")) or {}).get("discovery_brief", {}) or {}
+    except Exception:
+        brief = {}
+lines = [
+    "# Research Report (Discovery Fallback)",
+    "",
+    f"Project: `{project_id}`",
+    f"Question: {question}",
+    "",
+    "## Discovery Synthesis",
+]
+if brief.get("key_hypothesis"):
+    lines += ["", "### Key Hypothesis", "", str(brief.get("key_hypothesis"))]
+for title, key in [
+    ("Novel Connections", "novel_connections"),
+    ("Emerging Concepts", "emerging_concepts"),
+    ("Research Frontier", "research_frontier"),
+    ("Unexplored Opportunities", "unexplored_opportunities"),
+]:
+    vals = brief.get(key) or []
+    if isinstance(vals, list) and vals:
+        lines += ["", f"### {title}"]
+        for v in vals[:8]:
+            lines.append(f"- {v}")
+cl = proj_dir / "verify" / "claim_ledger.json"
+if cl.exists():
+    try:
+        ledger = json.loads(cl.read_text(encoding="utf-8", errors="replace"))
+        if isinstance(ledger, list) and ledger:
+            lines += ["", "## Claims (from verify)", ""]
+            for c in ledger[:15]:
+                t = (c.get("text") or "")[:120].replace("\n", " ")
+                if t:
+                    lines.append(f"- {t}")
+    except Exception:
+        pass
+pj = proj_dir / "project.json"
+if pj.exists():
+    try:
+        d = json.loads(pj.read_text())
+        qg = d.get("quality_gate") or {}
+        eg = qg.get("evidence_gate") or {}
+        metrics = eg.get("metrics") or {}
+        if metrics:
+            lines += ["", "## Verify metrics", "", f"- Findings: {metrics.get('findings_count', '—')}", f"- Sources: {metrics.get('source_count', '—')}", f"- Verified claims: {metrics.get('verified_claim_count', '—')}"]
+    except Exception:
+        pass
+lines += ["", "## Note", "", "Fallback generated because primary synthesis failed. Evidence artifacts remain available in findings/verify/discovery_analysis."]
+(art_dir / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+DISCOVERY_FALLBACK
+      fi
+    fi
     progress_step "Saving report & applying citations"
     python3 "$TOOLS/research_synthesize_postprocess.py" "$PROJECT_ID" "$ART" 2>> "$CYCLE_LOG" || true
     # Quality Gate: critic pass; up to 2 revision rounds if score below threshold
@@ -1363,7 +1440,6 @@ AEM_BLOCK
     if [ -n "${RESEARCH_MEMORY_CRITIC_THRESHOLD:-}" ]; then
       CRITIC_THRESHOLD="$RESEARCH_MEMORY_CRITIC_THRESHOLD"
     fi
-    FM=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print((d.get('config') or {}).get('research_mode', 'standard'), end='')" 2>/dev/null || echo "standard")
     if [ "$FM" = "frontier" ]; then
       CRITIC_THRESHOLD="0.50"
     fi
@@ -1423,7 +1499,30 @@ except Exception:
       SCORE=$(python3 -c "import json; d=json.load(open('$ART/critique.json')); print(d.get('score', 0.5), end='')" 2>/dev/null || echo "0.5")
     done
     progress_step "Critic done — score: $SCORE"
+    SUCCESS_PATH=0
     if python3 -c "exit(0 if float('$SCORE') < float('$CRITIC_THRESHOLD') else 1)" 2>/dev/null; then
+      if [ "$FM" = "discovery" ]; then
+        log "Discovery mode: critic score below threshold (score $SCORE, threshold $CRITIC_THRESHOLD) — advisory only, continuing."
+        python3 - "$PROJ_DIR" "$ART" "$SCORE" <<'QG_DISCOVERY_SOFT'
+import json, sys
+from pathlib import Path
+proj_dir, art, score = Path(sys.argv[1]), Path(sys.argv[2]), float(sys.argv[3])
+d = json.loads((proj_dir / "project.json").read_text())
+d.setdefault("quality_gate", {})["critic_score"] = score
+d["quality_gate"]["quality_gate_status"] = "advisory_low_score"
+d["quality_gate"]["fail_code"] = None
+d["status"] = "done"
+d["phase"] = "done"
+if (art / "critique.json").exists():
+  try:
+    c = json.loads((art / "critique.json").read_text())
+    d["quality_gate"]["weaknesses_addressed"] = c.get("weaknesses", [])[:5]
+  except Exception:
+    pass
+(proj_dir / "project.json").write_text(json.dumps(d, indent=2))
+QG_DISCOVERY_SOFT
+        SUCCESS_PATH=1
+      else
       log "Quality gate failed (score $SCORE, threshold $CRITIC_THRESHOLD) — status failed_quality_gate"
       python3 - "$PROJ_DIR" "$ART" "$SCORE" <<'QF_FAIL'
 import json, sys
@@ -1460,7 +1559,11 @@ OUTCOME_RECORD
       python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
       python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
       persist_v2_episode "failed"
+      fi
     else
+    SUCCESS_PATH=1
+    fi
+    if [ "$SUCCESS_PATH" = "1" ]; then
     # Persist quality_gate and critique to project (passed)
     python3 - "$PROJ_DIR" "$ART" "$SCORE" <<'QG'
 import json, sys
@@ -1575,7 +1678,21 @@ BRAIN_REFLECT
 esac
 
 # Check if this completion triggers a Council Meeting
-if [ "$PHASE" = "done" ] || [[ "$PHASE" == failed* ]] || [[ "$STATUS" == failed* ]] || [ "$STATUS" = "aem_blocked" ]; then
+STATUS=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('status',''), end='')" 2>/dev/null || echo "")
+PHASE_NOW=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('phase',''), end='')" 2>/dev/null || echo "$PHASE")
+FM_FINAL=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print((d.get('config') or {}).get('research_mode', 'standard'), end='')" 2>/dev/null || echo "standard")
+TRIGGER_COUNCIL=0
+if [ "$FM_FINAL" = "discovery" ]; then
+  # Discovery policy: Council only from successful parent completion
+  if [ "$STATUS" = "done" ] || [ "$PHASE_NOW" = "done" ] || [ "$PHASE" = "done" ]; then
+    TRIGGER_COUNCIL=1
+  fi
+else
+  if [ "$PHASE" = "done" ] || [ "$PHASE_NOW" = "done" ] || [ "$STATUS" = "done" ] || [[ "$PHASE" == failed* ]] || [[ "$STATUS" == failed* ]] || [ "$STATUS" = "aem_blocked" ]; then
+    TRIGGER_COUNCIL=1
+  fi
+fi
+if [ "$TRIGGER_COUNCIL" = "1" ]; then
   python3 "$OPERATOR_ROOT/tools/trigger_council.py" "$PROJECT_ID" >> "$CYCLE_LOG" 2>&1 || true
 fi
 

@@ -19,6 +19,8 @@ Runtime checks and targets for research quality and stability. **SOTA-Anspruch v
 
 Projects with these statuses do not reach `done`; they remain in a failed state until criteria are met or the project is reset.
 
+**Discovery mode (fail hardening):** In `research_mode=discovery`, the critic is **advisory** when the evidence gate has already passed: low critic score sets `quality_gate_status=advisory_low_score` and the run still completes as `done` (no `failed_quality_gate`). If primary synthesis fails or returns a synthesis error, a **fallback report** is generated from `discovery_analysis.json`, claim ledger, and verify metrics so Discovery always delivers a report when evidence exists. **Council** is triggered only when Discovery parent status is `done` (never when `failed_quality_gate` or other failed status). See `workflows/research-cycle.sh` (synthesize phase, SUCCESS_PATH, discovery fallback) and `tools/trigger_council.py` (discovery guard).
+
 ## SLOs
 
 | SLO | Target | Check |

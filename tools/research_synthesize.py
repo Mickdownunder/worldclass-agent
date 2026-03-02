@@ -232,8 +232,8 @@ def _build_claim_source_registry(
     lines = ["| # | Claim (short) | Source | URL | Date | Tier |", "| --- | --- | --- | --- | --- | --- |"]
     for i, c in enumerate(claim_ledger[:50], 1):
         text = (c.get("text") or "")[:60].replace("|", " ").replace("\n", " ")
-        urls = c.get("supporting_source_ids") or []
-        first_url = urls[0] if urls else ""
+        urls = normalize_to_strings(c.get("supporting_source_ids"))
+        first_url = (urls[0] or "").strip() if urls else ""
         title = (url_to_title.get(first_url) or "").strip()[:50].replace("|", " ")
         url_short = (first_url[:55] + "...") if len(first_url) > 55 else first_url
         date = url_to_date.get(first_url, "")
@@ -242,14 +242,44 @@ def _build_claim_source_registry(
     return "\n".join(lines)
 
 
+def _flatten_to_strings(value) -> list[str]:
+    """Recursively flatten mixed list/scalar values into clean strings."""
+    out: list[str] = []
+
+    def _walk(v):
+        if v is None:
+            return
+        if isinstance(v, (list, tuple, set)):
+            for item in v:
+                _walk(item)
+            return
+        if isinstance(v, dict):
+            try:
+                out.append(json.dumps(v, ensure_ascii=False)[:200])
+            except Exception:
+                out.append(str(v)[:200])
+            return
+        s = str(v).strip()
+        if s:
+            out.append(s)
+
+    _walk(value)
+    return out
+
+
+def normalize_to_strings(value: object) -> list[str]:
+    """Normalize nested claim/source fields to list[str] for safe join/iteration. Never raises."""
+    if value is None:
+        return []
+    return _flatten_to_strings(value)
+
+
 def _build_provenance_appendix(claim_ledger: list[dict]) -> str:
     """Tier 2a: Claim → source finding IDs for traceability. No LLM."""
     lines = ["| Claim ID | Source finding IDs |", "| --- | --- |"]
     for c in claim_ledger[:50]:
         cid = (c.get("claim_id") or "").strip()
-        fids = c.get("source_finding_ids") or []
-        # Ensure fids is a list of strings
-        fids_str = [str(x) if not isinstance(x, list) else str(x[0]) if x else "" for x in fids]
+        fids_str = normalize_to_strings(c.get("source_finding_ids"))
         lines.append(f"| {cid} | {', '.join(fids_str[:15])}{' …' if len(fids_str) > 15 else ''} |")
     return "\n".join(lines)
 
@@ -273,8 +303,7 @@ def _ensure_source_finding_ids(claim_ledger: list[dict], proj_path: Path) -> lis
         c = dict(c)
         if not c.get("source_finding_ids") and c.get("supporting_source_ids"):
             fids = []
-            for u in (c.get("supporting_source_ids") or []):
-                u = (u or "").strip()
+            for u in normalize_to_strings(c.get("supporting_source_ids")):
                 if u:
                     fids.extend(url_to_finding_ids.get(u, []))
             c["source_finding_ids"] = list(dict.fromkeys(fids))[:50]
@@ -286,8 +315,9 @@ def _build_ref_map(findings: list[dict], claim_ledger: list[dict]) -> tuple[dict
     """Build url -> ref number (1-based) and ordered list (url, title) for References."""
     cited = set()
     for c in claim_ledger:
-        for u in (c.get("supporting_source_ids") or []):
-            cited.add(u.strip())
+        for u in normalize_to_strings(c.get("supporting_source_ids")):
+            if u:
+                cited.add(u)
     for f in findings:
         u = (f.get("url") or "").strip()
         if u:
@@ -1165,9 +1195,9 @@ def run_synthesis(project_id: str) -> str:
     epistemic_profile = _epistemic_profile_from_ledger(claim_ledger)
     cited_urls: set[str] = set()
     for c in claim_ledger:
-        for u in (c.get("supporting_source_ids") or []):
-            if (u or "").strip():
-                cited_urls.add((u or "").strip())
+        for u in normalize_to_strings(c.get("supporting_source_ids")):
+            if u:
+                cited_urls.add(u)
     checkpoint_bodies = list(ck["bodies"]) if (ck and ck.get("bodies")) else []
     accumulated_summary: list[str] = []
     accumulated_claim_refs: set[str] = set()
@@ -1275,7 +1305,7 @@ def run_synthesis(project_id: str) -> str:
             status = "TENTATIVE"
         else:
             status = "UNVERIFIED"
-        n_src = len(c.get("supporting_source_ids") or [])
+        n_src = len(normalize_to_strings(c.get("supporting_source_ids")))
         parts.append(f"| {i} | {text}... | {status} | {n_src} |\n")
     parts.append("\n")
 

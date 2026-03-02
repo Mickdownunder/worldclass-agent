@@ -553,6 +553,7 @@ class Memory:
         params.append(limit)
         rows = [dict(r) for r in self._conn.execute(sql, tuple(params)).fetchall()]
         strategy_ids = list({r["from_node_id"] for r in rows if r.get("from_node_type") == "strategy_profile"})
+        episode_ids = list({r["to_node_id"] for r in rows if r.get("to_node_type") == "run_episode"})
         name_by_id = {}
         if strategy_ids:
             placeholders = ",".join("?" * len(strategy_ids))
@@ -561,11 +562,22 @@ class Memory:
                 strategy_ids,
             ).fetchall():
                 name_by_id[row["id"]] = {"name": row["name"], "domain": row["domain"]}
+        episode_question_by_id = {}
+        if episode_ids:
+            placeholders = ",".join("?" * len(episode_ids))
+            for row in self._conn.execute(
+                f"SELECT id, question, project_id FROM run_episodes WHERE id IN ({placeholders})",
+                episode_ids,
+            ).fetchall():
+                q = (row.get("question") or "").strip()[:60]
+                episode_question_by_id[row["id"]] = q or (row.get("project_id") or "")[:20]
         for r in rows:
             if r.get("from_node_type") == "strategy_profile":
                 info = name_by_id.get(r["from_node_id"]) or {}
                 r["strategy_name"] = info.get("name")
                 r["strategy_domain"] = info.get("domain")
+            if r.get("to_node_type") == "run_episode":
+                r["episode_question"] = episode_question_by_id.get(r["to_node_id"], "")
         return rows
 
     # ------------------------------------------------------------------

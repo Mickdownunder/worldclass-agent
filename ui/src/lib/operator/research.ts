@@ -55,6 +55,39 @@ function safeProjectPath(projectId: string): string {
   return resolved;
 }
 
+/** Connect Phase 2 artifact: entities + relations from connect/entity_graph.json (per project). */
+export interface EntityGraphEntity {
+  id?: string;
+  name?: string;
+  type?: string;
+}
+
+export interface EntityGraphRelation {
+  from?: string;
+  to?: string;
+  relation_type?: string;
+}
+
+export interface EntityGraphData {
+  entities: EntityGraphEntity[];
+  relations: EntityGraphRelation[];
+}
+
+export async function getEntityGraph(projectId: string): Promise<EntityGraphData | null> {
+  const projPath = safeProjectPath(projectId);
+  const graphPath = path.join(projPath, "connect", "entity_graph.json");
+  try {
+    await access(graphPath, constants.R_OK);
+  } catch {
+    return null;
+  }
+  const raw = await readFile(graphPath, "utf8");
+  const data = JSON.parse(raw) as { entities?: unknown[]; relations?: unknown[] };
+  const entities = Array.isArray(data.entities) ? (data.entities as EntityGraphEntity[]) : [];
+  const relations = Array.isArray(data.relations) ? (data.relations as EntityGraphRelation[]) : [];
+  return { entities, relations };
+}
+
 export interface ResearchProjectSummary {
   id: string;
   question: string;
@@ -200,6 +233,7 @@ export async function listResearchProjects(): Promise<ResearchProjectSummary[]> 
             readdir(path.join(projPath, "reports")).catch(() => [] as string[]),
           ]);
           const data = JSON.parse(raw) as Record<string, unknown>;
+          const has_master_dossier = await access(path.join(projPath, "MASTER_DOSSIER.md"), constants.F_OK).then(() => true).catch(() => false);
           return {
             id: typeof data.id === "string" ? data.id : e.name,
             question: typeof data.question === "string" ? data.question : "",
@@ -210,6 +244,8 @@ export async function listResearchProjects(): Promise<ResearchProjectSummary[]> 
             reports_count: reportFiles.filter((f) => f.endsWith(".md")).length,
             current_spend: typeof data.current_spend === "number" ? data.current_spend : 0,
             domain: typeof data.domain === "string" ? data.domain : "unknown",
+            parent_project_id: typeof data.parent_project_id === "string" ? data.parent_project_id : undefined,
+            has_master_dossier,
           };
         } catch {
           return null;
@@ -286,9 +322,47 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
       try {
         const daPath = path.join(projPath, "discovery_analysis.json");
         const daRaw = await readFile(daPath, "utf8");
-        const da = JSON.parse(daRaw) as { discovery_brief?: { novel_connections?: string[]; emerging_concepts?: string[]; research_frontier?: string[]; unexplored_opportunities?: string[]; key_hypothesis?: string } };
-        if (da?.discovery_brief) {
-          discoveryAnalysis = { discovery_brief: da.discovery_brief };
+        const da = JSON.parse(daRaw) as {
+          discovery_brief?: {
+            novel_connections?: unknown[];
+            emerging_concepts?: unknown[];
+            research_frontier?: unknown[];
+            unexplored_opportunities?: unknown[];
+            key_hypothesis?: unknown;
+          };
+        };
+        const toText = (v: unknown): string => {
+          if (v == null) return "";
+          if (typeof v === "string") return v.trim();
+          if (typeof v === "number" || typeof v === "boolean") return String(v);
+          if (Array.isArray(v)) return v.map((x) => toText(x)).filter(Boolean).join(" | ").trim();
+          if (typeof v === "object") {
+            const obj = v as Record<string, unknown>;
+            const parts = Object.entries(obj)
+              .map(([k, val]) => {
+                const s = toText(val);
+                return s ? `${k}: ${s}` : "";
+              })
+              .filter(Boolean);
+            return parts.join(" | ").trim();
+          }
+          return String(v).trim();
+        };
+        const toStringList = (arr: unknown): string[] =>
+          Array.isArray(arr)
+            ? arr.map((x) => toText(x)).filter((x) => !!x)
+            : [];
+        if (da?.discovery_brief && typeof da.discovery_brief === "object") {
+          const b = da.discovery_brief;
+          discoveryAnalysis = {
+            discovery_brief: {
+              novel_connections: toStringList(b.novel_connections),
+              emerging_concepts: toStringList(b.emerging_concepts),
+              research_frontier: toStringList(b.research_frontier),
+              unexplored_opportunities: toStringList(b.unexplored_opportunities),
+              key_hypothesis: toText(b.key_hypothesis),
+            },
+          };
         }
       } catch {
         // ignore

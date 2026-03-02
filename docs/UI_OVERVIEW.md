@@ -25,7 +25,7 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 
 ### Research-Übersicht (`/research`)
 
-- **Liste aller Research-Projekte:** Tabelle mit Projekt-ID, Frage, Status/Phase, Anzahl Findings, Anzahl Reports, Link „Öffnen“.
+- **Liste aller Research-Projekte:** Tabelle mit Projekt-ID, Frage, Status/Phase, Anzahl Findings, Anzahl Reports, Link „Öffnen“. Zusätzlich eine visuelle **Parent/Follow-up-Kennzeichnung** je Zeile (`Standalone`, `Parent project · N follow-ups` oder `Follow-up of <parent-id>`), damit Projektketten sofort erkennbar sind.
 - **Neues Projekt:** Formular **„Neues Research-Projekt“** (auf dieser Seite oder über den Button „Neues Research-Projekt“ im Command Center).
 
 **Formular „Neues Research-Projekt“ (Standard/Frontier):**
@@ -57,7 +57,7 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 
 - **Kopf:** Link „← Research“, Projekt-ID als Titel.
 - **Follow-up-Verknüpfung:** Unter der Projekt-ID werden angezeigt: **„Follow-up von [proj-…]“** (Link zum Parent), wenn das Projekt aus „Aus Next Steps neue Projekte erstellen“ erzeugt wurde; **„Follow-up-Projekte: [proj-…, …]“** (Links zu den Kindern), wenn von diesem Projekt Follow-ups existieren. Siehe `docs/FOLLOWUP_BUNDLE_AND_MEMORY.md` für Bündel und Wissensfluss.
-- **Infobox:** Frage, Status-Badge, **Research-Modus-Badge** (Standard / Frontier / Discovery), Phase, Anzahl Findings/Reports/Feedback, **Fortschrittsbalken** (explore → focus → connect → verify → synthesize). Mögliche Status u. a.: done, failed (Evidence Gate / Critic), **failed_conductor_tool_errors** (Conductor run_cycle nach mehreren Tool-Fehlern abgebrochen), **aem_blocked** (AEM enforce/strict blockiert Synthese).
+- **Infobox:** Frage, Status-Badge, **Research-Modus-Badge** (Standard / Frontier / Discovery), Phase, Anzahl Findings/Reports/Feedback, **Fortschrittsbalken** (explore → focus → connect → verify → synthesize). Mögliche Status u. a.: done, failed (Evidence Gate / Critic), **failed_conductor_tool_errors** (Conductor run_cycle nach mehreren Tool-Fehlern abgebrochen), **aem_blocked** (AEM enforce/strict blockiert Synthese). **Discovery:** Critic ist advisory (bei bestandenem Evidence Gate kein `failed_quality_gate`); Council wird nur bei `done` getriggert; bei Synthese-Fehler Fallback-Report.
 - **Evidence Gate (nach Verify):** Im Projekt-Detail wird bei vorhandenem Gate die Metrik **„Read Success (Explore + Focus)“** angezeigt; der Wert ist die **kumulierte** Read-Statistik aus `explore/read_stats.json` und `focus/read_stats.json` (wie vom Evidence Gate berechnet).
 - **Research Intelligence (neu):** Auf der Projekt-Detailseite wird ein Panel **„Research Intelligence“** angezeigt, sobald Daten vorliegen: **Token Governor** (Lane: cheap/mid/strong für Verify/Synthesize/Critic), **Thesis** (Connect-Phase), **Contradictions** (Anzahl + Vorschau), **Fact-Check** (confirmed/disputed/unverifiable), **Claim Ledger** (verified/authoritative/unverified/in_contradiction). Quelle: `project.json`, `thesis.json`, `contradictions.json`, `governor_lane.json`, `verify/fact_check.json`, `verify/claim_ledger.json` (über `getResearchProject`).
 - **Button „Nächste Phase starten“:** Nur sichtbar, wenn Status ≠ done. Startet **einen** research-cycle-Job für dieses Projekt.
@@ -123,6 +123,7 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 | Live-Fortschritt / Status | GET /api/research/projects/[id]/progress | Liest progress.json + events.jsonl, berechnet state (RUNNING/IDLE/STUCK/ERROR_LOOP/FAILED/DONE) |
 | Brain-Status (läuft/hängt) | GET /api/health (op healthcheck) | `brain.cycle` / `brain.reflect`: Anzahl, max_elapsed_sec; **stuck** wenn Cycle >10 min oder Reflect >5 min. Zeile im Command Center + Infobox auf Brain & Memory. System gilt als unhealthy wenn stuck. |
 | Feedback zu Finding | POST /api/research/feedback | research_feedback.py (Frage/Redirect/Type) |
+| Entity-Graph (Memory-Tab) | GET /api/research/projects/[id]/entity-graph | Liest `research/<id>/connect/entity_graph.json` für Research-Entity-Graph. |
 
 **Kostenkontrolle:** Alle Research-Kosten (LLM, Embeddings, APIs, Sub-Agenten) sind pro Projekt getrackt und sichtbar (Budget-Zeile + Tooltip mit `spend_breakdown`). Details und Garantie: `docs/COST_CONTROL.md`.
 
@@ -132,7 +133,7 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 
 ## 4. Rest der Nav (kurz)
 
-- **Memory & Graph** (`/memory`): Memory-Value-Karte, Stats (Ereignisse, Run-Episoden, Decisions, Reflections, Ø Qualität, Principles, Outcomes), Tabs: Activity (inkl. Konsolidierungs-Status und **Auto-Prompt-Optimierung** pro Domain, sofern in consolidation_last.json vorhanden), Runs (Run-Verlauf v2: was half/schadete, Strategy, Critic), Strategies (Profile & Policies), Principles, Sources, Brain (mit klickbarer Explainability), Utility (Top Memories), Graph (Strategy-Verknüpfungen), Plumber, Knowledge.
+- **Memory & Graph** (`/memory`): Memory-Value-Karte, Stats (Ereignisse, Run-Episoden, Decisions, Reflections, Ø Qualität, Principles, Outcomes), Tabs: Activity (inkl. Konsolidierungs-Status und **Auto-Prompt-Optimierung** pro Domain, sofern in consolidation_last.json vorhanden), Runs (Run-Verlauf v2: was half/schadete, Strategy, Critic), Strategies (Profile & Policies), Principles, Sources, Brain (mit klickbarer Explainability), Utility (Top Memories), **Graph** (zwei Modi: **Strategy–Episode** – welche Strategy in welchen Runs genutzt wurde, mit Episoden-Frage als Label; **Research Entity** – Entitäten und Relationen aus Connect pro Projekt, Daten aus `research/<id>/connect/entity_graph.json`), Plumber, Knowledge.
 - **Audit Logs** (`/jobs`): Job-Liste, Detail, Retry.
 - **Agents** (`/agents`): Übersicht **wer läuft und was eingesetzt wird**: Zwei Agent-Karten (Captain = Operator/Brain/Workflows, June = OpenClaw/Telegram) mit Kurzbeschreibung und „Einsatz/Nutzt“-Liste; Workflows nach Kategorie (Research, Brain & Qualität, Factory & Opportunity, Tools, Infrastruktur, Produkt, Sonstige) mit Tabellen und Badge **„Von UI startbar“** für Workflows aus `ALLOWED_WORKFLOWS`. Kurzreferenz zu Research, Brain, Tool-Workflows. Details: `docs/TOOL_AGENT_SYSTEM_AUDIT.md`.
 - **Insights** (`/research/insights`): Cross-Domain-Insights (Findings über Projekte hinweg).

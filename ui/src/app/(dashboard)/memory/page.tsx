@@ -65,8 +65,11 @@ export default async function MemoryPage() {
         {/* Memory Value Card */}
         <div className="tron-panel p-5 relative overflow-hidden flex flex-col justify-between">
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-tron-muted flex justify-between">
-              <span>Memory Value</span>
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-tron-muted flex items-center gap-2 justify-between">
+              <span className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: "var(--tron-accent)", boxShadow: "0 0 6px var(--tron-accent)" }} />
+                Memory Value
+              </span>
               <span className="text-[9px] opacity-70">applied Ø vs fallback Ø</span>
             </div>
             <div className="mt-2 text-4xl font-mono font-bold" style={{ color: "var(--tron-accent)" }}>
@@ -86,7 +89,8 @@ export default async function MemoryPage() {
         {/* Run Episodes Card */}
         <div className="tron-panel p-5 flex flex-col justify-between">
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-tron-muted">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-tron-muted flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-[#c678ff]" style={{ boxShadow: "0 0 6px #c678ff" }} />
               Run Episodes
             </div>
             <div className="mt-2 text-4xl font-mono font-bold text-[#c678ff]">

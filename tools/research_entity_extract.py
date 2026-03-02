@@ -40,15 +40,17 @@ def _llm_json(system: str, user: str, project_id: str = "") -> dict | list:
     return json.loads(text)
 
 
-def extract_entities(text: str, project_id: str = "") -> list[dict]:
-    """LLM-based entity extraction. Returns list of {name, type, properties}."""
+def extract_entities(text: str, project_id: str = "", question: str = "") -> list[dict]:
+    """LLM-based entity extraction. Returns list of {name, type, properties}.
+    We want everything that could be important for memory; question gives context."""
     if not (text or "").strip():
         return []
     text = text[:15000]
     system = """You are a research analyst. Extract named entities from the text.
 Return JSON: [{"name": "...", "type": "person|org|tech|concept|event", "properties": {"key": "value"}}]
-Use short canonical names. type must be one of: person, org, tech, concept, event."""
-    user = f"TEXT:\n{text}\n\nExtract entities. Return only valid JSON array."
+Use short canonical names. type must be one of: person, org, tech, concept, event.
+Include all entities that could be important for understanding or later recall."""
+    user = f"RESEARCH CONTEXT: {question.strip()}\n\nTEXT:\n{text}\n\nExtract all entities that might be important for memory. Return only valid JSON array." if (question or "").strip() else f"TEXT:\n{text}\n\nExtract entities. Return only valid JSON array."
     try:
         out = _llm_json(system, user, project_id=project_id)
     except Exception:
@@ -58,16 +60,18 @@ Use short canonical names. type must be one of: person, org, tech, concept, even
     return [x for x in out if isinstance(x, dict) and x.get("name") and x.get("type")]
 
 
-def extract_relations(entities: list[dict], text: str, project_id: str = "") -> list[dict]:
-    """Extract relations between entities. Returns list of {from, to, relation}."""
+def extract_relations(entities: list[dict], text: str, project_id: str = "", question: str = "") -> list[dict]:
+    """Extract relations between entities. Only link entities that are relevant to each other
+    so the graph strengthens related topics; avoid connecting tangents."""
     if not entities or not (text or "").strip():
         return []
     names = [e.get("name", "") for e in entities if e.get("name")]
     text = text[:12000]
     system = """You are a research analyst. Given entities and text, extract RELATIONS between them.
 Return JSON: [{"from": "entity name", "to": "entity name", "relation": "uses|competes_with|created_by|works_for|part_of|..."}]
-Only use entity names from the list. relation should be a short verb phrase."""
-    user = f"ENTITIES: {json.dumps(names)}\n\nTEXT:\n{text}\n\nExtract relations. Return only valid JSON array."
+Only use entity names from the list. relation should be a short verb phrase.
+Only create relations between entities that are meaningfully relevant to each other (and to the research topic when given); do not connect tangential or unrelated items."""
+    user = f"RESEARCH QUESTION (connect only topics relevant to each other / to this): {question.strip()}\n\nENTITIES: {json.dumps(names)}\n\nTEXT:\n{text}\n\nExtract relations between entities that are relevant to each other. Return only valid JSON array." if (question or "").strip() else f"ENTITIES: {json.dumps(names)}\n\nTEXT:\n{text}\n\nExtract relations between entities that are relevant to each other. Return only valid JSON array."
     try:
         out = _llm_json(system, user, project_id=project_id)
     except Exception:
@@ -83,6 +87,8 @@ def run_for_project(project_id: str) -> dict:
     if not proj_path.exists():
         return {"error": f"Project not found: {project_id}"}
     ensure_project_layout(proj_path)
+    project = load_project(proj_path)
+    question = (project.get("question") or "").strip()
     findings = _load_findings(proj_path)
     if not findings:
         return {"entities": 0, "relations": 0, "mentions": 0}
@@ -107,7 +113,7 @@ def run_for_project(project_id: str) -> dict:
     done = 0
     with ThreadPoolExecutor(max_workers=10) as executor:
         future_to_item = {
-            executor.submit(extract_entities, excerpt, project_id): (i, f, excerpt)
+            executor.submit(extract_entities, excerpt, project_id, question): (i, f, excerpt)
             for i, f, excerpt in work
         }
         for future in as_completed(future_to_item):
@@ -144,7 +150,7 @@ def run_for_project(project_id: str) -> dict:
     entities_list = list(name_to_id.keys())
     if entities_list:
         progress_step(project_id, "Knowledge graph: extracting relations between entities")
-        rels = extract_relations([{"name": n} for n in entities_list], combined, project_id=project_id)
+        rels = extract_relations([{"name": n} for n in entities_list], combined, project_id=project_id, question=question)
         for r in rels:
             a, b = name_to_id.get(r["from"]), name_to_id.get(r["to"])
             if a and b:

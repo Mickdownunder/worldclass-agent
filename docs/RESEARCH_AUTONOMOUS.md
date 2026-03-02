@@ -149,6 +149,14 @@ Optional per Cron (z. B. nachts):
 
 ---
 
+## Discovery mode (Fail-Härtung)
+
+- **Council:** Wird nur ausgelöst, wenn das Parent-Projekt **done** ist (nicht bei `failed_quality_gate` o. ä.). Siehe `tools/trigger_council.py` und `workflows/research-cycle.sh` (TRIGGER_COUNCIL nur bei `status=done` für Discovery).
+- **Synthesize:** Bei Fehler oder leerem Report wird ein **Fallback-Report** aus `discovery_analysis.json`, Claim-Ledger und Verify-Metriken erzeugt; der Lauf endet trotzdem mit Report.
+- **Critic:** Bei Discovery und bestandenem Evidence Gate ist der Critic **advisory** (niedriger Score → `quality_gate_status=advisory_low_score`, Projekt wird trotzdem als `done` abgeschlossen).
+
+---
+
 ## Kurz
 
 | Ziel | Vorgehen |
