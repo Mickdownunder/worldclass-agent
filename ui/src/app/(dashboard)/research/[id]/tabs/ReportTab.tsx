@@ -26,6 +26,22 @@ export function ReportTab({
   loading,
   onSwitchToCritique,
 }: ReportTabProps) {
+  const toText = (v: unknown): string => {
+    if (v == null) return "";
+    if (typeof v === "string") return v;
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    if (Array.isArray(v)) return v.map((x) => toText(x)).filter(Boolean).join(" | ");
+    if (typeof v === "object") {
+      try {
+        return Object.entries(v as Record<string, unknown>)
+          .map(([k, val]) => `${k}: ${toText(val)}`)
+          .join(" | ");
+      } catch {
+        return String(v);
+      }
+    }
+    return String(v);
+  };
   const [pdfMessage, setPdfMessage] = useState<string | null>(null);
   const [pdfGenerating, setPdfGenerating] = useState(false);
   const [masterPdfLoading, setMasterPdfLoading] = useState(false);
@@ -87,7 +103,7 @@ export function ReportTab({
             {critiqueExpanded && (
               <ul className="mt-1 space-y-0.5 pl-2 text-[11px] border-l-2" style={{ color: "var(--tron-text-dim)", borderColor: "var(--tron-error, #e53e3e)" }}>
                 {critiquePreview.weaknesses.slice(0, 2).map((w, i) => (
-                  <li key={i} className="truncate max-w-full" title={w}>{w}</li>
+                  <li key={i} className="truncate max-w-full" title={toText(w)}>{toText(w)}</li>
                 ))}
                 {onSwitchToCritique && (
                   <li className="mt-1">

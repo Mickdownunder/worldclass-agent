@@ -1,6 +1,6 @@
 /** Shared types for research detail tabs and tab components. */
 
-export type TabId = "report" | "critique" | "findings" | "sources" | "verlauf" | "audit";
+export type TabId = "report" | "critique" | "findings" | "sources" | "verlauf" | "audit" | "knowledge_map";
 
 export interface Critique {
   score: number;

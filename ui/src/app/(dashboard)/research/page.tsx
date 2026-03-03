@@ -29,6 +29,15 @@ function formatDate(iso: string): string {
 
 export default async function ResearchPage() {
   const projects = await listResearchProjects();
+  const childCountByParent = new Map<string, number>();
+  for (const p of projects) {
+    if (p.parent_project_id) {
+      childCountByParent.set(
+        p.parent_project_id,
+        (childCountByParent.get(p.parent_project_id) ?? 0) + 1
+      );
+    }
+  }
 
   const active  = projects.filter(
     (p) =>
@@ -117,6 +126,8 @@ export default async function ResearchPage() {
             {projects.map((p) => {
               const progress = phaseProgress(p.phase);
               const isActive = !["done", "failed", "cancelled"].includes(p.status) && !p.status.startsWith("failed_");
+              const followupCount = childCountByParent.get(p.id) ?? 0;
+              const parentShort = p.parent_project_id?.replace("proj-", "") ?? "";
               return (
                 <Link
                   key={p.id}
@@ -128,6 +139,13 @@ export default async function ResearchPage() {
                   <div className="min-w-0">
                     <p className="truncate font-medium leading-tight" style={{ color: "var(--tron-text)" }}>
                       {p.question || "Untitled"}
+                    </p>
+                    <p className="truncate text-[10px] mt-0.5" style={{ color: "var(--tron-text-dim)" }}>
+                      {p.parent_project_id
+                        ? `Follow-up of ${parentShort}`
+                        : followupCount > 0
+                          ? `Parent project · ${followupCount} follow-up${followupCount === 1 ? "" : "s"}`
+                          : "Standalone"}
                     </p>
                     <ProjectRowProgress
                       projectId={p.id}

@@ -12,7 +12,7 @@ export default async function DashboardLayout({
       <Nav />
       {/* Offset main content by sidebar width on desktop */}
       <main className="md:ml-60 min-h-screen">
-        <div className="px-6 py-6 max-w-7xl">{children}</div>
+        <div className="px-6 py-6">{children}</div>
       </main>
     </div>
   );

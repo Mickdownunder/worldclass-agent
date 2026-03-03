@@ -99,6 +99,11 @@ function AgentCard({ agent }: { agent: AgentInfo }) {
               {agent.details}
             </p>
           )}
+          {agent.location && (
+            <p className="mt-1.5 text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
+              <span className="font-medium">Läuft auf:</span> {agent.location}
+            </p>
+          )}
           <div className="mt-4 rounded-lg border py-2.5 px-3" style={{ borderColor: "var(--tron-border)", background: "var(--tron-bg)" }}>
             <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--tron-text-dim)" }}>
               {isCaptain ? "Einsatz" : "Nutzt"}

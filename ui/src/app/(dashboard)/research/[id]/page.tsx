@@ -38,6 +38,23 @@ function formatDate(iso: string): string {
   }
 }
 
+function renderTextValue(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) return v.map((x) => renderTextValue(x)).filter(Boolean).join(" | ");
+  if (typeof v === "object") {
+    try {
+      return Object.entries(v as Record<string, unknown>)
+        .map(([k, val]) => `${k}: ${renderTextValue(val)}`)
+        .join(" | ");
+    } catch {
+      return String(v);
+    }
+  }
+  return String(v);
+}
+
 export default async function ResearchProjectPage({
   params,
 }: {
@@ -93,7 +110,7 @@ export default async function ResearchProjectPage({
             <h1 className="text-lg font-semibold leading-snug" style={{ color: "var(--tron-text)" }}>
               {project.question || "Untitled Research"}
             </h1>
-            <LiveRefresh enabled={isActive} intervalMs={5000} showIndicator={true} projectId={project.id} />
+            <LiveRefresh enabled={isActive || project.council_status === "active" || project.council_status === "waiting"} intervalMs={5000} showIndicator={true} projectId={project.id} />
             <div className="w-full mt-1 flex flex-wrap items-center gap-2">
               <span className="font-mono text-[11px]" style={{ color: "var(--tron-text-dim)" }}>
                 {id}
@@ -356,7 +373,7 @@ export default async function ResearchProjectPage({
                 <div className="mb-1 text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-muted)" }}>Novel connections</div>
                 <ul className="list-disc pl-4 text-sm space-y-0.5" style={{ color: "var(--tron-text)" }}>
                   {project.discovery_analysis.discovery_brief.novel_connections!.slice(0, 5).map((nc, i) => (
-                    <li key={i}>{nc}</li>
+                    <li key={i}>{renderTextValue(nc)}</li>
                   ))}
                 </ul>
               </div>
@@ -366,7 +383,7 @@ export default async function ResearchProjectPage({
                 <div className="mb-1 text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-muted)" }}>Emerging concepts</div>
                 <ul className="list-disc pl-4 text-sm space-y-0.5" style={{ color: "var(--tron-text)" }}>
                   {project.discovery_analysis.discovery_brief.emerging_concepts!.slice(0, 5).map((ec, i) => (
-                    <li key={i}>{ec}</li>
+                    <li key={i}>{renderTextValue(ec)}</li>
                   ))}
                 </ul>
               </div>
@@ -376,7 +393,7 @@ export default async function ResearchProjectPage({
                 <div className="mb-1 text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-muted)" }}>Research frontier</div>
                 <ul className="list-disc pl-4 text-sm space-y-0.5" style={{ color: "var(--tron-text)" }}>
                   {project.discovery_analysis.discovery_brief.research_frontier!.slice(0, 5).map((rf, i) => (
-                    <li key={i}>{rf}</li>
+                    <li key={i}>{renderTextValue(rf)}</li>
                   ))}
                 </ul>
               </div>
@@ -386,7 +403,7 @@ export default async function ResearchProjectPage({
                 <div className="mb-1 text-[10px] font-semibold uppercase" style={{ color: "var(--tron-text-muted)" }}>Unexplored opportunities</div>
                 <ul className="list-disc pl-4 text-sm space-y-0.5" style={{ color: "var(--tron-text)" }}>
                   {project.discovery_analysis.discovery_brief.unexplored_opportunities!.slice(0, 5).map((uo, i) => (
-                    <li key={i}>{uo}</li>
+                    <li key={i}>{renderTextValue(uo)}</li>
                   ))}
                 </ul>
               </div>
@@ -394,7 +411,7 @@ export default async function ResearchProjectPage({
           </div>
           {project.discovery_analysis.discovery_brief.key_hypothesis && (
             <blockquote className="mt-4 pl-4 border-l-2 text-sm" style={{ borderColor: "var(--tron-accent)", color: "var(--tron-text-muted)" }}>
-              {project.discovery_analysis.discovery_brief.key_hypothesis}
+              {renderTextValue(project.discovery_analysis.discovery_brief.key_hypothesis)}
             </blockquote>
           )}
         </div>

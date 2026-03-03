@@ -15,6 +15,22 @@ function scoreColor(score: number): string {
 }
 
 export function CritiqueTab({ critique, loading }: CritiqueTabProps) {
+  const toText = (v: unknown): string => {
+    if (v == null) return "";
+    if (typeof v === "string") return v;
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    if (Array.isArray(v)) return v.map((x) => toText(x)).filter(Boolean).join(" | ");
+    if (typeof v === "object") {
+      try {
+        return Object.entries(v as Record<string, unknown>)
+          .map(([k, val]) => `${k}: ${toText(val)}`)
+          .join(" | ");
+      } catch {
+        return String(v);
+      }
+    }
+    return String(v);
+  };
   if (loading) return <LoadingSpinner />;
   if (!critique) {
     return (
@@ -63,7 +79,7 @@ export function CritiqueTab({ critique, loading }: CritiqueTabProps) {
           <ul className="space-y-2 list-disc list-inside text-sm" style={{ color: "var(--tron-text)" }}>
             {weaknesses.map((w, i) => (
               <li key={i} className="border-l-2 pl-3 py-0.5" style={{ borderColor: "var(--tron-error, #e53e3e)" }}>
-                {w}
+                {toText(w)}
               </li>
             ))}
           </ul>
@@ -78,7 +94,7 @@ export function CritiqueTab({ critique, loading }: CritiqueTabProps) {
           <ul className="space-y-2 list-disc list-inside text-sm" style={{ color: "var(--tron-text)" }}>
             {suggestions.map((s, i) => (
               <li key={i} className="border-l-2 pl-3 py-0.5" style={{ borderColor: "var(--tron-accent)" }}>
-                {s}
+                {toText(s)}
               </li>
             ))}
           </ul>
@@ -93,7 +109,7 @@ export function CritiqueTab({ critique, loading }: CritiqueTabProps) {
           <ul className="space-y-2 list-disc list-inside text-sm" style={{ color: "var(--tron-text)" }}>
             {strengths.map((s, i) => (
               <li key={i} className="border-l-2 pl-3 py-0.5" style={{ borderColor: "var(--tron-success)" }}>
-                {s}
+                {toText(s)}
               </li>
             ))}
           </ul>

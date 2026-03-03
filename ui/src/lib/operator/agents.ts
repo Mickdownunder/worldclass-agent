@@ -11,6 +11,8 @@ export interface AgentInfo {
   description?: string;
   source: "openclaw" | "workflow";
   details?: string;
+  /** Wo der Agent läuft (z. B. "Server" für June). */
+  location?: string;
 }
 
 /** Human-readable names and short descriptions for operator workflows */
@@ -58,7 +60,7 @@ export async function listAgents(): Promise<AgentInfo[]> {
     details: "Operator – der andere Agent neben June.",
   });
 
-  // June = OpenClaw, der Agent mit dem du in Telegram schreibst
+  // June = OpenClaw, der Agent mit dem du in Telegram schreibst; läuft auf dem Server
   try {
     const identityPath = path.join(AGENT_WORKSPACE, "IDENTITY.md");
     const raw = await readFile(identityPath, "utf-8");
@@ -71,6 +73,7 @@ export async function listAgents(): Promise<AgentInfo[]> {
       description: creatureMatch?.[1]?.trim() ?? "Der Agent, mit dem du in Telegram schreibst.",
       source: "openclaw",
       details: vibeMatch?.[1]?.trim(),
+      location: "Server (OpenClaw Gateway + Operator; nicht auf dem Rechner)",
     });
   } catch {
     out.push({
@@ -78,6 +81,7 @@ export async function listAgents(): Promise<AgentInfo[]> {
       name: "June",
       description: "Der Agent, mit dem du in Telegram schreibst.",
       source: "openclaw",
+      location: "Server (OpenClaw Gateway + Operator; nicht auf dem Rechner)",
     });
   }
 

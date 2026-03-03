@@ -9,6 +9,7 @@ import { FindingsTab } from "./tabs/FindingsTab";
 import { SourcesTab } from "./tabs/SourcesTab";
 import { HistoryTab } from "./tabs/HistoryTab";
 import { AuditTab } from "./tabs/AuditTab";
+import { EntityGraphTab } from "./tabs/EntityGraphTab";
 
 export function ResearchDetailTabs({
   projectId,
@@ -34,6 +35,7 @@ export function ResearchDetailTabs({
     sources: false,
     verlauf: false,
     audit: false,
+    knowledge_map: false,
   });
   const [slideoverTarget, setSlideoverTarget] = useState<{ open: boolean; claimId?: string }>({ open: false });
 
@@ -101,6 +103,7 @@ export function ResearchDetailTabs({
 
   const tabs: { id: TabId; label: string }[] = [
     { id: "report", label: "Report" },
+    { id: "knowledge_map", label: "Knowledge Map" },
     { id: "critique", label: "Critique" },
     { id: "findings", label: "Findings" },
     { id: "sources", label: "Sources" },
@@ -145,6 +148,7 @@ export function ResearchDetailTabs({
             onSwitchToCritique={() => setActiveTab("critique")}
           />
         )}
+        {activeTab === "knowledge_map" && <EntityGraphTab projectId={projectId} />}
         {activeTab === "critique" && (
           <CritiqueTab critique={critique} loading={loading.critique} />
         )}

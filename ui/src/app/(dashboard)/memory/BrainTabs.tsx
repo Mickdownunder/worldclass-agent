@@ -176,7 +176,7 @@ export function BrainTabs({ memorySummary }: { memorySummary: MemorySummary | nu
           <UtilityTab utility={utility} loading={loading.utility} />
         )}
         {activeTab === "graph" && (
-          <GraphTab edges={graphEdges} loading={loading.graph} />
+          <GraphTab />
         )}
         {activeTab === "plumber" && <PlumberTab />}
         {activeTab === "knowledge" && (
