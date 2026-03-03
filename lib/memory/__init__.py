@@ -229,20 +229,55 @@ class Memory:
     def record_retrieval(self, memory_type: str, memory_id: str, context_key: str | None = None) -> None:
         self._utility.record_retrieval(memory_type, memory_id, context_key=context_key)
 
-    def retrieve_with_utility(self, query: str, memory_type: str, k: int = 10, context_key: str | None = None) -> list[dict]:
+    def retrieve_with_utility(
+        self,
+        query: str,
+        memory_type: str,
+        k: int = 10,
+        context_key: str | None = None,
+        domain: str | None = None,
+    ) -> list[dict]:
         """Phase 1: semantic/keyword candidates. Phase 2: utility re-rank.
         Findings are filtered by query (keyword match) so discovery and standard runs
         only get topic-relevant prior knowledge. When RESEARCH_MEMORY_SEMANTIC=1 and
-        OPENAI_API_KEY is set, principles/findings with embedding_json use cosine similarity."""
+        OPENAI_API_KEY is set, principles/findings with embedding_json use cosine similarity.
+        Optional (flagged): RESEARCH_MEMORY_PRINCIPLE_DOMAIN_FILTER=1 enables a domain-first
+        principle retrieval with global fallback to preserve recall."""
         ctx = (context_key or query or "").strip().lower()[:180]
         try:
             lam = float(_os.environ.get("RESEARCH_MEMORY_UTILITY_LAMBDA", "0.6"))
         except Exception:
             lam = 0.6
         lam = max(0.1, min(0.9, lam))
+        principle_domain_filter_enabled = _os.environ.get("RESEARCH_MEMORY_PRINCIPLE_DOMAIN_FILTER", "0") == "1"
+        normalized_domain = (domain or "").strip().lower()
         query_embedding = _embed_query(query or "")
         if memory_type == "principle":
-            candidates = self._principles.search(query, limit=k * 5, query_embedding=query_embedding)
+            if principle_domain_filter_enabled and normalized_domain:
+                scoped_limit = max(k * 4, k + 2)
+                candidates = self._principles.search(
+                    query,
+                    limit=scoped_limit,
+                    domain=normalized_domain,
+                    query_embedding=query_embedding,
+                )
+                min_scoped = max(2, min(k, 4))
+                if len(candidates) < min_scoped:
+                    global_candidates = self._principles.search(
+                        query,
+                        limit=max(k * 5, k + 6),
+                        query_embedding=query_embedding,
+                    )
+                    seen_ids = {c.get("id") for c in candidates if c.get("id")}
+                    for gc in global_candidates:
+                        gid = gc.get("id")
+                        if gid and gid in seen_ids:
+                            continue
+                        candidates.append(gc)
+                        if len(candidates) >= (k * 5):
+                            break
+            else:
+                candidates = self._principles.search(query, limit=k * 5, query_embedding=query_embedding)
         elif memory_type == "reflection":
             candidates = search_module.search_reflections(self._conn, query, limit=k * 5)
         elif memory_type == "finding":
@@ -261,7 +296,13 @@ class Memory:
             if not isinstance(similarity, (int, float)):
                 similarity = 0.5
             c["similarity_score"] = float(similarity)
-            c["combined_score"] = round((1.0 - lam) * float(similarity) + lam * float(util_score), 6)
+            combined = (1.0 - lam) * float(similarity) + lam * float(util_score)
+            if memory_type == "principle" and principle_domain_filter_enabled and normalized_domain:
+                domain_val = str(c.get("domain") or "").strip().lower()
+                if domain_val == normalized_domain:
+                    # Small boost to prioritize same-domain principles, with global fallback retained.
+                    combined += 0.05
+            c["combined_score"] = round(min(1.0, combined), 6)
 
         candidates.sort(key=lambda x: x.get("combined_score", 0), reverse=True)
         selected = candidates[:k]

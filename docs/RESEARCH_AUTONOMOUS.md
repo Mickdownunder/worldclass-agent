@@ -109,6 +109,7 @@ Wenn in der Umgebung **HTTP_PROXY/HTTPS_PROXY** gesetzt ist (z. B. Cursor/IDE), 
 Feature-Flag und Verhalten:
 
 - `RESEARCH_MEMORY_V2_ENABLED=1` aktiviert Strategy-Memory-Injection im Planner/Cycle.
+- `RESEARCH_MEMORY_PRINCIPLE_DOMAIN_FILTER=1` aktiviert bei Principle-Retrieval eine **Domain-First** Auswahl (nur für Principles), mit globalem Fallback wenn zu wenig Treffer gefunden werden. Default `0` (aus).
 - Planner schreibt `research/proj-*/memory_strategy.json` (gewählte Strategy + Regeln).
 - Cycle nutzt daraus konservative Guards:
   - `relevance_threshold` (hart begrenzt auf `0.50..0.65`)
@@ -154,6 +155,7 @@ Optional per Cron (z. B. nachts):
 - **Council:** Wird nur ausgelöst, wenn das Parent-Projekt **done** ist (nicht bei `failed_quality_gate` o. ä.). Siehe `tools/trigger_council.py` und `workflows/research-cycle.sh` (TRIGGER_COUNCIL nur bei `status=done` für Discovery).
 - **Synthesize:** Bei Fehler oder leerem Report wird ein **Fallback-Report** aus `discovery_analysis.json`, Claim-Ledger und Verify-Metriken erzeugt; der Lauf endet trotzdem mit Report.
 - **Critic:** Bei Discovery und bestandenem Evidence Gate ist der Critic **advisory** (niedriger Score → `quality_gate_status=advisory_low_score`, Projekt wird trotzdem als `done` abgeschlossen).
+- **Experiment (strict gate):** Nach Synthesize läuft der Sandbox-Experiment-Loop. In Discovery ist standardmäßig `RESEARCH_STRICT_EXPERIMENT_GATE=1`: Es wird nur dann `failed_experiment_gate` gesetzt, wenn die Sandbox abgestürzt ist (crash/timeout). Läuft der Code durch, geht der Lauf auf `done`—egal ob Hypothese bestätigt, widerlegt oder unklar; negative Ergebnisse sind gültige Entdeckungen.
 
 ---
 

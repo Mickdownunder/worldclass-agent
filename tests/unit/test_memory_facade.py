@@ -74,6 +74,40 @@ def test_retrieve_with_utility_candidate_without_id_skipped(memory_db_path):
         assert results[0].get("description") == "no id field"
 
 
+def test_retrieve_with_utility_principles_domain_first_with_fallback(memory_db_path, monkeypatch):
+    """Flag on: same-domain principles are prioritized; unknown domain falls back to global results."""
+    monkeypatch.setenv("RESEARCH_MEMORY_PRINCIPLE_DOMAIN_FILTER", "1")
+    mem = Memory(db_path=str(memory_db_path))
+    pid_m = mem.insert_principle(
+        "guiding",
+        "Use evidence layering and source triangulation in manufacturing investigations",
+        "proj-1",
+        domain="manufacturing",
+    )
+    mem.insert_principle(
+        "guiding",
+        "Use evidence layering and source triangulation in biomedical investigations",
+        "proj-1",
+        domain="biomedical",
+    )
+    prioritized = mem.retrieve_with_utility(
+        "evidence triangulation investigations",
+        "principle",
+        k=5,
+        domain="manufacturing",
+    )
+    fallback = mem.retrieve_with_utility(
+        "evidence triangulation investigations",
+        "principle",
+        k=5,
+        domain="unknown-domain",
+    )
+    mem.close()
+    assert prioritized
+    assert prioritized[0]["id"] == pid_m
+    assert fallback
+
+
 def test_list_memory_decisions_v2(memory_db_path):
     """Memory facade exposes memory v2 decision log rows with parsed details."""
     mem = Memory(db_path=str(memory_db_path))

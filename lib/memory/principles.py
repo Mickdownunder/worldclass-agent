@@ -59,7 +59,7 @@ class Principles:
         sql = "SELECT * FROM strategic_principles"
         if where:
             sql += " WHERE " + " AND ".join(where)
-        rows = self._conn.execute(sql).fetchall()
+        rows = self._conn.execute(sql, tuple(params)).fetchall()
         by_id: dict[str, dict] = {}
         for r in rows:
             d = dict(r)

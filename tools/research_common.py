@@ -291,7 +291,13 @@ def get_principles_for_research(question: str, domain: str | None = None, limit:
         from lib.memory import Memory
         with Memory() as mem:
             if question and hasattr(mem, "retrieve_with_utility"):
-                principles = mem.retrieve_with_utility(question, "principle", k=limit, context_key=question)
+                principles = mem.retrieve_with_utility(
+                    question,
+                    "principle",
+                    k=limit,
+                    context_key=question,
+                    domain=(domain or None),
+                )
             else:
                 principles = mem.list_principles(limit=limit, domain=domain or "")
         if not principles:

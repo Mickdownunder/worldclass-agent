@@ -26,13 +26,14 @@ def main() -> None:
         sys.exit(0)
     d = json.loads(project_json.read_text())
     question = (d.get("question") or "").strip()
+    domain = (d.get("domain") or "").strip().lower() or None
     if not question:
         sys.exit(0)
     try:
         from lib.memory import Memory
         mem = Memory()
-        principles = mem.retrieve_with_utility(question, "principle", k=5, context_key=question)
-        findings = mem.retrieve_with_utility(question, "finding", k=10, context_key=question)
+        principles = mem.retrieve_with_utility(question, "principle", k=5, context_key=question, domain=domain)
+        findings = mem.retrieve_with_utility(question, "finding", k=10, context_key=question, domain=domain)
         
         lateral_principles = []
         research_mode = d.get("config", {}).get("research_mode", "standard")
