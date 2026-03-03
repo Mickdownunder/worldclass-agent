@@ -51,6 +51,8 @@ cd /root/operator
 
 **AEM (Full AEM):** Nach Verify (Evidence Gate bestanden) läuft optional das AEM-Settlement (`research_aem_settlement.py`). Artefakte liegen unter `research/proj-*/claims/`, `attacks/`, `questions/`, `market/`, `portfolio/`, `policy/`. Fehler im AEM-Block blockieren Synthese nur bei `AEM_ENFORCEMENT_MODE=strict`.
 
+**Discovery-Modus:** Bei `research_mode=discovery` gilt: Synthese-Fehler oder leerer Report führen zu einem **Fallback-Report** (aus discovery_analysis, Claim-Ledger, Verify-Metriken); der Critic ist **advisory** (kein `failed_quality_gate` nur wegen niedrigem Score). Zusätzlich läuft ein **strikter Experiment-Gate** (`RESEARCH_STRICT_EXPERIMENT_GATE=1`): `failed_experiment_gate` nur bei Sandbox-Crash/Timeout; läuft der Code durch, geht der Lauf auf `done` (positive wie negative Ergebnisse zählen als Entdeckung). Der Research Council wird nur bei Parent-Status **done** getriggert, nie bei failed-Status. Siehe `docs/RESEARCH_AUTONOMOUS.md` und `docs/RESEARCH_QUALITY_SLO.md`.
+
 ---
 
 ### 3. Brain & Memory: Daten fließen

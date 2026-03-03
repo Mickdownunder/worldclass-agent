@@ -59,6 +59,7 @@ Stand: System vollständig durchdrungen. Bewertung: Sinnhaftigkeit, Wert, Lücke
 ### 3.2 June (OpenClaw)
 
 - **Rolle:** Telegram-Agent; startet Research (`/research-start`, `/research-cycle`, `/research-go`), sendet Feedback (`/research-feedback`). Nutzt `op` für Jobs und direkte Tool-Aufrufe (z.B. `research_feedback.py`).
+- **Wo June läuft:** June läuft **auf dem Server** (dem Host, auf dem auch Operator/UI und OpenClaw Gateway laufen), **nicht** auf dem lokalen Rechner. Konfiguration: `~/.openclaw/` auf diesem Server; Workspace: `AGENT_WORKSPACE` (Default `/root/agent/workspace`). Identity: `agent/workspace/IDENTITY.md` (Name: June). Für vollen Systemzugriff auf **diesem Server**: `tools.exec.host: "gateway"`, `tools.exec.security: "full"` in `openclaw.json` und `exec-approvals.json` mit `security: "full"` (dann kann June beliebige Befehle auf dem Server ausführen).
 - **Bewertung:** **Sinnvoll und wertvoll.** Einheitliche Schnittstelle für Research und Feedback; Konsistenz mit UI (beide nutzen dieselben Workflows/Tools).
 
 ### 3.3 Research Conductor

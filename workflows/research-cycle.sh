@@ -1615,12 +1615,74 @@ MANIFEST_UPDATE
     progress_step "PDF generated"
 
     # Core 10 Phase 2: Trial & Error Experiment Loop
+    EXPERIMENT_GATE_OK=1
     if [ "${RESEARCH_ENABLE_EXPERIMENT_LOOP:-1}" = "1" ]; then
       progress_start "experiment"
       progress_step "Running Trial & Error Sandbox Experiment"
       log "Starting: research_experiment"
       timeout 900 python3 "$TOOLS/research_experiment.py" "$PROJECT_ID" >> "$CYCLE_LOG" 2>&1 || true
       log "Done: research_experiment"
+      # Discovery: nur bei Sandbox-Crash/Timeout failen. Positive und negative Ergebnisse
+      # (Hypothese bestätigt / widerlegt / unklar) sind gültige Entdeckungen → done.
+      if [ "${RESEARCH_STRICT_EXPERIMENT_GATE:-1}" = "1" ] && [ "$FM" = "discovery" ]; then
+        EXPERIMENT_GATE_OK=$(python3 - "$PROJ_DIR" <<'EXPERIMENT_GATE_CHECK'
+import json, sys
+from pathlib import Path
+proj_dir = Path(sys.argv[1])
+exp_path = proj_dir / "experiment.json"
+if not exp_path.exists():
+    print("0", end="")
+    sys.exit(0)
+try:
+    d = json.loads(exp_path.read_text(encoding="utf-8", errors="replace"))
+except Exception:
+    print("0", end="")
+    sys.exit(0)
+gate = d.get("gate") if isinstance(d.get("gate"), dict) else {}
+execution_success = gate.get("execution_success")
+if execution_success is None:
+    execution_success = d.get("success", False)
+# Discovery: pass whenever the experiment ran (no crash/timeout). Negative results are valid discoveries.
+print("1" if execution_success else "0", end="")
+EXPERIMENT_GATE_CHECK
+)
+        if [ "$EXPERIMENT_GATE_OK" != "1" ]; then
+          log "Experiment gate failed: sandbox execution failed (crash/timeout). Marking failed_experiment_gate."
+          python3 - "$PROJ_DIR" <<'EXPERIMENT_GATE_FAIL'
+import json, sys
+from pathlib import Path
+from datetime import datetime, timezone
+proj_dir = Path(sys.argv[1])
+p = proj_dir / "project.json"
+d = json.loads(p.read_text(encoding="utf-8", errors="replace"))
+exp = {}
+try:
+    exp = json.loads((proj_dir / "experiment.json").read_text(encoding="utf-8", errors="replace"))
+except Exception:
+    exp = {}
+reasons = []
+if isinstance(exp.get("gate"), dict):
+    reasons = exp["gate"].get("reasons") or []
+d["status"] = "failed_experiment_gate"
+d["phase"] = "failed"
+d.setdefault("quality_gate", {})["quality_gate_status"] = "failed"
+d["quality_gate"]["fail_code"] = "failed_experiment_gate"
+d["quality_gate"]["experiment_gate"] = {
+    "status": "failed",
+    "objective_met": bool(exp.get("objective_met", False)),
+    "reasons": reasons[:8],
+}
+d["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+p.write_text(json.dumps(d, indent=2), encoding="utf-8")
+EXPERIMENT_GATE_FAIL
+          python3 "$TOOLS/research_abort_report.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
+          python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
+          python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
+          persist_v2_episode "failed"
+          progress_done
+          exit 0
+        fi
+      fi
     fi
 
     # Store verified findings in Memory DB for cross-domain learning (non-fatal)

@@ -778,13 +778,16 @@ def _record_progress_error(project_id: str, e: BaseException) -> None:
     try:
         from tools.research_progress import error as progress_error
         name = type(e).__name__
-        if "Proxy" in name or "403" in str(e):
+        msg = str(e)
+        if "Proxy" in name or "403" in msg:
             code = "proxy_forbidden"
         elif "Connection" in name or "APIConnection" in name:
             code = "openai_connection"
+        elif "name resolution" in msg or "Errno -3" in msg or "NameResolutionError" in name:
+            code = "openai_connection"
         else:
             code = "verify_error"
-        progress_error(project_id, code, str(e)[:500])
+        progress_error(project_id, code, msg[:500])
     except Exception:
         pass
 

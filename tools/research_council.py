@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """
-The Principal Investigator (PI) Agent.
+The Principal Investigator (PI) Agent - V2 (Recursive Planning & Synthesis).
 Reads the parent report and all child reports + experiment.json files.
-Generates a Master Dossier and reports back to the Brain (Memory).
+Evaluates if the research question is solved.
+If NOT SOLVED: spawns new children (Research Missions) and waits.
+If SOLVED: Generates Master Dossier and reports back to Brain.
 """
 import json
 import os
 import sys
+import subprocess
 from pathlib import Path
 
 OPERATOR_ROOT = Path(os.environ.get("OPERATOR_ROOT", "/root/operator"))
@@ -15,6 +18,7 @@ from tools.research_common import llm_call, model_for_lane
 from lib.memory import Memory
 
 RESEARCH = OPERATOR_ROOT / "research"
+MAX_GENERATIONS = 3
 
 def load_text(path: Path, max_len=15000):
     if not path.is_file(): return ""
@@ -30,6 +34,65 @@ def load_json(path: Path):
     except Exception:
         return {}
 
+def spawn_followups(parent_id: str, missions: list):
+    """Spawns follow-up agents asynchronously and links them to the parent."""
+    for mission in missions:
+        q = mission.get("question", "").strip()
+        h = mission.get("hypothesis_to_test", "").strip()
+        if not q: continue
+        
+        print(f"Spawning follow-up: {q[:60]}...")
+        # Discovery gate: no verified_claim_count requirement (research often can't verify claims)
+        req = json.dumps({"question": q, "hypothesis_to_test": h, "research_mode": "discovery"})
+        
+        # 1. Create and run init job (synchronously, it's fast)
+        cmd_init = ["python3", str(OPERATOR_ROOT/"bin"/"op"), "job", "new", "--workflow", "research-init", "--request", req]
+        r1 = subprocess.run(cmd_init, capture_output=True, text=True, cwd=str(OPERATOR_ROOT))
+        if r1.returncode != 0:
+            print(f"Init failed: {r1.stderr}")
+            continue
+            
+        job_init_dir = Path(r1.stdout.strip().split("\n")[-1])
+        env = os.environ.copy()
+        subprocess.run(["python3", str(OPERATOR_ROOT/"bin"/"op"), "run", str(job_init_dir)], env=env, cwd=str(OPERATOR_ROOT), capture_output=True)
+        
+        # Get project ID
+        pid_file = job_init_dir / "artifacts" / "project_id.txt"
+        if not pid_file.exists():
+            print("Failed to read project_id from follow-up init.")
+            continue
+            
+        child_id = pid_file.read_text().strip()
+        
+        # 2. Link child to parent
+        c_json_path = RESEARCH / child_id / "project.json"
+        if c_json_path.exists():
+            try:
+                c_data = json.loads(c_json_path.read_text())
+                c_data["parent_project_id"] = parent_id
+                c_json_path.write_text(json.dumps(c_data, indent=2))
+            except:
+                pass
+                
+        # 3. Run the complete cycle asynchronously
+        run_until_done_script = OPERATOR_ROOT / "tools" / "run-research-cycle-until-done.sh"
+        if run_until_done_script.exists():
+            subprocess.Popen(
+                ["nohup", "bash", str(run_until_done_script), child_id],
+                cwd=str(OPERATOR_ROOT), start_new_session=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        else:
+            # Fallback to single run if script is missing
+            cmd_cycle = ["python3", str(OPERATOR_ROOT/"bin"/"op"), "job", "new", "--workflow", "research-cycle", "--request", child_id]
+            r2 = subprocess.run(cmd_cycle, capture_output=True, text=True, cwd=str(OPERATOR_ROOT))
+            if r2.returncode == 0:
+                job_cycle_dir = r2.stdout.strip().split("\n")[-1]
+                subprocess.Popen(["nohup", "python3", str(OPERATOR_ROOT/"bin"/"op"), "run", job_cycle_dir], 
+                                 cwd=str(OPERATOR_ROOT), start_new_session=True, 
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"-> Dispatched agent {child_id}")
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: research_council.py <parent_id>")
@@ -40,134 +103,215 @@ def main():
     if not parent_dir.is_dir():
         sys.exit(1)
         
-    print(f"--- CONVENING RESEARCH COUNCIL FOR {parent_id} ---")
+    p_json = load_json(parent_dir / "project.json")
+    gen = p_json.get("council_generation", 0) + 1
+    print(f"--- CONVENING RESEARCH COUNCIL FOR {parent_id} (Generation {gen}) ---")
+    
+    # Update generation
+    p_json["council_generation"] = gen
+    (parent_dir / "project.json").write_text(json.dumps(p_json, indent=2))
     
     # 1. Gather Parent Data
     parent_report = ""
     reports_dir = parent_dir / "reports"
     if reports_dir.is_dir():
-        mds = sorted(reports_dir.glob("*.md"), reverse=True)
+        mds = sorted(reports_dir.glob("report_*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
         if mds: parent_report = load_text(mds[0], 25000)
-    
     parent_exp = load_json(parent_dir / "experiment.json")
     
-    # 2. Gather Child Data
+    # 2. Gather Child Data (from all past generations)
     children_data = []
     for d in RESEARCH.glob("proj-*"):
         if not d.is_dir() or d.name == parent_id: continue
-        p_json = load_json(d / "project.json")
-        if p_json.get("parent_project_id") == parent_id:
-            child_report = ""
-            c_reports = d / "reports"
-            if c_reports.is_dir():
-                cmds = sorted(c_reports.glob("*.md"), reverse=True)
-                if cmds: child_report = load_text(cmds[0], 15000)
+        c_json = load_json(d / "project.json")
+        if c_json.get("parent_project_id") == parent_id:
+            # We only look at terminal ones (or failed ones)
+            if c_json.get("status") not in ["done", "cancelled", "abandoned", "aem_blocked"] and not c_json.get("status", "").startswith("failed"):
+                continue
             
-            child_exp = load_json(d / "experiment.json")
+            c_report = ""
+            c_reports_dir = d / "reports"
+            if c_reports_dir.is_dir():
+                cmds = sorted(c_reports_dir.glob("report_*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+                if cmds: c_report = load_text(cmds[0], 15000)
+            
+            c_exp = load_json(d / "experiment.json")
             children_data.append({
                 "id": d.name,
-                "question": p_json.get("question", ""),
-                "report": child_report,
-                "experiment": child_exp
+                "question": c_json.get("question", ""),
+                "hypothesis": c_json.get("hypothesis_to_test", ""),
+                "report": c_report,
+                "experiment": c_exp
             })
             
-    if not children_data:
-        print("No children found. Council adjourned.")
-        sys.exit(0)
-        
     # 3. Build Prompt for PI Agent
-    sys_prompt = (
-        "You are the Principal Investigator (PI) of an elite AI research lab. "
-        "You assigned a main research topic, and then sent out field agents to do follow-up deep dives and code experiments. "
-        "Your goal is to write the ultimate 'Bundle Synthesis Dossier' (MASTER_DOSSIER.md). "
-        "Do NOT just summarize. Cross-pollinate the findings. If Agent A found a problem in an experiment, and Agent B's theory solves it, highlight that. "
-        "Produce a highly professional, cohesive markdown report (min 800 words) that represents the pinnacle of this research bundle. "
-        "Also, at the very end of your response, output a single JSON block wrapped in ```json ... ``` containing 1-3 'mega_principles' we should remember for the future."
-    )
+    sys_prompt = f"""You are the Principal Investigator (PI) of an elite AI research lab.
+You are orchestrating an autonomous recursive research loop.
+
+You will receive:
+1. The Main Parent Research Report
+2. Reports and Sandbox Experiment Logs from your Field Agents (if any have run yet).
+
+You are in Generation {gen} of max {MAX_GENERATIONS} generations.
+
+YOUR TASK:
+Evaluate the evidence. Is the overarching research question fully solved, proven, and validated by robust sandbox experiments?
+
+IF NO (Needs more research):
+- Write an 'Interim Synthesis' summarizing what we know and what failed.
+- Define 1 to 4 specific 'Research Missions' for the next generation of Field Agents. Each mission must have a concrete `hypothesis_to_test` for the sandbox.
+
+IF YES (Solved) OR if Generation >= {MAX_GENERATIONS}:
+- Write the ultimate 'Bundle Synthesis Dossier' (MASTER_DOSSIER.md).
+- Cross-pollinate the findings. Don't just summarize; synthesize new architectural rules.
+- Define 1-3 'mega_principles'.
+
+FORMAT REQUIREMENT:
+Write your full markdown report first (Interim or Master Dossier).
+At the very end of your output, append a single JSON block wrapped in ```json ... ``` exactly like this:
+{{
+  "status": "SOLVED" or "NEEDS_MORE_RESEARCH",
+  "mega_principles": ["Principle 1", "Principle 2"], 
+  "next_missions": [
+    {{
+      "question": "Topic for Agent to research",
+      "hypothesis_to_test": "Concrete thesis the agent MUST prove via Python sandbox code"
+    }}
+  ]
+}}
+"""
     
     user_content = f"# PARENT RESEARCH\n\n## Main Report\n{parent_report[:10000]}\n\n## Main Experiment Logs\n{json.dumps(parent_exp, indent=2)}\n\n"
-    user_content += "# FIELD AGENT REPORTS\n\n"
+    user_content += f"# FIELD AGENT REPORTS (Past Generations)\n\n"
     
-    for i, c in enumerate(children_data):
-        user_content += f"## Agent {i+1} (Topic: {c['question']})\n"
-        user_content += f"### Report Excerpt\n{c['report'][:8000]}\n"
-        if c['experiment']:
-            user_content += f"### Sandbox Experiment Results\n{json.dumps(c['experiment'], indent=2)}\n"
-        user_content += "\n"
+    if children_data:
+        for i, c in enumerate(children_data):
+            user_content += f"## Agent {i+1} ({c['id']})\nTopic: {c['question']}\nHypothesis: {c['hypothesis']}\n"
+            user_content += f"### Report Excerpt\n{c['report'][:8000]}\n"
+            if c['experiment']:
+                user_content += f"### Sandbox Experiment Results\n{json.dumps(c['experiment'], indent=2)}\n"
+            user_content += "\n"
+    else:
+        user_content += "No field agents have run yet. This is your first evaluation of the parent report.\n"
         
-    user_content += "\nNow, synthesize the Master Dossier and include the JSON block at the end."
+    user_content += "\nNow, synthesize the Dossier (Interim or Master) and include the JSON block at the end."
     
     print("Calling PI Agent (LLM)...")
     try:
-        model = model_for_lane("synthesize") # usually a smart model
-        res = llm_call(model, sys_prompt, user_content, project_id=parent_id)
-        text = res.text or ""
+        model = model_for_lane("synthesize")
+        import time
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Use a slightly less constrained model if the strongest is failing repeatedly
+                current_model = model if attempt == 0 else "gemini-2.5-flash"
+                res = llm_call(current_model, sys_prompt, user_content, project_id=parent_id)
+                text = res.text or ""
+                break
+            except Exception as e:
+                if "503" in str(e) and attempt < max_retries - 1:
+                    print(f"LLM overloaded (503), retrying in 30s with fallback model... (Attempt {attempt+1}/{max_retries})")
+                    time.sleep(30)
+                else:
+                    raise e
     except Exception as e:
         print(f"LLM call failed: {e}")
-        # Reset status so it can be retried
         p_json = load_json(parent_dir / "project.json")
         p_json["council_status"] = "failed"
         (parent_dir / "project.json").write_text(json.dumps(p_json, indent=2))
         sys.exit(1)
         
-    # Parse output
+    # 4. Parse output
     dossier_text = text
-    principles = []
+    parsed_json = {}
     
     import re
     json_match = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL)
     if json_match:
         try:
-            data = json.loads(json_match.group(1))
-            principles = data.get("mega_principles", [])
+            parsed_json = json.loads(json_match.group(1))
             dossier_text = text[:json_match.start()].strip()
         except Exception as e:
-            print(f"Failed to parse JSON principles: {e}")
+            print(f"Failed to parse JSON instructions from PI: {e}")
             
-    # Save Master Dossier
-    (parent_dir / "MASTER_DOSSIER.md").write_text(dossier_text, encoding="utf-8")
-
-    # Validate core thesis in sandbox (extract claim → run Python in Docker → append result to dossier)
-    try:
-        import subprocess
-        r = subprocess.run(
-            [sys.executable, str(OPERATOR_ROOT / "tools" / "research_council_sandbox.py"), parent_id],
-            cwd=str(OPERATOR_ROOT),
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        if r.returncode != 0:
-            print(f"Council sandbox validation failed (non-fatal): {r.stderr or r.stdout}")
-        elif r.stdout:
-            print(r.stdout.strip())
-    except Exception as e:
-        print(f"Council sandbox validation failed (non-fatal): {e}")
-
-    # Report to Brain
-    if principles:
+    decision_status = parsed_json.get("status", "SOLVED")
+    
+    if gen >= MAX_GENERATIONS:
+        decision_status = "SOLVED"
+        
+    if decision_status == "SOLVED":
+        # WRITE MASTER DOSSIER
+        (parent_dir / "MASTER_DOSSIER.md").write_text(dossier_text, encoding="utf-8")
+        
+        # Sandbox Validation
         try:
-            mem = Memory()
-            domain = load_json(parent_dir / "project.json").get("domain", "general")
-            for p in principles:
-                desc = p if isinstance(p, str) else str(p.get("description", p))
-                mem.insert_principle(
-                    domain=domain,
-                    description=desc,
-                    evidence="Derived from Research Council cross-pollination of multiple runs and sandbox experiments.",
-                    confidence=0.9,
-                    principle_type="council_synthesis"
-                )
-            mem.close()
-            print("Successfully injected mega-principles into Brain.")
+            r = subprocess.run(
+                [sys.executable, str(OPERATOR_ROOT / "tools" / "research_council_sandbox.py"), parent_id],
+                cwd=str(OPERATOR_ROOT), capture_output=True, text=True, timeout=120
+            )
+            if r.returncode != 0:
+                print(f"Council sandbox validation failed (non-fatal): {r.stderr or r.stdout}")
+            elif r.stdout:
+                print(r.stdout.strip())
         except Exception as e:
-            print(f"Brain injection failed: {e}")
+            print(f"Council sandbox validation failed (non-fatal): {e}")
+
+        # Report to Brain
+        principles = parsed_json.get("mega_principles", [])
+        council_result = {"brain_injected": False, "brain_error": None}
+        if principles:
+            try:
+                mem = Memory()
+                domain = p_json.get("domain", "general")
+                evidence_json = json.dumps([f"Derived from Recursive Research Council (Gen {gen}) synthesis."])
+                for p in principles:
+                    desc = p if isinstance(p, str) else str(p.get("description", p))
+                    mem.insert_principle(
+                        principle_type="council_synthesis",
+                        description=desc,
+                        source_project_id=parent_id,
+                        domain=domain,
+                        evidence_json=evidence_json,
+                        metric_score=0.9,
+                    )
+                mem.close()
+                council_result["brain_injected"] = True
+                print("Successfully injected mega-principles into Brain.")
+            except Exception as e:
+                council_result["brain_error"] = str(e)[:500]
+                print(f"Brain injection failed: {e}")
+        try:
+            (parent_dir / "council_result.json").write_text(
+                json.dumps(council_result, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            pass
+                
+        # Update Status
+        p_json = load_json(parent_dir / "project.json")
+        p_json["council_status"] = "done"
+        (parent_dir / "project.json").write_text(json.dumps(p_json, indent=2))
+        print("Research Council concluded successfully with MASTER_DOSSIER!")
+        
+    else:
+        # NEEDS MORE RESEARCH -> Spawn Gen X+1
+        interim_file = parent_dir / f"INTERIM_DOSSIER_GEN_{gen}.md"
+        interim_file.write_text(dossier_text, encoding="utf-8")
+        missions = parsed_json.get("next_missions", [])
+        
+        if not missions:
+            # Fallback if LLM failed to provide missions but asked for more research
+            missions = [{"question": "Investigate remaining edge cases", "hypothesis_to_test": "Edge cases can be solved."}]
             
-    # Update Status
-    p_json = load_json(parent_dir / "project.json")
-    p_json["council_status"] = "done"
-    (parent_dir / "project.json").write_text(json.dumps(p_json, indent=2))
-    print("Research Council concluded successfully!")
+        print(f"Council demands {len(missions)} new missions. Writing Interim Dossier {gen} and waiting.")
+        
+        # Update Status
+        p_json = load_json(parent_dir / "project.json")
+        p_json["council_status"] = "waiting"
+        (parent_dir / "project.json").write_text(json.dumps(p_json, indent=2))
+        
+        spawn_followups(parent_id, missions)
+        print("Council adjourned until next generation finishes.")
 
 if __name__ == "__main__":
     main()

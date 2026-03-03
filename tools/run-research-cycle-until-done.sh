@@ -77,6 +77,14 @@ if prog.exists():
   job_dir=$($OP job new --workflow research-cycle --request "$PROJECT_ID")
   run_exit=0
   $OP run "$job_dir" || run_exit=$?
+  # Exit 2 = skipped (e.g. lock held by another cycle). Do not count toward stuck-phase.
+  if [ "$run_exit" -eq 2 ]; then
+    echo "[Run $run] Skipped (another cycle running). Not counting toward stuck." >&2
+    run=$((run - 1))
+    if [ "$same_phase_count" -gt 0 ]; then same_phase_count=$((same_phase_count - 1)); fi
+    sleep 2
+    continue
+  fi
   if [ "$run_exit" -ne 0 ]; then
     echo "[Run $run] Job exited with $run_exit — continuing next run (phase may have advanced)." >&2
   else

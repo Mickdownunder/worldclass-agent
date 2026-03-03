@@ -38,6 +38,7 @@ if question.startswith("{"):
         research_mode = (payload.get("research_mode") or "standard").strip().lower()
         if research_mode not in ("standard", "frontier", "discovery"):
             research_mode = "standard"
+        hypothesis = payload.get("hypothesis_to_test", "").strip()
     except Exception:
         pass
 project = {
@@ -48,8 +49,10 @@ project = {
   "playbook_id": "general",
   "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
   "domain": "general",
-  "config": {"max_sources": 50, "max_findings": 200, "research_mode": research_mode}
+  "config": {"max_sources": 15, "max_findings": 50, "research_mode": research_mode}
 }
+if 'hypothesis' in locals() and hypothesis:
+    project["hypothesis_to_test"] = hypothesis
 (p / "project.json").write_text(json.dumps(project, indent=2))
 (p / "questions.json").write_text(json.dumps({"open": [question], "answered": []}, indent=2))
 (p / "thesis.json").write_text(json.dumps({"current": "", "confidence": 0.0, "evidence": []}, indent=2))

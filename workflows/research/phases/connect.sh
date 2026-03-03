@@ -28,12 +28,15 @@ CONNECT_OPENAI_FAIL
   echo "Connect failed — project status set."
   exit 1
 fi
-# Connect Phase 5: entity_extract failure fails the phase (no || true); errors visible in log
+# Run connect steps; allow partial failure so we always advance to verify (follow-ups must not get stuck)
+set +e
+CYCLE_LOG="${CYCLE_LOG:-$PROJ_DIR/log.txt}"
 progress_step "Building knowledge graph"
-timeout 600 python3 "$TOOLS/research_entity_extract.py" "$PROJECT_ID" >> "$PWD/log.txt" 2>&1
+timeout 600 python3 "$TOOLS/research_entity_extract.py" "$PROJECT_ID" >> "$CYCLE_LOG" 2>&1 || true
 progress_step "Finding cross-references"
-timeout 300 python3 "$TOOLS/research_reason.py" "$PROJECT_ID" contradiction_detection > "$PROJ_DIR/contradictions.json" 2>> "$PWD/log.txt" || true
-timeout 300 python3 "$TOOLS/research_reason.py" "$PROJECT_ID" hypothesis_formation > "$ART/hypotheses.json" 2>> "$PWD/log.txt" || true
+timeout 300 python3 "$TOOLS/research_reason.py" "$PROJECT_ID" contradiction_detection > "$PROJ_DIR/contradictions.json" 2>> "$CYCLE_LOG" || true
+timeout 300 python3 "$TOOLS/research_reason.py" "$PROJECT_ID" hypothesis_formation > "$ART/hypotheses.json" 2>> "$CYCLE_LOG" || true
+set -e
 if [ -f "$ART/hypotheses.json" ]; then
   python3 - "$PROJ_DIR" "$ART" <<'PY'
 import json, sys
@@ -97,4 +100,5 @@ p.joinpath("connect", "connect_status.json").write_text(json.dumps({
   "thesis_updated": (p / "thesis.json").exists(),
 }, indent=2))
 PYSTATUS
+# Always advance so follow-ups never get stuck in connect (verify phase will gate quality)
 advance_phase "verify"

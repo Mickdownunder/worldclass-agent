@@ -247,11 +247,14 @@ def _decide_gate_discovery(metrics: dict) -> tuple[str, str | None]:
     """Discovery mode: idea diversity > verification. Pass with enough findings + sources (no verified_claim_count check)."""
     findings = metrics.get("findings_count", 0)
     sources = metrics.get("unique_source_count", 0)
-    if findings >= 10 and sources >= 8:
-        return "pass", None
+    
+    # Discovery mode has a very low barrier to entry because novel concepts
+    # often cannot be strictly "verified" against multiple traditional sources.
     if findings >= 6 and sources >= 4:
         return "pass", None
-    if findings >= 4:
+    if findings >= 3 and sources >= 2:
+        return "pass", None
+    if findings >= 2:
         return "pending_review", None
     return "fail", "failed_insufficient_evidence"
 

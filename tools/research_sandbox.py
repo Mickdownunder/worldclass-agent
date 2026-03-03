@@ -2,6 +2,10 @@
 """
 Research Sandbox: Secure execution of AI-generated Python code.
 Runs code in an isolated Docker container without network access.
+
+Default image includes numpy and scipy so agents can run typical report experiments.
+Build once: docker build -t operator-research-sandbox:latest -f docker/research-sandbox/Dockerfile docker/research-sandbox/
+Override: RESEARCH_SANDBOX_IMAGE=myimage:tag
 """
 
 import subprocess
@@ -30,36 +34,35 @@ def run_in_sandbox(code: str, timeout_seconds: int = 30) -> SandboxResult:
     - read-only volume mount for the code
     """
     
+    image = os.environ.get("RESEARCH_SANDBOX_IMAGE", "operator-research-sandbox:latest")
+    fallback_image = "python:3.11-slim"
+
     # We write the code to a temporary directory
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
         script_path = tmp_path / "script.py"
         script_path.write_text(code, encoding="utf-8")
         
-        # Build the docker run command
-        cmd = [
-            "docker", "run",
-            "--rm",                      # Remove container after run
-            "--network", "none",         # No internet
-            "--memory", "512m",          # Memory limit
-            "--cpus", "1.0",             # CPU limit
-            "-v", f"{tmp_path}:/app:ro", # Mount tmpdir to /app as read-only
-            "-w", "/app",                # Set working directory
-            "python:3.11-slim",          # Lightweight Python image
-            "python", "script.py"
-        ]
+        def run_with_image(img: str):
+            cmd = [
+                "docker", "run",
+                "--rm", "--network", "none", "--memory", "512m", "--cpus", "1.0",
+                "-v", f"{tmp_path}:/app:ro", "-w", "/app",
+                img, "python", "script.py"
+            ]
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_seconds)
         
         try:
-            # Run the subprocess with a timeout slightly higher than docker's internal execution time
-            process = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds
-            )
+            process = run_with_image(image)
+            # If image missing, fall back to stdlib-only so sandbox still works
+            if process.returncode != 0 and process.stderr and (
+                "no such image" in process.stderr.lower() or "cannot find image" in process.stderr.lower()
+                or "pull access denied" in process.stderr.lower() or "repository does not exist" in process.stderr.lower()
+            ):
+                process = run_with_image(fallback_image)
             return SandboxResult(
-                stdout=process.stdout,
-                stderr=process.stderr,
+                stdout=process.stdout or "",
+                stderr=process.stderr or "",
                 exit_code=process.returncode,
                 timeout=False
             )

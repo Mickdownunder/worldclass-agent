@@ -14,12 +14,13 @@ Runtime checks and targets for research quality and stability. **SOTA-Anspruch v
 | `failed_reader_no_extractable_content` | Explore: sources present but 0 read_successes (reader failed for all URLs) |
 | `failed_reader_pipeline` | Evidence gate: 0 findings with sources and read_successes=0 (technical extraction failure) |
 | `failed_conductor_tool_errors` | Conductor run_cycle: 3+ consecutive tool failures; run aborted, episode persisted |
+| `failed_experiment_gate` | Discovery strict experiment gate failed (objective not met/reproduced) |
 | `aem_blocked` | AEM enforce/strict: settlement failed or oracle_integrity below threshold; synthesize blocked |
 | `aem_deadlock` | AEM settlement: cycles > N without state transition (deadlock rate above threshold) |
 
 Projects with these statuses do not reach `done`; they remain in a failed state until criteria are met or the project is reset.
 
-**Discovery mode (fail hardening):** In `research_mode=discovery`, the critic is **advisory** when the evidence gate has already passed: low critic score sets `quality_gate_status=advisory_low_score` and the run still completes as `done` (no `failed_quality_gate`). If primary synthesis fails or returns a synthesis error, a **fallback report** is generated from `discovery_analysis.json`, claim ledger, and verify metrics so Discovery always delivers a report when evidence exists. **Council** is triggered only when Discovery parent status is `done` (never when `failed_quality_gate` or other failed status). See `workflows/research-cycle.sh` (synthesize phase, SUCCESS_PATH, discovery fallback) and `tools/trigger_council.py` (discovery guard).
+**Discovery mode (fail hardening):** In `research_mode=discovery`, the critic is **advisory** when the evidence gate has already passed: low critic score sets `quality_gate_status=advisory_low_score` and the run still completes as `done` (no `failed_quality_gate`). If primary synthesis fails or returns a synthesis error, a **fallback report** is generated from `discovery_analysis.json`, claim ledger, and verify metrics so Discovery always delivers a report when evidence exists. After synthesize, the Trial-&-Error sandbox is evaluated with a **strict experiment gate** (default `RESEARCH_STRICT_EXPERIMENT_GATE=1`): the run is marked `failed_experiment_gate` **only when the sandbox execution failed** (crash/timeout). If the code ran to completion, the run passes the gate regardless of outcome—positive, negative, or inconclusive results are all valid discoveries and complete as `done`. **Council** is triggered only when Discovery parent status is `done` (never when failed states). See `workflows/research-cycle.sh` and `tools/trigger_council.py`.
 
 ## SLOs
 
