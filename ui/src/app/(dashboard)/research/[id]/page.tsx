@@ -156,7 +156,7 @@ export default async function ResearchProjectPage({
               );
             })()}
             {isActive && project.status !== "pending_review" && <StartCycleButton projectId={id} />}
-            {project.status === "active" && <CancelRunButton projectId={id} />}
+            {(project.status === "active" || project.status === "waiting_next_cycle") && <CancelRunButton projectId={id} />}
             {project.status === "done" && <CreateFollowupButton projectId={id} />}
             <DeleteProjectButton projectId={id} projectQuestion={project.question} />
           </div>
@@ -263,6 +263,11 @@ export default async function ResearchProjectPage({
               Seeded with <span style={{ color: "var(--tron-accent)" }}>{project.prior_knowledge.principles_count}</span> principles and <span style={{ color: "var(--tron-accent)" }}>{project.prior_knowledge.findings_count}</span> findings from past projects
             </span>
           )}
+          {project.status === "waiting_next_cycle" && (
+            <span className="text-[11px] font-mono" style={{ color: "var(--tron-amber, #f59e0b)" }}>
+              Waiting for next cycle run.
+            </span>
+          )}
         </div>
       </div>
 
@@ -298,6 +303,33 @@ export default async function ResearchProjectPage({
           councilStatus={project.council_status} 
           hasMasterDossier={!!project.has_master_dossier} 
         />
+      )}
+
+      {/* ── Council follow-ups (all generations, sorted oldest first) ─── */}
+      {followUpIds.length > 0 && (
+        <div
+          className="rounded-lg px-5 py-4"
+          style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg-panel)" }}
+        >
+          <div className="mb-3 text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--tron-accent)" }}>
+            Council follow-ups ({followUpIds.length})
+          </div>
+          <p className="text-[11px] mb-3" style={{ color: "var(--tron-text-dim)" }}>
+            Alle Generationen, älteste zuerst (Gen 1 → Gen 2 → …). Jedes Projekt verlinkt.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {followUpIds.map((fid) => (
+              <Link
+                key={fid}
+                href={`/research/${fid}`}
+                className="font-mono text-[12px] px-3 py-1.5 rounded border transition-colors hover:bg-[var(--tron-panel-hover)]"
+                style={{ borderColor: "var(--tron-border)", color: "var(--tron-accent)" }}
+              >
+                {fid.replace(/^proj-/, "")}
+              </Link>
+            ))}
+          </div>
+        </div>
       )}
 
       {/* ── Gate Metrics (inline, lightweight) ───────────────── */}

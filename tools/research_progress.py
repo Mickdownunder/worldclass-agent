@@ -199,18 +199,25 @@ def step(project_id: str, message: str, index: int = None, total: int = None) ->
     _append_event(project_id, "step_started", {"step": message, "step_index": index, "step_total": total})
 
 
-def done(project_id: str) -> None:
+def done(project_id: str, final_phase: str | None = None, final_step: str | None = None) -> None:
     progress_file = _get_progress_file(project_id)
     with _progress_lock(project_id):
         data = _read_progress(progress_file)
         if data:
+            phase = (final_phase or data.get("phase") or "done").strip() or "done"
+            phase = phase.lower()
             data["alive"] = False
-            data["phase"] = "done"
+            data["phase"] = phase
             data["heartbeat"] = _now_iso()
-            data["step"] = "Done"
+            if final_step:
+                step = str(final_step).strip()
+            else:
+                step = "Done" if phase == "done" else "Idle"
+            data["step"] = step[:200]
+            data["active_steps"] = []
             _write_progress(progress_file, data)
     if data:
-        _append_event(project_id, "phase_done", {"phase": data.get("phase", "")})
+        _append_event(project_id, "phase_done", {"phase": data.get("phase", ""), "step": data.get("step", "")})
 
 
 def error(project_id: str, code: str, message: str) -> None:
@@ -257,7 +264,9 @@ if __name__ == "__main__":
         total = int(sys.argv[5])
         step_summary(project_id, msg, completed, total)
     elif cmd == "done":
-        done(project_id)
+        phase = sys.argv[3] if len(sys.argv) >= 4 else None
+        step = sys.argv[4] if len(sys.argv) >= 5 else None
+        done(project_id, phase, step)
     elif cmd == "error" and len(sys.argv) >= 5:
         error(project_id, sys.argv[3], sys.argv[4])
     else:

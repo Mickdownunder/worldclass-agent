@@ -43,6 +43,9 @@ Wenn du **mehrere** Research-Projekte hast (z. B. mehrere „Suggested Next Step
 
 - **Shadow Mode (Standard):** Bei jedem research-cycle wird der **Research Conductor** parallel ausgeführt. Er liest den aktuellen State (6 Metriken), entscheidet per LLM die nächste Aktion (`search_more`, `read_more`, `verify`, `synthesize`) und schreibt die Entscheidung in `research/proj-*/conductor_decisions.json`. Die Bash-Pipeline bleibt Master; der Conductor loggt nur.
 - **Conductor als Master (Phase C):** `RESEARCH_USE_CONDUCTOR=1` — dann steuert der Conductor den Ablauf (max 25 Schritte, 4 Aktionen, Context Manager + Supervisor). Bash-Pipeline ist Fallback mit `RESEARCH_USE_CONDUCTOR=0`. Bei Conductor-Override (Gate sagt „nochmal Phase X“) setzt research-cycle.sh `RESEARCH_ADVANCE_SKIP_LOOP_LIMIT=1`, damit advance_phase die Conductor-Entscheidung nicht nach 4 Runden überschreibt. **Hinweis:** Im Conductor-Modus wird die volle Bash-Explore-Pipeline (3 Runden, Coverage, Refinement/Gap/Depth) nicht ausgeführt; es ist ein vereinfachter Aktionen-Loop. Details und Bewertung: `docs/EXPLORE_PHASE_DEEP_DIVE.md` Abschnitt 8.
+- **Explore-Loop-Guard (Hybrid-Gate):** Im Hybrid-Modus blockt `research-cycle.sh` standardmäßig ein Override `focus -> explore`, sobald Coverage bereits bestanden ist und genügend Evidenz vorliegt (Guard gegen Endlosschleifen). Ausnahme nur mit `RESEARCH_CONDUCTOR_ALLOW_EXPLORE_OVERRIDE_ON_COVERAGE_PASS=1`.
+- **No-Evidence Guard (Explore -> Focus):** Wenn Explore keine verwertbare Evidenz produziert (`findings=0` und keine gelesenen `*_content.json`), bleibt das Projekt in `phase=explore` (statt auf `focus` zu springen). Das verhindert leere Focus-Runs bei temporären DNS/Search-Ausfällen.
+- **No-Evidence Guard (Focus -> Connect):** Wenn Focus ebenfalls keine verwertbare Evidenz produziert (`findings=0` und keine gelesenen `*_content.json`), bleibt das Projekt in `phase=focus` (statt auf `connect` zu springen).
 
 **Skript:** `tools/run-scheduled-research.sh`
 
@@ -91,6 +94,37 @@ Wenn ein Research-Projekt **done** ist, kann das System automatisch **neue Proje
 ```bash
 export RESEARCH_AUTO_FOLLOWUP=1
 export RESEARCH_MAX_FOLLOWUPS=3
+```
+
+---
+
+## Research Orchestrator (June-Level Autonomie)
+
+Über dem Auto-Follow-up (pro Report) sitzt der **Orchestrator**: Er sieht **alle** done Reports + Sandbox-Ergebnisse + laufende Projekte und entscheidet zentral, welche neuen Research-Fragen und welche Sandbox-Runden gestartet werden. Das entspricht „June im Hintergrund“ – ohne dass du in Telegram befehlen musst.
+
+**Skript:** `tools/research_orchestrator.py` (Aufruf: `tools/run-research-orchestrator.sh`)
+
+- Liest alle `research/proj-*/` mit Phase done (Report-Auszug + optional `experiment.json`) und alle laufenden Projekte.
+- Ruft ein LLM mit diesem Kontext auf; Ausgabe: `research_questions` (0–3 neue Fragen) und `sandbox_project_ids` (0–2 done-Projekte für zusätzliche Sandbox-Experimente).
+- Startet pro Frage: `op job new research-init`, dann `run-research-cycle-until-done.sh` im Hintergrund.
+- Startet pro Sandbox-ID: `research_experiment.py <project_id>` im Hintergrund.
+
+**Umgebungsvariablen (optional):**
+
+- `RESEARCH_ORCHESTRATOR_MAX_RESEARCH=3` — max. neue Research-Fragen pro Lauf (Standard 3).
+- `RESEARCH_ORCHESTRATOR_MAX_SANDBOX=2` — max. Sandbox-Runden pro Lauf (Standard 2).
+- `RESEARCH_ORCHESTRATOR_MODEL` / `RESEARCH_ORCHESTRATOR_FALLBACK_MODEL` — LLM (Standard: gpt-4.1-mini, Fallback gemini-2.5-flash).
+
+**Cron (z. B. alle 2 Stunden):**
+
+```bash
+0 */2 * * * /root/operator/tools/run-research-orchestrator.sh >> /root/operator/logs/orchestrator.log 2>&1
+```
+
+**Dry-Run (nur anzeigen, nichts starten):**
+
+```bash
+/root/operator/tools/run-research-orchestrator.sh --dry-run
 ```
 
 ---
@@ -167,3 +201,9 @@ Optional per Cron (z. B. nachts):
 | **Follow-up aus Report** | Neues Projekt mit konkreter Frage aus „Suggested Next Steps“ oder Redirect am alten Projekt. |
 | **Autonom ein Projekt** | `/research-go "Frage"` (over-days alle 6h, 14 Tage). |
 | **Autonom viele Projekte** | Projekte anlegen, Cron für `run-scheduled-research.sh` (z. B. alle 6h). |
+
+### Hinweis zu Phasen-Runs
+
+- Ein `research-cycle`-Job arbeitet normalerweise **eine Phase pro Run** ab und setzt danach den Projektstatus auf `waiting_next_cycle` (nicht mehr still `active` ohne Prozess).
+- Das ist **kein Hänger**: Es bedeutet „Phase vorbereitet, wartet auf den nächsten Cycle-Run“.
+| **Orchestrator (June-Level)** | Cron für `run-research-orchestrator.sh` (z. B. alle 2h): entscheidet aus allen done Reports + Sandbox, startet neue Research + Sandbox-Runden. |

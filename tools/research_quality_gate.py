@@ -77,8 +77,14 @@ def _load_read_stats_combined(proj: Path) -> dict:
     return out
 
 
-def _effective_findings_min(metrics: dict) -> int:
-    """Adaptive floor: lower if read success rate is low."""
+def _effective_findings_min(metrics: dict, research_mode: str = "standard") -> int:
+    """Adaptive floor: mode-aware and lower if read success rate is low."""
+    mode = (research_mode or "standard").strip().lower()
+    if mode == "discovery":
+        # Discovery is intentionally permissive: novelty often has fewer hard-verifiable artifacts.
+        return 2
+    if mode == "frontier":
+        return 5
     t = _get_thresholds()
     base = t["findings_count_min"]
     attempts = metrics.get("read_attempts", 0)
@@ -282,7 +288,15 @@ def run_evidence_gate(project_id: str) -> dict:
     read_stats = _load_read_stats_combined(proj)
     metrics.update(read_stats)
 
-    effective_findings_min = _effective_findings_min(metrics)
+    research_mode = "standard"
+    config = project.get("config") or {}
+    if isinstance(config, dict):
+        research_mode = (config.get("research_mode") or "standard").strip().lower()
+    if research_mode not in ("frontier", "discovery"):
+        research_mode = "standard"
+
+    effective_findings_min = _effective_findings_min(metrics, research_mode=research_mode)
+    thresholds = _get_thresholds()
     metrics["findings_count"] = _metrics_findings(findings_dir)
     source_count, _ = _metrics_sources(sources_dir)
     metrics["unique_source_count"] = source_count
@@ -300,17 +314,15 @@ def run_evidence_gate(project_id: str) -> dict:
         audit_log(proj, "evidence_gate", {"decision": "fail", "fail_code": "failed_reader_pipeline", "metrics": metrics, "reasons": reasons})
         return {"pass": False, "fail_code": "failed_reader_pipeline", "decision": "fail", "metrics": metrics, "reasons": reasons}
 
-    # Insufficient findings/sources
-    if metrics["findings_count"] < effective_findings_min or metrics["unique_source_count"] < EVIDENCE_GATE_THRESHOLDS["unique_source_count_min"]:
-        audit_log(proj, "evidence_gate", {"decision": "fail", "fail_code": "failed_insufficient_evidence", "metrics": metrics, "reasons": reasons})
-        return {"pass": False, "fail_code": "failed_insufficient_evidence", "decision": "fail", "metrics": metrics, "reasons": reasons}
-
-    research_mode = "standard"
-    config = project.get("config") or {}
-    if isinstance(config, dict):
-        research_mode = (config.get("research_mode") or "standard").strip().lower()
-    if research_mode not in ("frontier", "discovery"):
-        research_mode = "standard"
+    # Early hard-fail only in standard mode.
+    # Frontier/Discovery use their own mode-specific decision logic below.
+    if research_mode == "standard":
+        if (
+            metrics["findings_count"] < effective_findings_min
+            or metrics["unique_source_count"] < thresholds["unique_source_count_min"]
+        ):
+            audit_log(proj, "evidence_gate", {"decision": "fail", "fail_code": "failed_insufficient_evidence", "metrics": metrics, "reasons": reasons})
+            return {"pass": False, "fail_code": "failed_insufficient_evidence", "decision": "fail", "metrics": metrics, "reasons": reasons}
 
     if research_mode == "discovery":
         decision, fail_code = _decide_gate_discovery(metrics)

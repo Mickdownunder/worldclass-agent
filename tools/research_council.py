@@ -154,20 +154,24 @@ You will receive:
 
 You are in Generation {gen} of max {MAX_GENERATIONS} generations.
 
+MANDATORY: EXAMINE EACH FIELD AGENT IN DETAIL.
+- You MUST look at every Field Agent report and its sandbox results. Do not skip or gloss over any agent.
+- For EACH agent, you must explicitly: (1) state the hypothesis tested, (2) state the outcome (supported / not supported / mixed) with key numbers from the report or experiment.json, (3) note any limitations or caveats the agent reported. Use exact figures (scores, counts, percentages) where the report or experiment provides them.
+- Only after this per-agent evaluation, write your cross-agent synthesis. The synthesis must be grounded in what each agent actually found; do not drop findings that contradict a simple narrative.
+
 YOUR TASK:
 Evaluate the evidence. Is the overarching research question fully solved, proven, and validated by robust sandbox experiments?
 
 IF NO (Needs more research):
-- Write an 'Interim Synthesis' summarizing what we know and what failed.
+- Write an 'Interim Synthesis' that first includes a clear "Evaluation per Field Agent" section (one subsection per agent with hypothesis, outcome, key numbers, caveats), then your synthesis and what failed.
 - Define 1 to 4 specific 'Research Missions' for the next generation of Field Agents. Each mission must have a concrete `hypothesis_to_test` for the sandbox.
 
 IF YES (Solved) OR if Generation >= {MAX_GENERATIONS}:
-- Write the ultimate 'Bundle Synthesis Dossier' (MASTER_DOSSIER.md).
-- Cross-pollinate the findings. Don't just summarize; synthesize new architectural rules.
+- Write the ultimate 'Bundle Synthesis Dossier' (MASTER_DOSSIER.md). Again, first include "Evaluation per Field Agent" with hypothesis, outcome, key numbers, and caveats for each agent; then cross-pollinate and synthesize new architectural rules.
 - Define 1-3 'mega_principles'.
 
 FORMAT REQUIREMENT:
-Write your full markdown report first (Interim or Master Dossier).
+Write your full markdown report first (Interim or Master Dossier). The report MUST contain an "Evaluation per Field Agent" (or equivalent) section where each agent is examined in detail.
 At the very end of your output, append a single JSON block wrapped in ```json ... ``` exactly like this:
 {{
   "status": "SOLVED" or "NEEDS_MORE_RESEARCH",
@@ -185,16 +189,17 @@ At the very end of your output, append a single JSON block wrapped in ```json ..
     user_content += f"# FIELD AGENT REPORTS (Past Generations)\n\n"
     
     if children_data:
+        user_content += "Examine each agent below in detail. You must address every agent in your 'Evaluation per Field Agent' section with hypothesis, outcome (supported/not supported/mixed), key numbers, and caveats.\n\n"
         for i, c in enumerate(children_data):
             user_content += f"## Agent {i+1} ({c['id']})\nTopic: {c['question']}\nHypothesis: {c['hypothesis']}\n"
-            user_content += f"### Report Excerpt\n{c['report'][:8000]}\n"
+            user_content += f"### Full Report Excerpt (examine carefully)\n{c['report'][:12000]}\n"
             if c['experiment']:
                 user_content += f"### Sandbox Experiment Results\n{json.dumps(c['experiment'], indent=2)}\n"
             user_content += "\n"
     else:
         user_content += "No field agents have run yet. This is your first evaluation of the parent report.\n"
         
-    user_content += "\nNow, synthesize the Dossier (Interim or Master) and include the JSON block at the end."
+    user_content += "\nNow, write your Dossier. First: 'Evaluation per Field Agent' (each agent: hypothesis, outcome, key numbers, caveats). Then: your synthesis. Then: the JSON block at the end."
     
     print("Calling PI Agent (LLM)...")
     try:

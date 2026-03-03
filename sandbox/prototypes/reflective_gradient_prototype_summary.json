@@ -1,0 +1,477 @@
+{
+  "trajectory": [
+    {
+      "step": 1,
+      "context": {
+        "embedding": {
+          "grad": 0.1398,
+          "lr": 0.0106,
+          "delta": 0.1398
+        },
+        "encoder": {
+          "grad": 0.5049,
+          "lr": 0.0098,
+          "delta": 0.5049
+        },
+        "decoder": {
+          "grad": 0.8618,
+          "lr": 0.0098,
+          "delta": 0.8618
+        }
+      }
+    },
+    {
+      "step": 2,
+      "context": {
+        "embedding": {
+          "grad": 0.7875,
+          "lr": 0.01039,
+          "delta": 0.6477
+        },
+        "encoder": {
+          "grad": 0.2853,
+          "lr": 0.0096,
+          "delta": 0.2197
+        },
+        "decoder": {
+          "grad": 0.3974,
+          "lr": 0.0096,
+          "delta": 0.4644
+        }
+      }
+    },
+    {
+      "step": 3,
+      "context": {
+        "embedding": {
+          "grad": 0.2442,
+          "lr": 0.01018,
+          "delta": 0.5433
+        },
+        "encoder": {
+          "grad": 0.6518,
+          "lr": 0.00941,
+          "delta": 0.3666
+        },
+        "decoder": {
+          "grad": 0.9997,
+          "lr": 0.00941,
+          "delta": 0.6023
+        }
+      }
+    },
+    {
+      "step": 4,
+      "context": {
+        "embedding": {
+          "grad": 0.7642,
+          "lr": 0.00998,
+          "delta": 0.52
+        },
+        "encoder": {
+          "grad": 0.1609,
+          "lr": 0.00922,
+          "delta": 0.4909
+        },
+        "decoder": {
+          "grad": 0.4615,
+          "lr": 0.00922,
+          "delta": 0.5382
+        }
+      }
+    },
+    {
+      "step": 5,
+      "context": {
+        "embedding": {
+          "grad": 0.6777,
+          "lr": 0.01058,
+          "delta": 0.0865
+        },
+        "encoder": {
+          "grad": 0.5345,
+          "lr": 0.00904,
+          "delta": 0.3735
+        },
+        "decoder": {
+          "grad": 0.6443,
+          "lr": 0.00904,
+          "delta": 0.1829
+        }
+      }
+    },
+    {
+      "step": 6,
+      "context": {
+        "embedding": {
+          "grad": 0.6478,
+          "lr": 0.01121,
+          "delta": 0.0299
+        },
+        "encoder": {
+          "grad": 0.3216,
+          "lr": 0.00886,
+          "delta": 0.2129
+        },
+        "decoder": {
+          "grad": 0.719,
+          "lr": 0.00958,
+          "delta": 0.0747
+        }
+      }
+    },
+    {
+      "step": 7,
+      "context": {
+        "embedding": {
+          "grad": 0.5706,
+          "lr": 0.01188,
+          "delta": 0.0772
+        },
+        "encoder": {
+          "grad": 0.6253,
+          "lr": 0.00868,
+          "delta": 0.3037
+        },
+        "decoder": {
+          "grad": 0.7396,
+          "lr": 0.01016,
+          "delta": 0.0206
+        }
+      }
+    },
+    {
+      "step": 8,
+      "context": {
+        "embedding": {
+          "grad": 0.573,
+          "lr": 0.0126,
+          "delta": 0.0024
+        },
+        "encoder": {
+          "grad": 0.3602,
+          "lr": 0.00851,
+          "delta": 0.2651
+        },
+        "decoder": {
+          "grad": 0.1689,
+          "lr": 0.00995,
+          "delta": 0.5708
+        }
+      }
+    },
+    {
+      "step": 9,
+      "context": {
+        "embedding": {
+          "grad": 0.3571,
+          "lr": 0.01234,
+          "delta": 0.2159
+        },
+        "encoder": {
+          "grad": 0.3952,
+          "lr": 0.00902,
+          "delta": 0.0351
+        },
+        "decoder": {
+          "grad": 0.2755,
+          "lr": 0.01055,
+          "delta": 0.1067
+        }
+      }
+    },
+    {
+      "step": 10,
+      "context": {
+        "embedding": {
+          "grad": 0.4008,
+          "lr": 0.01308,
+          "delta": 0.0437
+        },
+        "encoder": {
+          "grad": 0.8094,
+          "lr": 0.00884,
+          "delta": 0.4141
+        },
+        "decoder": {
+          "grad": 0.2083,
+          "lr": 0.01118,
+          "delta": 0.0672
+        }
+      }
+    },
+    {
+      "step": 11,
+      "context": {
+        "embedding": {
+          "grad": 0.1789,
+          "lr": 0.01282,
+          "delta": 0.2219
+        },
+        "encoder": {
+          "grad": 0.3836,
+          "lr": 0.00866,
+          "delta": 0.4258
+        },
+        "decoder": {
+          "grad": 0.1302,
+          "lr": 0.01185,
+          "delta": 0.0781
+        }
+      }
+    },
+    {
+      "step": 12,
+      "context": {
+        "embedding": {
+          "grad": 0.659,
+          "lr": 0.01257,
+          "delta": 0.4801
+        },
+        "encoder": {
+          "grad": 0.267,
+          "lr": 0.00918,
+          "delta": 0.1166
+        },
+        "decoder": {
+          "grad": 0.7529,
+          "lr": 0.01162,
+          "delta": 0.6226
+        }
+      }
+    },
+    {
+      "step": 13,
+      "context": {
+        "embedding": {
+          "grad": 0.2871,
+          "lr": 0.01231,
+          "delta": 0.3719
+        },
+        "encoder": {
+          "grad": 0.7216,
+          "lr": 0.009,
+          "delta": 0.4547
+        },
+        "decoder": {
+          "grad": 0.5663,
+          "lr": 0.01139,
+          "delta": 0.1866
+        }
+      }
+    },
+    {
+      "step": 14,
+      "context": {
+        "embedding": {
+          "grad": 0.6565,
+          "lr": 0.01207,
+          "delta": 0.3694
+        },
+        "encoder": {
+          "grad": 0.8036,
+          "lr": 0.00954,
+          "delta": 0.0819
+        },
+        "decoder": {
+          "grad": 0.1226,
+          "lr": 0.01116,
+          "delta": 0.4437
+        }
+      }
+    },
+    {
+      "step": 15,
+      "context": {
+        "embedding": {
+          "grad": 0.9943,
+          "lr": 0.01183,
+          "delta": 0.3378
+        },
+        "encoder": {
+          "grad": 0.1793,
+          "lr": 0.00935,
+          "delta": 0.6243
+        },
+        "decoder": {
+          "grad": 0.2764,
+          "lr": 0.01093,
+          "delta": 0.1538
+        }
+      }
+    },
+    {
+      "step": 16,
+      "context": {
+        "embedding": {
+          "grad": 0.8343,
+          "lr": 0.01159,
+          "delta": 0.16
+        },
+        "encoder": {
+          "grad": 0.9005,
+          "lr": 0.00916,
+          "delta": 0.7212
+        },
+        "decoder": {
+          "grad": 0.9681,
+          "lr": 0.01072,
+          "delta": 0.6917
+        }
+      }
+    },
+    {
+      "step": 17,
+      "context": {
+        "embedding": {
+          "grad": 0.9076,
+          "lr": 0.01229,
+          "delta": 0.0733
+        },
+        "encoder": {
+          "grad": 0.6323,
+          "lr": 0.00898,
+          "delta": 0.2682
+        },
+        "decoder": {
+          "grad": 0.6733,
+          "lr": 0.0105,
+          "delta": 0.2949
+        }
+      }
+    },
+    {
+      "step": 18,
+      "context": {
+        "embedding": {
+          "grad": 0.9899,
+          "lr": 0.01302,
+          "delta": 0.0822
+        },
+        "encoder": {
+          "grad": 0.2143,
+          "lr": 0.0088,
+          "delta": 0.418
+        },
+        "decoder": {
+          "grad": 0.252,
+          "lr": 0.01029,
+          "delta": 0.4213
+        }
+      }
+    },
+    {
+      "step": 19,
+      "context": {
+        "embedding": {
+          "grad": 0.8181,
+          "lr": 0.01276,
+          "delta": 0.1718
+        },
+        "encoder": {
+          "grad": 0.2763,
+          "lr": 0.00932,
+          "delta": 0.0621
+        },
+        "decoder": {
+          "grad": 0.7686,
+          "lr": 0.01009,
+          "delta": 0.5166
+        }
+      }
+    },
+    {
+      "step": 20,
+      "context": {
+        "embedding": {
+          "grad": 0.293,
+          "lr": 0.01251,
+          "delta": 0.5251
+        },
+        "encoder": {
+          "grad": 0.5257,
+          "lr": 0.00914,
+          "delta": 0.2494
+        },
+        "decoder": {
+          "grad": 0.9977,
+          "lr": 0.00988,
+          "delta": 0.2291
+        }
+      }
+    }
+  ],
+  "summary": {
+    "timestamp": "2026-03-03T13:08:56.146388Z",
+    "base_lr": 0.01,
+    "steps": 20,
+    "layers": [
+      "embedding",
+      "encoder",
+      "decoder"
+    ],
+    "final_lr": {
+      "embedding": 0.012507192391768614,
+      "encoder": 0.009137779459485434,
+      "decoder": 0.009883720639851589
+    },
+    "avg_lr": {
+      "embedding": 0.01183,
+      "encoder": 0.0091,
+      "decoder": 0.01035
+    },
+    "codebook_samples": {
+      "embedding": [
+        {
+          "step": 18,
+          "grad": 0.9898817721330422,
+          "lr": 0.013022899200092268
+        },
+        {
+          "step": 19,
+          "grad": 0.8180895181449193,
+          "lr": 0.012762441216090423
+        },
+        {
+          "step": 20,
+          "grad": 0.29298513654942687,
+          "lr": 0.012507192391768614
+        }
+      ],
+      "encoder": [
+        {
+          "step": 18,
+          "grad": 0.21425293101779805,
+          "lr": 0.008796476183563183
+        },
+        {
+          "step": 19,
+          "grad": 0.2763149088487314,
+          "lr": 0.009324264754576974
+        },
+        {
+          "step": 20,
+          "grad": 0.5257224208429666,
+          "lr": 0.009137779459485434
+        }
+      ],
+      "decoder": [
+        {
+          "step": 18,
+          "grad": 0.251963966723232,
+          "lr": 0.010291254310549345
+        },
+        {
+          "step": 19,
+          "grad": 0.7685770446476151,
+          "lr": 0.010085429224338357
+        },
+        {
+          "step": 20,
+          "grad": 0.9977267127998394,
+          "lr": 0.009883720639851589
+        }
+      ]
+    }
+  }
+}

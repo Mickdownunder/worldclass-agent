@@ -112,10 +112,16 @@ export function registerResearch(api: { registerCommand: (c: unknown) => void })
         if (!projectId) throw new Error("Keine project_id in artifacts.");
         const { spawn } = await import("node:child_process");
         const script = join(OPERATOR_ROOT, "tools", "run-research-over-days.sh");
+        const env = {
+          ...process.env,
+          OPERATOR_ROOT,
+          PATH: [join(OPERATOR_ROOT, "bin"), process.env.PATH].filter(Boolean).join(":"),
+        };
         spawn("bash", [script, projectId, "6", "14"], {
           cwd: OPERATOR_ROOT,
           detached: true,
           stdio: "ignore",
+          env,
         }).unref();
         return {
           text: `Research gestartet (läuft über Tage im Hintergrund).\nProjekt: ${projectId}\nZyklus alle 6h, max. 14 Tage.\n\nStatus: /research-status ${projectId}\nLog: research/${projectId}/over-days.log`,

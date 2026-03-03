@@ -150,9 +150,32 @@ if ! flock -n 9; then
   exit 2
 fi
 
-progress_start() { python3 "$TOOLS/research_progress.py" start "$PROJECT_ID" "$1" 2>/dev/null || true; }
+PROGRESS_STARTED=0
+PROGRESS_FINALIZED=0
+progress_start() {
+  PROGRESS_STARTED=1
+  python3 "$TOOLS/research_progress.py" start "$PROJECT_ID" "$1" 2>/dev/null || true
+}
 progress_step() { python3 "$TOOLS/research_progress.py" step "$PROJECT_ID" "$1" "${2:-}" "${3:-}" 2>/dev/null || true; }
-progress_done() { python3 "$TOOLS/research_progress.py" done "$PROJECT_ID" 2>/dev/null || true; }
+progress_done() {
+  local phase="${1:-done}"
+  local step_msg="${2:-}"
+  PROGRESS_FINALIZED=1
+  python3 "$TOOLS/research_progress.py" done "$PROJECT_ID" "$phase" "$step_msg" 2>/dev/null || true
+}
+
+finalize_progress_on_exit() {
+  local exit_code="$?"
+  if [ "${PROGRESS_STARTED:-0}" = "1" ] && [ "${PROGRESS_FINALIZED:-0}" != "1" ]; then
+    local final_phase
+    final_phase=$(python3 -c "import json; print(json.load(open('$PROJ_DIR/project.json')).get('phase','${PHASE:-explore}'), end='')" 2>/dev/null || echo "${PHASE:-explore}")
+    progress_done "$final_phase" "Idle"
+    log "Finalized progress on exit (code=$exit_code, phase=$final_phase)"
+  fi
+  # Remove stale lock file path; flock FD is auto-released on process exit.
+  rm -f "$CYCLE_LOCK" 2>/dev/null || true
+}
+trap finalize_progress_on_exit EXIT
 
 log_v2_mode_for_cycle() {
   python3 - "$PROJ_DIR" "$OPERATOR_ROOT" "$PROJECT_ID" "$PHASE" <<'MEMORY_V2_MODE' 2>> "$CYCLE_LOG" || true
@@ -273,10 +296,47 @@ advance_phase() {
       log "Conductor gate returned empty — not advancing; keeping current phase"
       next_phase=$(python3 -c "import json; print(json.load(open('$PROJ_DIR/project.json')).get('phase','explore'), end='')" 2>> "$CYCLE_LOG") || next_phase="$1"
     elif [ "$conductor_next" != "$next_phase" ]; then
-      log "Conductor override: $next_phase -> $conductor_next (re-running phase)"
-      next_phase="$conductor_next"
-      progress_step "Conductor: weitere ${next_phase}-Runde"
-      export RESEARCH_ADVANCE_SKIP_LOOP_LIMIT=1
+      if [ "$next_phase" = "focus" ] && [ "$conductor_next" = "explore" ] && [ "${RESEARCH_CONDUCTOR_ALLOW_EXPLORE_OVERRIDE_ON_COVERAGE_PASS:-0}" != "1" ]; then
+        # Guard: avoid explore loops when coverage already passed and there is sufficient evidence volume.
+        local override_allowed
+        override_allowed=$(python3 - "$PROJ_DIR" <<'PY_GUARD'
+import json, sys
+from pathlib import Path
+proj = Path(sys.argv[1])
+coverage_pass = False
+for name in ("coverage_round3.json", "coverage_round2.json", "coverage_round1.json"):
+    p = proj / name
+    if not p.exists():
+        continue
+    try:
+        d = json.loads(p.read_text())
+        if bool(d.get("pass")):
+            coverage_pass = True
+            break
+    except Exception:
+        pass
+findings_count = len(list((proj / "findings").glob("*.json")))
+source_count = len([f for f in (proj / "sources").glob("*.json") if not f.name.endswith("_content.json")])
+# Allow override only when evidence is still thin OR coverage did not pass.
+allow = (not coverage_pass) or findings_count < 8 or source_count < 20
+print("1" if allow else "0", end="")
+PY_GUARD
+)
+        if [ "$override_allowed" = "1" ]; then
+          log "Conductor override allowed (focus -> explore): evidence still thin."
+          log "Conductor override: $next_phase -> $conductor_next (re-running phase)"
+          next_phase="$conductor_next"
+          progress_step "Conductor: weitere ${next_phase}-Runde"
+          export RESEARCH_ADVANCE_SKIP_LOOP_LIMIT=1
+        else
+          log "Conductor override blocked: focus -> explore denied after coverage/evidence threshold reached."
+        fi
+      else
+        log "Conductor override: $next_phase -> $conductor_next (re-running phase)"
+        next_phase="$conductor_next"
+        progress_step "Conductor: weitere ${next_phase}-Runde"
+        export RESEARCH_ADVANCE_SKIP_LOOP_LIMIT=1
+      fi
     fi
   fi
   python3 "$TOOLS/research_advance_phase.py" "$PROJ_DIR" "$next_phase"
@@ -287,6 +347,34 @@ advance_phase() {
   fi
   unset -v RESEARCH_ADVANCE_SKIP_LOOP_LIMIT 2>/dev/null || true
   log "advance_phase: set phase=$next_phase"
+}
+
+mark_waiting_next_cycle() {
+  python3 - "$PROJ_DIR" <<'WAITING_NEXT_CYCLE'
+import json, sys
+from datetime import datetime, timezone
+from pathlib import Path
+proj_dir = Path(sys.argv[1])
+p = proj_dir / "project.json"
+try:
+    d = json.loads(p.read_text())
+except Exception:
+    raise SystemExit(0)
+status = str(d.get("status") or "").strip().lower()
+phase = str(d.get("phase") or "").strip().lower()
+terminal = (
+    phase in {"done", "failed"}
+    or status in {"done", "cancelled", "abandoned", "pending_review", "aem_blocked"}
+    or status.startswith("failed")
+)
+if terminal:
+    raise SystemExit(0)
+# Always refresh waiting markers for non-terminal phases so UI state stays accurate.
+d["status"] = "waiting_next_cycle"
+d["last_cycle_completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+d["waiting_reason"] = f"Phase '{phase or 'unknown'}' prepared. Waiting for next research-cycle run."
+p.write_text(json.dumps(d, indent=2))
+WAITING_NEXT_CYCLE
 }
 
 persist_v2_episode() {
@@ -807,6 +895,36 @@ p.write_text(json.dumps({
     if [ "${RESEARCH_ENABLE_DYNAMIC_OUTLINE:-0}" = "1" ]; then
       python3 "$TOOLS/research_dynamic_outline.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     fi
+    # Guard: do not advance to focus when explore produced no usable evidence.
+    # This prevents "focus with 0 findings/0 reads" after transient DNS/search outages.
+    FINDINGS_COUNT=$(python3 -c "from pathlib import Path; print(len(list(Path('$PROJ_DIR/findings').glob('*.json'))), end='')" 2>/dev/null || echo "0")
+    READ_CONTENT_COUNT=$(python3 -c "from pathlib import Path; print(len(list(Path('$PROJ_DIR/sources').glob('*_content.json'))), end='')" 2>/dev/null || echo "0")
+    SOURCE_META_COUNT=$(python3 -c "from pathlib import Path; print(len([f for f in Path('$PROJ_DIR/sources').glob('*.json') if not f.name.endswith('_content.json')]), end='')" 2>/dev/null || echo "0")
+    if [ "${FINDINGS_COUNT:-0}" -le 0 ] && [ "${READ_CONTENT_COUNT:-0}" -le 0 ]; then
+      log "Explore produced no usable evidence (findings=$FINDINGS_COUNT, read_contents=$READ_CONTENT_COUNT, source_meta=$SOURCE_META_COUNT) — staying in explore."
+      python3 - "$PROJ_DIR" "$read_attempts" "$read_successes" "$SOURCE_META_COUNT" <<'NO_EVIDENCE_GUARD'
+import json, sys
+from datetime import datetime, timezone
+from pathlib import Path
+proj_dir, read_attempts, read_successes, source_meta = Path(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+p = proj_dir / "project.json"
+d = json.loads(p.read_text())
+d["phase"] = "explore"
+d["status"] = "active"
+d["last_phase_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+meta = d.get("runtime_guard") if isinstance(d.get("runtime_guard"), dict) else {}
+meta["explore_no_evidence"] = {
+    "at": d["last_phase_at"],
+    "read_attempts": read_attempts,
+    "read_successes": read_successes,
+    "source_meta_count": source_meta,
+}
+d["runtime_guard"] = meta
+p.write_text(json.dumps(d, indent=2))
+NO_EVIDENCE_GUARD
+      progress_done "explore" "Idle"
+      exit 0
+    fi
     advance_phase "focus"
     ;;
   focus)
@@ -935,7 +1053,34 @@ RANK_FOCUS
     if [ "${RESEARCH_ENABLE_CONTEXT_MANAGER:-0}" = "1" ]; then
       python3 "$TOOLS/research_context_manager.py" add "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
     fi
-    progress_done
+    # Guard: do not advance to connect when focus produced no usable evidence.
+    FOCUS_FINDINGS_COUNT=$(python3 -c "from pathlib import Path; print(len(list(Path('$PROJ_DIR/findings').glob('*.json'))), end='')" 2>/dev/null || echo "0")
+    FOCUS_READ_CONTENT_COUNT=$(python3 -c "from pathlib import Path; print(len(list(Path('$PROJ_DIR/sources').glob('*_content.json'))), end='')" 2>/dev/null || echo "0")
+    if [ "${FOCUS_FINDINGS_COUNT:-0}" -le 0 ] && [ "${FOCUS_READ_CONTENT_COUNT:-0}" -le 0 ]; then
+      log "Focus produced no usable evidence (focus_reads=$focus_read_successes, findings=$FOCUS_FINDINGS_COUNT, read_contents=$FOCUS_READ_CONTENT_COUNT) — staying in focus."
+      python3 - "$PROJ_DIR" "$focus_read_attempts" "$focus_read_successes" <<'FOCUS_NO_EVIDENCE_GUARD'
+import json, sys
+from datetime import datetime, timezone
+from pathlib import Path
+proj_dir, read_attempts, read_successes = Path(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
+p = proj_dir / "project.json"
+d = json.loads(p.read_text())
+d["phase"] = "focus"
+d["status"] = "active"
+d["last_phase_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+meta = d.get("runtime_guard") if isinstance(d.get("runtime_guard"), dict) else {}
+meta["focus_no_evidence"] = {
+    "at": d["last_phase_at"],
+    "read_attempts": read_attempts,
+    "read_successes": read_successes,
+}
+d["runtime_guard"] = meta
+p.write_text(json.dumps(d, indent=2))
+FOCUS_NO_EVIDENCE_GUARD
+      progress_done "focus" "Idle"
+      exit 0
+    fi
+    progress_done "focus" "Idle"
     advance_phase "connect"
     ;;
   connect)
@@ -1679,7 +1824,7 @@ EXPERIMENT_GATE_FAIL
           python3 "$TOOLS/research_experience_distiller.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
           python3 "$TOOLS/research_utility_update.py" "$PROJECT_ID" 2>> "$CYCLE_LOG" || true
           persist_v2_episode "failed"
-          progress_done
+          progress_done "failed" "Idle"
           exit 0
         fi
       fi
@@ -1690,7 +1835,7 @@ EXPERIMENT_GATE_FAIL
     # Update cross-project links (Brain/UI can show cross-links)
     python3 "$TOOLS/research_cross_domain.py" --threshold 0.75 --max-pairs 20 2>> "$CYCLE_LOG" || true
     advance_phase "done"
-    progress_done
+    progress_done "done" "Done"
     # Telegram: Forschung abgeschlossen (only when passed)
     if [ -x "$TOOLS/send-telegram.sh" ]; then
       MSG_FILE=$(mktemp)
@@ -1743,6 +1888,12 @@ esac
 STATUS=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('status',''), end='')" 2>/dev/null || echo "")
 PHASE_NOW=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('phase',''), end='')" 2>/dev/null || echo "$PHASE")
 FM_FINAL=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print((d.get('config') or {}).get('research_mode', 'standard'), end='')" 2>/dev/null || echo "standard")
+
+# One cycle run usually advances exactly one phase. Mark explicit waiting state so UI
+# does not look "stuck" when no process is running between phase runs.
+mark_waiting_next_cycle
+STATUS=$(python3 -c "import json; d=json.load(open('$PROJ_DIR/project.json')); print(d.get('status',''), end='')" 2>/dev/null || echo "$STATUS")
+
 TRIGGER_COUNCIL=0
 if [ "$FM_FINAL" = "discovery" ]; then
   # Discovery policy: Council only from successful parent completion

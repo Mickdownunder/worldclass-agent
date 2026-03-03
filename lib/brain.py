@@ -800,8 +800,9 @@ Incorporate applicable principles into your plan reasoning."""
     # Phase 5: REFLECT — Evaluate the outcome
     # ------------------------------------------------------------------
 
-    def reflect(self, action_result: dict, goal: str = "") -> dict:
-        """Use LLM to reflect on the action's outcome and extract learnings."""
+    def reflect(self, action_result: dict, goal: str = "", retrieved_principle_ids: list[str] | None = None) -> dict:
+        """Use LLM to reflect on the action's outcome and extract learnings.
+        If retrieved_principle_ids is set (from this cycle's understand), updates principle utilities from outcome quality."""
         trace_id = action_result.get("_trace_id", _trace_id())
         job_id = action_result.get("job_id", "unknown")
 
@@ -948,6 +949,15 @@ Be honest and specific. A failed job with useful error info is more valuable tha
             job_id=job_id,
         )
 
+        # Reinforce which principles helped: update utility from this cycle's outcome (MemRL-style)
+        if retrieved_principle_ids:
+            try:
+                self.memory.update_utilities_from_outcome(
+                    "principle", retrieved_principle_ids, quality, context_key=(goal or None)
+                )
+            except Exception:
+                pass  # non-fatal
+
         reflection["_trace_id"] = trace_id
         return reflection
 
@@ -972,7 +982,8 @@ Be honest and specific. A failed job with useful error info is more valuable tha
         action_result = self.act(decision)
         action_result["_trace_id"] = trace_id
 
-        reflection = self.reflect(action_result, goal)
+        principle_ids = (understanding.get("retrieved_memory_ids") or {}).get("principle_ids") or []
+        reflection = self.reflect(action_result, goal, retrieved_principle_ids=principle_ids)
 
         cycle_result = {
             "trace_id": trace_id,

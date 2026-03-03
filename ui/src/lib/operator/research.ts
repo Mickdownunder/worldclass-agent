@@ -499,22 +499,25 @@ export async function getResearchProject(projectId: string): Promise<ResearchPro
   }
 }
 
-/** Return project IDs that are follow-ups of the given parent (parent_project_id = parentId). */
+/** Return project IDs that are follow-ups of the given parent (parent_project_id = parentId), sorted by created_at ascending (oldest = Gen 1 first). */
 export async function getFollowUpProjectIds(parentId: string): Promise<string[]> {
   try {
     const entries = await readdir(RESEARCH_ROOT, { withFileTypes: true });
-    const ids: string[] = [];
+    const items: { id: string; created_at: string }[] = [];
     for (const e of entries) {
       if (!e.isDirectory() || !e.name.startsWith("proj-")) continue;
       try {
         const raw = await readFile(path.join(RESEARCH_ROOT, e.name, "project.json"), "utf8");
-        const data = JSON.parse(raw) as { parent_project_id?: string };
-        if (data.parent_project_id === parentId) ids.push(e.name);
+        const data = JSON.parse(raw) as { parent_project_id?: string; created_at?: string };
+        if (data.parent_project_id === parentId) {
+          items.push({ id: e.name, created_at: typeof data.created_at === "string" ? data.created_at : "" });
+        }
       } catch {
         // ignore
       }
     }
-    return ids;
+    items.sort((a, b) => (a.created_at || "").localeCompare(b.created_at || ""));
+    return items.map((x) => x.id);
   } catch {
     return [];
   }
