@@ -5,6 +5,7 @@ import json
 import math
 import re
 import sqlite3
+import time
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -585,26 +586,31 @@ class MemoryV2:
         to_node_id: str,
         project_id: str | None = None,
     ) -> str:
-        eid = hash_id(
-            f"graph-edge:{edge_type}:{from_node_type}:{from_node_id}:{to_node_type}:{to_node_id}:{project_id or ''}:{utcnow()}"
-        )
-        self._conn.execute(
-            """INSERT INTO memory_graph_edges
-               (id, ts, edge_type, from_node_type, from_node_id, to_node_type, to_node_id, project_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                eid,
-                utcnow(),
-                edge_type[:32],
-                from_node_type[:40],
-                from_node_id,
-                to_node_type[:40],
-                to_node_id,
-                project_id,
-            ),
-        )
-        self._conn.commit()
-        return eid
+        base = f"graph-edge:{edge_type}:{from_node_type}:{from_node_id}:{to_node_type}:{to_node_id}:{project_id or ''}"
+        ts = utcnow()
+        for attempt in range(3):
+            eid = hash_id(f"{base}:{time.time_ns()}:{attempt}")
+            try:
+                self._conn.execute(
+                    """INSERT INTO memory_graph_edges
+                       (id, ts, edge_type, from_node_type, from_node_id, to_node_type, to_node_id, project_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        eid,
+                        ts,
+                        edge_type[:32],
+                        from_node_type[:40],
+                        from_node_id,
+                        to_node_type[:40],
+                        to_node_id,
+                        project_id,
+                    ),
+                )
+                self._conn.commit()
+                return eid
+            except sqlite3.IntegrityError:
+                continue
+        raise sqlite3.IntegrityError("Failed to insert unique memory_graph_edges id after retries")
 
     def get_episode_ids_for_strategy(
         self, strategy_profile_id: str, domain: str | None = None, limit: int = 50

@@ -488,6 +488,7 @@ If memory shows past failures, account for them.
 If playbooks exist for relevant domains, follow their strategies.
 
 Research: If state contains "research_projects" with projects where status != "done" and phase is not "done", consider suggesting "research-cycle" as an action with the project id as reason/context (e.g. action "research-cycle", reason "advance project <project_id>"). Prefer one research-cycle per plan step. Use the workflow id "research-cycle" and the request must be the project id. Research playbooks in state (research_playbooks) describe strategies for different research domains; use them when planning research-related actions.
+Do NOT suggest "research-init". The Brain is not allowed to start new research projects; only advance existing ones via "research-cycle". New research runs are started only via UI/Telegram or other explicit triggers.
 
 SELF-HEALING (Plumber): If you observe repeated job failures (2+ failures in the same workflow), suggest action "plumber:diagnose-and-fix" with reason describing the failing workflow (e.g. "research-cycle repeated failures, likely script error"). The Plumber can:
 - Detect and fix shell syntax errors in workflow scripts
@@ -575,6 +576,8 @@ Incorporate applicable principles into your plan reasoning."""
         """Select the specific action to execute based on the plan and governance level."""
         trace_id = plan.get("_trace_id", _trace_id())
         actions = plan.get("plan", [])
+        # Brain must not start new research; filter out research-init so we pick the next allowed action
+        actions = [a for a in actions if (a.get("action") or "") != "research-init"]
 
         if not actions:
             decision = {
@@ -654,6 +657,20 @@ Incorporate applicable principles into your plan reasoning."""
             "self-heal", "plumber",
         ):
             return self._act_plumber(action, decision, trace_id)
+
+        # --- Brain must not start new research runs (only advance existing via research-cycle) ---
+        if action == "research-init":
+            result = {
+                "executed": False,
+                "reason": "Brain is not allowed to start new research runs; only UI/Telegram or explicit triggers may do so.",
+                "action": action,
+            }
+            self.memory.record_episode(
+                "act_skipped",
+                "research-init blocked: Brain may not start new research projects",
+            )
+            result["_trace_id"] = trace_id
+            return result
 
         workflow = action if (WORKFLOWS / f"{action}.sh").exists() else None
 
