@@ -21,19 +21,44 @@ export interface AgentActivityEntry {
   run_dir?: string;
 }
 
+/** Parse JSONL: one object per line (compact) or multi-line pretty-printed objects */
+function parseJsonl(raw: string): AgentActivityEntry[] {
+  const entries: AgentActivityEntry[] = [];
+  const lines = raw.split("\n");
+  let buffer = "";
+  let depth = 0;
+  for (const line of lines) {
+    buffer += (buffer ? "\n" : "") + line;
+    for (const c of line) {
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+    }
+    if (depth === 0 && buffer.trim()) {
+      try {
+        const e = JSON.parse(buffer) as AgentActivityEntry;
+        if (e.ts && e.from && e.to) entries.push(e);
+      } catch {
+        // skip malformed
+      }
+      buffer = "";
+    }
+  }
+  if (buffer.trim()) {
+    try {
+      const e = JSON.parse(buffer) as AgentActivityEntry;
+      if (e.ts && e.from && e.to) entries.push(e);
+    } catch {
+      //
+    }
+  }
+  return entries;
+}
+
 export async function GET() {
   try {
     const raw = await readFile(LOG_FILE, "utf-8").catch(() => "");
-    const lines = raw.split("\n").filter(Boolean);
-    const entries: AgentActivityEntry[] = [];
-    for (let i = lines.length - 1; i >= 0 && entries.length < MAX_ENTRIES; i--) {
-      try {
-        const e = JSON.parse(lines[i]) as AgentActivityEntry;
-        if (e.ts && e.from && e.to) entries.push(e);
-      } catch {
-        // skip malformed lines
-      }
-    }
+    const all = parseJsonl(raw);
+    const entries = all.slice(-MAX_ENTRIES).reverse();
     return NextResponse.json({ entries });
   } catch (e) {
     return NextResponse.json(

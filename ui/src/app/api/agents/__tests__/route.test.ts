@@ -14,7 +14,7 @@ describe("API agents route", () => {
     const { listAgents, listWorkflows } = await import("@/lib/operator/agents");
     vi.mocked(listAgents).mockResolvedValueOnce([{ id: "a1", name: "Agent 1", source: "openclaw" }]);
     vi.mocked(listWorkflows).mockResolvedValueOnce([
-      { id: "factory-cycle", name: "Factory Cycle", description: "Discover → Match → Pack → Deliver" },
+      { id: "research-init", name: "Research Init", description: "Legt neues Research-Projekt an" },
       { id: "planner", name: "Planner", description: "Plant nächste Schritte (LLM)" },
     ]);
     const { GET } = await import("@/app/api/agents/route");
@@ -24,7 +24,7 @@ describe("API agents route", () => {
     expect(json.agents).toHaveLength(1);
     expect(json.agents[0].id).toBe("a1");
     expect(json.workflows).toHaveLength(2);
-    expect(json.workflows[0].id).toBe("factory-cycle");
+    expect(json.workflows[0].id).toBe("research-init");
   });
 
   it("GET returns 500 when listAgents throws", async () => {

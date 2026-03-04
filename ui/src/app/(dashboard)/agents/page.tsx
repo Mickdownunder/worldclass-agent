@@ -6,7 +6,6 @@ export const dynamic = "force-dynamic";
 
 type WorkflowCategory =
   | "research"
-  | "factory"
   | "tools"
   | "infra"
   | "brain"
@@ -19,17 +18,15 @@ const CATEGORY_META: Record<
 > = {
   research: { label: "Research", short: "Forschung", order: 0 },
   brain: { label: "Brain & Qualität", short: "Planung, Bewertung", order: 1 },
-  factory: { label: "Factory & Opportunity", short: "Discover, Pack, Dispatch", order: 2 },
-  tools: { label: "Tools", short: "Tool-Ideen, Eval, Use", order: 3 },
-  infra: { label: "Infrastruktur", short: "Status, Signals", order: 4 },
-  product: { label: "Produkt", short: "Spec, Skeleton", order: 5 },
-  other: { label: "Sonstige", short: "Knowledge, Goals, Queue", order: 6 },
+  tools: { label: "Tools", short: "Tool-Ideen, Eval, Use", order: 2 },
+  infra: { label: "Infrastruktur", short: "Status, Signals", order: 3 },
+  product: { label: "Produkt", short: "Spec, Skeleton", order: 4 },
+  other: { label: "Sonstige", short: "Knowledge, Goals", order: 5 },
 };
 
 function getWorkflowCategory(id: string): WorkflowCategory {
   if (id === "research-init" || id === "research-cycle") return "research";
   if (id === "planner" || id === "critic" || id === "prioritize") return "brain";
-  if (id === "factory-cycle" || id.startsWith("opportunity-")) return "factory";
   if (id.startsWith("tool-")) return "tools";
   if (
     id === "infra-status" ||
@@ -230,7 +227,7 @@ export default async function AgentsPage() {
           Du entscheidest nicht – das System entscheidet
         </h2>
         <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--tron-text)" }}>
-          Du gibst nur die <strong>Forschungsfrage</strong> oder das <strong>Ziel</strong> ein. Welcher Workflow wann läuft, entscheidet der <strong>Brain</strong>: Er sieht offene Research-Projekte, nutzt Memory und Principles und startet von sich aus <em>research-cycle</em>, <em>planner</em>, <em>factory-cycle</em> oder was gerade passt. Du klickst nicht auf einzelne Workflows – du startest Research (eine Frage) oder einen Brain Cycle (Brain wählt die nächste Aktion).
+          Du gibst nur die <strong>Forschungsfrage</strong> oder das <strong>Ziel</strong> ein. Welcher Workflow wann läuft, entscheidet der <strong>Brain</strong>: Er sieht offene Research-Projekte, nutzt Memory und Principles und startet von sich aus <em>research-cycle</em>, <em>planner</em> oder was gerade passt. Du klickst nicht auf einzelne Workflows – du startest Research (eine Frage) oder einen Brain Cycle (Brain wählt die nächste Aktion).
         </p>
         <ul className="mt-3 space-y-1 text-sm" style={{ color: "var(--tron-text-muted)" }}>
           <li><strong className="text-tron-text">Research:</strong> Frage eingeben → System legt Projekt an und führt alle Phasen bis zum Report (oder du lässt den Brain research-cycle für offene Projekte wählen).</li>
@@ -295,7 +292,7 @@ export default async function AgentsPage() {
             ))}
         </div>
         <div className="mt-3 flex flex-wrap gap-4 text-xs" style={{ color: "var(--tron-text-dim)" }}>
-          <span>June: june-delegate-argus &lt;status|research|factory|full&gt;</span>
+          <span>June: june-delegate-argus &lt;status|research|full&gt;</span>
           <span>ARGUS → ATLAS: Sandbox-Runs, GATE_ATLAS</span>
         </div>
       </section>

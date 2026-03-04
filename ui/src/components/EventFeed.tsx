@@ -19,7 +19,6 @@ function humanLabel(type: string, payload: string): { text: string; jobId?: stri
     if (status === "RUNNING") return { text: "Läuft …", jobId };
     if (workflowId === "research-init") return { text: "Research-Projekt angelegt", jobId };
     if (workflowId === "research-cycle") return { text: "Research: Ein Schritt erledigt", jobId };
-    if (workflowId === "factory-cycle") return { text: "Factory durchgelaufen", jobId };
     if (workflowId?.startsWith("research-")) return { text: `Research: ${status === "DONE" ? "erledigt" : status}`, jobId };
     return { text: status === "DONE" ? "Erledigt" : status ?? payload, jobId };
   }

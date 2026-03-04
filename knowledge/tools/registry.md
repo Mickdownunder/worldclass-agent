@@ -1,7 +1,7 @@
 # Tool Registry
 
 ## Purpose
-Track tools created by the operator factory.
+Track tools created by the operator.
 
 ## Tools
 - [2026-02-25T10:38:19Z] infra-summary created

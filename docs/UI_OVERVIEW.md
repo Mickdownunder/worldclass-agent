@@ -14,8 +14,8 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 - **System-Health:** Status OK/Eingeschränkt, Disk, Load, fehlgeschlagene Jobs.
 - **Aktive Research-Projekte:** Liste mit Phase, Findings-Anzahl, Fortschrittsbalken (explore → … → synthesize). Klick → Projekt-Detail.
 - **Letzte Aktionen:** Event-Feed (was zuletzt passiert ist).
-- **Quick-Actions:** Factory, Brain Cycle etc. (mit Bestätigung).
-- **Links:** Neues Research-Projekt, Jobs, Packs, Brain & Memory.
+- **Quick-Actions:** Brain Cycle etc. (mit Bestätigung).
+- **Links:** Neues Research-Projekt, Jobs, Brain & Memory.
 
 **So verstehst du es:** Das Command Center ist die **Startseite**. Von hier aus siehst du, ob das System gesund ist und ob Research-Projekte laufen. Alles Weitere (Research starten, Projekt öffnen, Jobs) geht von hier oder über die Nav.
 
@@ -138,7 +138,7 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 - **Agents** (`/agents`): Übersicht **wer läuft und was eingesetzt wird**: Haupt-Agenten Captain (Operator/Brain/Workflows) und June (OpenClaw/Telegram) mit „Einsatz/Nutzt“-Liste; **Delegationskette** June → ARGUS (Senior Research Engineer) → ATLAS (Sandbox-Validierung), inkl. june-delegate-argus und GATE_ATLAS. **Agent Activity** (`/agents/activity`): Timeline wer wen beauftragt hat und welches Ergebnis (OVERALL, RECOMMENDATION, ATLAS_*); Einträge aus `logs/agent-activity.jsonl`. June läuft auf dem **Server**; Konfiguration und Exec-Zugriff siehe `docs/TOOL_AGENT_SYSTEM_AUDIT.md` (Abschnitt 3.2). Workflows nach Kategorie mit Tabellen und Badge **„Von UI startbar“** für `ALLOWED_WORKFLOWS`. Details: `docs/TOOL_AGENT_SYSTEM_AUDIT.md`.
 - **Insights** (`/research/insights`): Cross-Domain-Insights (Findings über Projekte hinweg).
 
-(Packs und Clients sind in der UI nicht mehr angeboten; Backend/Factory nutzt weiterhin `factory/packs` und `factory/clients`.)
+(Factory, Queue, Opportunity und Packs/Clients sind entfernt; nur Research, Brain, Tools, Infra bleiben.)
 
 Alles liest bzw. triggert gegen den gleichen Operator (Dateisystem + `op`).
 

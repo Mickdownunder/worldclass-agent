@@ -13,9 +13,8 @@ const AUDIT_LOG = path.join(OPERATOR_ROOT, "logs", "ui-audit.log");
 const SEND_TELEGRAM = path.join(OPERATOR_ROOT, "tools", "send-telegram.sh");
 const RUN_UNTIL_DONE = path.join(OPERATOR_ROOT, "tools", "run-research-cycle-until-done.sh");
 
-/** Workflows allowed to be triggered from the UI */
+/** Workflows allowed to be triggered from the UI (no factory/queue/opportunity) */
 export const ALLOWED_WORKFLOWS = new Set([
-  "factory-cycle",
   "research-init",
   "research-cycle",
   "autopilot-infra",
@@ -24,12 +23,6 @@ export const ALLOWED_WORKFLOWS = new Set([
   "infra-status",
   "knowledge-commit",
   "goal-progress",
-  "opportunity-discovery",
-  "opportunity-ingest",
-  "opportunity-select",
-  "opportunity-dispatch",
-  "queue-run",
-  "queue-notify",
   "critic",
   "prioritize",
 ]);
@@ -78,10 +71,6 @@ export async function retryJob(jobId: string): Promise<{ ok: boolean; error?: st
     await audit("retry", { jobId }, { ok: false, message: err });
     return { ok: false, error: err };
   }
-}
-
-export async function runFactoryCycle(): Promise<{ ok: boolean; jobId?: string; error?: string }> {
-  return runWorkflow("factory-cycle", "ui-trigger");
 }
 
 /**
