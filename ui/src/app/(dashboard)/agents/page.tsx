@@ -42,18 +42,36 @@ function getWorkflowCategory(id: string): WorkflowCategory {
   return "other";
 }
 
-function AgentCard({ agent }: { agent: AgentInfo }) {
+function AgentCard({
+  agent,
+  showDelegationBox = true,
+  compact = false,
+}: {
+  agent: AgentInfo;
+  showDelegationBox?: boolean;
+  compact?: boolean;
+}) {
   const isCaptain = agent.id === "captain";
   const isJune = agent.id === "june";
+  const isSubagent = agent.source === "subagent";
+  const badgeLabel =
+    agent.source === "openclaw"
+      ? "OpenClaw · Telegram"
+      : agent.source === "subagent"
+        ? "Sub-Agent"
+        : "Operator";
+  const icon = isCaptain ? "⚙" : isJune ? "💬" : agent.id === "argus" ? "🔬" : agent.id === "atlas" ? "🛡" : "•";
   return (
     <div
-      className="rounded-xl border p-6 transition-colors hover:border-tron-accent/40"
+      className={`rounded-xl border p-6 transition-colors hover:border-tron-accent/40 ${compact ? "p-4" : ""}`}
       style={{
         borderColor: "var(--tron-border)",
         background:
           isCaptain || isJune
             ? "linear-gradient(135deg, color-mix(in srgb, var(--tron-accent) 6%, transparent) 0%, var(--tron-bg-panel) 100%)"
-            : "var(--tron-bg-panel)",
+            : isSubagent
+              ? "linear-gradient(135deg, color-mix(in srgb, var(--tron-accent) 4%, transparent) 0%, var(--tron-bg-panel) 100%)"
+              : "var(--tron-bg-panel)",
       }}
     >
       <div className="flex items-start gap-4">
@@ -64,17 +82,24 @@ function AgentCard({ agent }: { agent: AgentInfo }) {
               ? "color-mix(in srgb, var(--tron-accent) 18%, transparent)"
               : isJune
                 ? "color-mix(in srgb, var(--tron-success, #22c55e) 18%, transparent)"
-                : "var(--tron-bg)",
+                : isSubagent
+                  ? "color-mix(in srgb, var(--tron-accent) 12%, transparent)"
+                  : "var(--tron-bg)",
             border: "1px solid var(--tron-border)",
           }}
         >
-          {isCaptain ? "⚙" : isJune ? "💬" : "•"}
+          {icon}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-lg font-semibold" style={{ color: "var(--tron-text)" }}>
+            <h3 className={`font-semibold ${compact ? "text-base" : "text-lg"}`} style={{ color: "var(--tron-text)" }}>
               {agent.name}
             </h3>
+            {agent.delegationFrom && (
+              <span className="text-[10px]" style={{ color: "var(--tron-text-dim)" }}>
+                ← delegiert von {agent.delegationFrom}
+              </span>
+            )}
             <span
               className="rounded px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
               style={{
@@ -86,7 +111,7 @@ function AgentCard({ agent }: { agent: AgentInfo }) {
                 border: "1px solid var(--tron-border)",
               }}
             >
-              {agent.source === "openclaw" ? "OpenClaw · Telegram" : "Operator"}
+              {badgeLabel}
             </span>
           </div>
           {agent.description && (
@@ -104,26 +129,29 @@ function AgentCard({ agent }: { agent: AgentInfo }) {
               <span className="font-medium">Läuft auf:</span> {agent.location}
             </p>
           )}
-          <div className="mt-4 rounded-lg border py-2.5 px-3" style={{ borderColor: "var(--tron-border)", background: "var(--tron-bg)" }}>
-            <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--tron-text-dim)" }}>
-              {isCaptain ? "Einsatz" : "Nutzt"}
+          {showDelegationBox && (isCaptain || isJune) && (
+            <div className="mt-4 rounded-lg border py-2.5 px-3" style={{ borderColor: "var(--tron-border)", background: "var(--tron-bg)" }}>
+              <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--tron-text-dim)" }}>
+                {isCaptain ? "Einsatz" : "Nutzt / delegiert"}
+              </div>
+              <ul className="mt-1.5 space-y-0.5 text-sm" style={{ color: "var(--tron-text)" }}>
+                {isCaptain && (
+                  <>
+                    <li><strong>Brain</strong> — Perceive → Understand → Think → Decide → Act → Reflect</li>
+                    <li><strong>Workflows</strong> — alle unten gelisteten Skripte (op job new + op run)</li>
+                    <li><strong>Plumber</strong> — Self-Healing bei wiederholten Workflow-Fehlern</li>
+                  </>
+                )}
+                {isJune && (
+                  <>
+                    <li><strong>Research</strong> — /research-start, /research-cycle, /research-go, /research-feedback</li>
+                    <li><strong>Jobs</strong> — startet Workflows über op</li>
+                    <li><strong>Delegation</strong> — june-delegate-argus → ARGUS (research engineer) → ATLAS (sandbox)</li>
+                  </>
+                )}
+              </ul>
             </div>
-            <ul className="mt-1.5 space-y-0.5 text-sm" style={{ color: "var(--tron-text)" }}>
-              {isCaptain && (
-                <>
-                  <li><strong>Brain</strong> — Perceive → Understand → Think → Decide → Act → Reflect</li>
-                  <li><strong>Workflows</strong> — alle unten gelisteten Skripte (op job new + op run)</li>
-                  <li><strong>Plumber</strong> — Self-Healing bei wiederholten Workflow-Fehlern</li>
-                </>
-              )}
-              {isJune && (
-                <>
-                  <li><strong>Research</strong> — /research-start, /research-cycle, /research-go, /research-feedback</li>
-                  <li><strong>Jobs</strong> — startet Workflows über op (wie Captain)</li>
-                </>
-              )}
-            </ul>
-          </div>
+          )}
         </div>
       </div>
     </div>
@@ -217,20 +245,58 @@ export default async function AgentsPage() {
             Agents & Workflows
           </h1>
           <p className="mt-1 max-w-xl text-sm" style={{ color: "var(--tron-text-muted)" }}>
-            Wer im System läuft (Captain = Brain + Workflows, June = Telegram) und welche Workflows der Brain starten kann – zur Übersicht, nicht zum Auswählen.
+            Captain = Operator (Brain/Workflows). June = Telegram-Agent, delegiert an ARGUS → ATLAS. Welche Workflows der Brain starten kann – zur Übersicht.
           </p>
         </div>
+        <Link
+          href="/agents/activity"
+          className="rounded-lg border px-3 py-2 text-sm font-medium transition-colors hover:opacity-90"
+          style={{
+            borderColor: "var(--tron-border)",
+            background: "color-mix(in srgb, var(--tron-accent) 12%, transparent)",
+            color: "var(--tron-accent)",
+          }}
+        >
+          Agent Activity →
+        </Link>
       </div>
 
-      {/* ── Agenten ────────────────────────────────────────────── */}
+      {/* ── Haupt-Agenten: Captain (Operator), June (OpenClaw) ─── */}
       <section>
         <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--tron-text-dim)" }}>
           Haupt-Agenten
         </h2>
         <div className="grid gap-5 sm:grid-cols-2">
-          {agents.map((a) => (
+          {agents.filter((a) => a.source !== "subagent").map((a) => (
             <AgentCard key={a.id} agent={a} />
           ))}
+        </div>
+      </section>
+
+      {/* ── Delegationskette: June → ARGUS → ATLAS ─────────────── */}
+      <section>
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider" style={{ color: "var(--tron-text-dim)" }}>
+          Delegationskette (June)
+        </h2>
+        <p className="mb-4 text-sm" style={{ color: "var(--tron-text-muted)" }}>
+          June delegiert Ausführung an ARGUS; ARGUS nutzt ATLAS für Sandbox-Validierung. Vor Promotion-Entscheidungen muss GATE_ATLAS (und weitere Gates) passen.
+        </p>
+        <div className="flex flex-wrap items-stretch gap-2">
+          <span className="flex items-center px-2 text-sm font-medium" style={{ color: "var(--tron-text)" }}>June</span>
+          <span className="flex items-center text-sm" style={{ color: "var(--tron-text-dim)" }} aria-hidden>→</span>
+          {agents
+            .filter((a) => a.source === "subagent")
+            .sort((a, b) => (a.id === "argus" ? 0 : 1) - (b.id === "argus" ? 0 : 1))
+            .map((a, i) => (
+              <span key={a.id} className="contents">
+                {i > 0 && <span className="flex items-center text-sm" style={{ color: "var(--tron-text-dim)" }} aria-hidden>→</span>}
+                <AgentCard agent={a} showDelegationBox={false} compact />
+              </span>
+            ))}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-4 text-xs" style={{ color: "var(--tron-text-dim)" }}>
+          <span>June: june-delegate-argus &lt;status|research|factory|full&gt;</span>
+          <span>ARGUS → ATLAS: Sandbox-Runs, GATE_ATLAS</span>
         </div>
       </section>
 

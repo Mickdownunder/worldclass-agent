@@ -10,7 +10,7 @@ Stand: System vollständig durchdrungen. Bewertung: Sinnhaftigkeit, Wert, Lücke
 |-------|------------|
 | **Operator** | Autonomes Job-Orchestrierungs- und Research-System. Einträge: `bin/op`, `bin/brain`, `tools/operator-dispatch`. Daten: `OPERATOR_ROOT` (z.B. `/root/operator`). |
 | **Tools** | Alles unter `operator/tools/`: Research-Python-Skripte (`research_*.py`), Shell-Skripte (z.B. `infra-summary.sh`, `run-research-cycle-until-done.sh`), Opportunity/Memory/Dispatch. **Tool-Verträge:** `tools/research_tool_registry.py` definiert pro Research-Tool required_env, min_argv, project_id_arg_index; `ensure_tool_context(tool_name)` in den Tools prüft beim Start (bei `RESEARCH_STRICT_TOOL_CONTEXT=1` hart, sonst nur Warnung). Plumber prüft „missing_contracts“ (referenzierte Tools ohne Eintrag). Factory-Tools: `knowledge/tools/registry.md`. |
-| **Agenten** | **Captain** (Brain + Workflows + Jobs), **June** (OpenClaw/Telegram). Dazu: **Research Conductor** (nur Implementierung in `research_conductor.py`, nicht in der UI als „Agent“ gelistet). Workflow-Labels in der UI (Planner, Critic, Tool Use, …) sind **keine** eigenen Agenten, sondern Namen für ausführbare Workflows. |
+| **Agenten** | **Captain** (Operator: Brain + Workflows + Jobs), **June** (OpenClaw/Telegram), **ARGUS** (Sub-Agent: Senior Research Engineer), **ATLAS** (Sub-Agent: Sandbox-Validierung). Kette: June → ARGUS → ATLAS (june-delegate-argus, GATE_ATLAS). Dazu: **Research Conductor** (nur in `research_conductor.py`, nicht in der UI). Workflow-Labels in der UI sind **keine** eigenen Agenten. Die **Agents-Seite** zeigt Haupt-Agenten + Delegationskette. |
 | **Tool-Connector** | **Existiert nicht.** Die Verdrahtung ist: (1) Workflows → Tools (Bash/Python), (2) Conductor → Tools (Subprocess), (3) Brain → Workflows (op), (4) UI/OpenClaw → Workflows/Tools (op + direkte Aufrufe). |
 
 ---
@@ -58,16 +58,22 @@ Stand: System vollständig durchdrungen. Bewertung: Sinnhaftigkeit, Wert, Lücke
 
 ### 3.2 June (OpenClaw)
 
-- **Rolle:** Telegram-Agent; startet Research (`/research-start`, `/research-cycle`, `/research-go`), sendet Feedback (`/research-feedback`). Nutzt `op` für Jobs und direkte Tool-Aufrufe (z.B. `research_feedback.py`).
+- **Rolle:** Telegram-Agent (General); startet Research (`/research-start`, `/research-cycle`, `/research-go`), sendet Feedback (`/research-feedback`). Delegiert Ausführung an **ARGUS** via `june-delegate-argus <status|research|factory|full>`. Nutzt `op` für Jobs und direkte Tool-Aufrufe (z.B. `research_feedback.py`).
 - **Wo June läuft:** June läuft **auf dem Server** (dem Host, auf dem auch Operator/UI und OpenClaw Gateway laufen), **nicht** auf dem lokalen Rechner. Konfiguration: `~/.openclaw/` auf diesem Server; Workspace: `AGENT_WORKSPACE` (Default `/root/agent/workspace`). Identity: `agent/workspace/IDENTITY.md` (Name: June). Für vollen Systemzugriff auf **diesem Server**: `tools.exec.host: "gateway"`, `tools.exec.security: "full"` in `openclaw.json` und `exec-approvals.json` mit `security: "full"` (dann kann June beliebige Befehle auf dem Server ausführen).
 - **Bewertung:** **Sinnvoll und wertvoll.** Einheitliche Schnittstelle für Research und Feedback; Konsistenz mit UI (beide nutzen dieselben Workflows/Tools).
 
-### 3.3 Research Conductor
+### 3.3 ARGUS & ATLAS (Sub-Agenten, UI sichtbar)
+
+- **ARGUS:** Senior Research Engineer. Wird von June per `june-delegate-argus` aufgerufen; führt deterministische Runs aus (status, research, factory, full), liefert Evidence-Pfade und Empfehlung. Ruft **ATLAS** für Sandbox-Validierung auf.
+- **ATLAS:** Sandbox-Validierung. Gate-Signal (GATE_ATLAS) vor Promotion-Empfehlungen. June nutzt ATLAS-Ergebnis vor Promotion-Entscheidungen (laut `june_control_spec_v1.md`).
+- **UI:** Agents-Seite zeigt die Delegationskette June → ARGUS → ATLAS explizit; `listAgents()` in `ui/src/lib/operator/agents.ts` liefert alle vier (Captain, June, ARGUS, ATLAS).
+
+### 3.4 Research Conductor
 
 - **Rolle:** Orchestriert Research bei `RESEARCH_USE_CONDUCTOR=1`: begrenzter State (6 Metriken), 4 Aktionen, LLM + Fallback, max 25 Schritte. Führt Research-Tools per Subprocess aus.
 - **Bewertung:** **Sinnvoll und wertvoll.** Entlastet die starre Phasenfolge; dynamische Entscheidung „was als Nächstes“. Nicht in `listAgents()` – bewusst, da kein Nutzer sichtbarer „Agent“, sondern interne Steuerung. **Passt so.**
 
-### 3.4 Workflow-Labels (UI „Agents“-Seite)
+### 3.5 Workflow-Labels (UI „Agents“-Seite)
 
 - **Rolle:** `listWorkflows()` liest `workflows/*.sh` und mappt IDs auf Namen/Beschreibung via `WORKFLOW_LABELS` in `ui/src/lib/operator/agents.ts`. Fehlt ein Eintrag, wird aus der ID ein lesbarer Name generiert (z.B. „Research Cycle“).
 - **Lücke:** **research-cycle** und **research-init** hatten **keine** expliziten Labels; sie erschienen mit generierten Namen. Empfohlen: Einträge in `WORKFLOW_LABELS` für research-init, research-cycle (und ggf. weitere Research-Workflows) ergänzen – dann sind Bezeichnungen und Doku konsistent.

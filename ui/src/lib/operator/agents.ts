@@ -9,10 +9,12 @@ export interface AgentInfo {
   id: string;
   name: string;
   description?: string;
-  source: "openclaw" | "workflow";
+  source: "openclaw" | "workflow" | "subagent";
   details?: string;
   /** Wo der Agent läuft (z. B. "Server" für June). */
   location?: string;
+  /** Für Sub-Agenten: ID des Agenten, von dem delegiert wird (Kette June → ARGUS → ATLAS). */
+  delegationFrom?: string;
 }
 
 /** Human-readable names and short descriptions for operator workflows */
@@ -51,16 +53,16 @@ const WORKFLOW_LABELS: Record<string, { name: string; desc: string }> = {
 export async function listAgents(): Promise<AgentInfo[]> {
   const out: AgentInfo[] = [];
 
-  // Captain = Operator / Agent-System (Brain, Workflows, Jobs) — nicht OpenClaw
+  // Captain = Operator / Agent-System (Brain, Workflows, Jobs) — kein Chat-Agent
   out.push({
     id: "captain",
     name: "Captain",
-    description: "Agent-System: Brain, Workflows, Jobs. Läuft autonom, nicht in Telegram.",
+    description: "Operator: Brain, Workflows, Jobs. Läuft autonom, nicht in Telegram.",
     source: "workflow",
-    details: "Operator – der andere Agent neben June.",
+    details: "Kein eigener Agent – Bezeichnung für das System (Brain startet Workflows).",
   });
 
-  // June = OpenClaw, der Agent mit dem du in Telegram schreibst; läuft auf dem Server
+  // June = OpenClaw, General; delegiert an ARGUS
   try {
     const identityPath = path.join(AGENT_WORKSPACE, "IDENTITY.md");
     const raw = await readFile(identityPath, "utf-8");
@@ -79,11 +81,29 @@ export async function listAgents(): Promise<AgentInfo[]> {
     out.push({
       id: "june",
       name: "June",
-      description: "Der Agent, mit dem du in Telegram schreibst.",
+      description: "Der Agent, mit dem du in Telegram schreibst. Delegiert Ausführung an ARGUS.",
       source: "openclaw",
       location: "Server (OpenClaw Gateway + Operator; nicht auf dem Rechner)",
     });
   }
+
+  // Sub-Agenten: June → ARGUS → ATLAS (laut june_control_spec_v1.md)
+  out.push({
+    id: "argus",
+    name: "ARGUS",
+    description: "Senior Research Engineer. Führt deterministische Runs aus (status, research, factory, full).",
+    source: "subagent",
+    details: "June ruft june-delegate-argus auf; ARGUS liefert Evidence-Pfade und Empfehlung.",
+    delegationFrom: "june",
+  });
+  out.push({
+    id: "atlas",
+    name: "ATLAS",
+    description: "Sandbox-Validierung. Gate für Promotion-Empfehlungen (GATE_ATLAS).",
+    source: "subagent",
+    details: "Wird von ARGUS aufgerufen. June nutzt ATLAS-Ergebnis vor Promotion-Entscheidungen.",
+    delegationFrom: "argus",
+  });
 
   return out;
 }
