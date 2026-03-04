@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+query="${*:-}"
+if [ "${#query}" -gt 1200 ]; then
+  echo "query too long (max 1200 chars)" >&2
+  exit 2
+fi
+
+if [ -z "$query" ]; then
+  exec /root/operator/bin/brain memory
+fi
+
+exec /root/operator/bin/brain memory --query "$query"

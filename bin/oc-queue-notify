@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$#" -ne 0 ]; then
+  echo "Usage: oc-queue-notify" >&2
+  exit 2
+fi
+job_dir="$({ /root/operator/bin/op job new --workflow queue-notify --request telegram; } )"
+exec /root/operator/bin/op run "$job_dir" --timeout 120

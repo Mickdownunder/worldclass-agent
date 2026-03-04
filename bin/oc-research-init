@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$#" -lt 1 ]; then
+  echo "Usage: oc-research-init <request text>" >&2
+  exit 2
+fi
+request="$*"
+if [ "${#request}" -gt 4000 ]; then
+  echo "request too long (max 4000 chars)" >&2
+  exit 2
+fi
+job_dir="$({ /root/operator/bin/op job new --workflow research-init --request "$request"; } )"
+exec /root/operator/bin/op run "$job_dir" --timeout 900
