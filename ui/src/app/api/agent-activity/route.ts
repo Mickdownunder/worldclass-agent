@@ -14,6 +14,7 @@ export interface AgentActivityEntry {
   to: string;
   plan: string;
   request?: string;
+  command?: string;
   overall?: string;
   recommendation?: string;
   atlas_overall?: string;

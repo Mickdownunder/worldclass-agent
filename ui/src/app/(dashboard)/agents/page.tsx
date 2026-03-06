@@ -143,7 +143,7 @@ function AgentCard({
                   <>
                     <li><strong>Research</strong> — /research-start, /research-cycle, /research-go, /research-feedback</li>
                     <li><strong>Jobs</strong> — startet Workflows über op</li>
-                    <li><strong>Delegation</strong> — june-delegate-argus → ARGUS (research engineer) → ATLAS (sandbox)</li>
+                    <li><strong>Command Plane</strong> — june-command-run kompiliert Missionen; Execution läuft über ARGUS → ATLAS</li>
                   </>
                 )}
               </ul>
@@ -245,17 +245,30 @@ export default async function AgentsPage() {
             Captain = Operator (Brain/Workflows). June = Telegram-Agent, delegiert an ARGUS → ATLAS. Welche Workflows der Brain starten kann – zur Übersicht.
           </p>
         </div>
-        <Link
-          href="/agents/activity"
-          className="rounded-lg border px-3 py-2 text-sm font-medium transition-colors hover:opacity-90"
-          style={{
-            borderColor: "var(--tron-border)",
-            background: "color-mix(in srgb, var(--tron-accent) 12%, transparent)",
-            color: "var(--tron-accent)",
-          }}
-        >
-          Agent Activity →
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/agents/command"
+            className="rounded-lg border px-3 py-2 text-sm font-medium transition-colors hover:opacity-90"
+            style={{
+              borderColor: "var(--tron-border)",
+              background: "color-mix(in srgb, var(--tron-success, #22c55e) 12%, transparent)",
+              color: "var(--tron-text)",
+            }}
+          >
+            Command Center →
+          </Link>
+          <Link
+            href="/agents/activity"
+            className="rounded-lg border px-3 py-2 text-sm font-medium transition-colors hover:opacity-90"
+            style={{
+              borderColor: "var(--tron-border)",
+              background: "color-mix(in srgb, var(--tron-accent) 12%, transparent)",
+              color: "var(--tron-accent)",
+            }}
+          >
+            Agent Activity →
+          </Link>
+        </div>
       </div>
 
       {/* ── Haupt-Agenten: Captain (Operator), June (OpenClaw) ─── */}
@@ -292,7 +305,7 @@ export default async function AgentsPage() {
             ))}
         </div>
         <div className="mt-3 flex flex-wrap gap-4 text-xs" style={{ color: "var(--tron-text-dim)" }}>
-          <span>June: june-delegate-argus &lt;status|research|full&gt;</span>
+          <span>June: june-command-run --execute (Mission Control)</span>
           <span>ARGUS → ATLAS: Sandbox-Runs, GATE_ATLAS</span>
         </div>
       </section>

@@ -86,7 +86,7 @@ export async function listAgents(): Promise<AgentInfo[]> {
     name: "ARGUS",
     description: "Senior Research Engineer. Führt deterministische Runs aus (status, research, full).",
     source: "subagent",
-    details: "June ruft june-delegate-argus auf; ARGUS liefert Evidence-Pfade und Empfehlung.",
+    details: "June startet Missionen über june-command-run; die Execution läuft danach kontrolliert über ARGUS und ATLAS.",
     delegationFrom: "june",
   });
   out.push({
