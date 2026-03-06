@@ -67,12 +67,12 @@ def model_for_lane(context: str) -> str:
             "cheap": os.environ.get("RESEARCH_VERIFY_MODEL_CHEAP", "gpt-4.1-mini"),
         },
         "synthesize": {
-            "strong": os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gemini-3.1-pro-preview"),
+            "strong": os.environ.get("RESEARCH_SYNTHESIS_MODEL", "gpt-5.4"),
             "mid": os.environ.get("RESEARCH_SYNTHESIS_MODEL_MID", "gemini-2.5-flash"),
             "cheap": os.environ.get("RESEARCH_SYNTHESIS_MODEL_CHEAP", "gpt-4.1-mini"),
         },
         "critic": {
-            "strong": os.environ.get("RESEARCH_CRITIQUE_MODEL", "gpt-5.2"),
+            "strong": os.environ.get("RESEARCH_CRITIQUE_MODEL", "gpt-5.4"),
             "mid": os.environ.get("RESEARCH_CRITIQUE_MODEL_MID", "gemini-2.5-flash"),
             "cheap": os.environ.get("RESEARCH_CRITIQUE_MODEL_CHEAP", "gpt-4.1-mini"),
         },

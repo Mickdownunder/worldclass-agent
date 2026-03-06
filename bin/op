@@ -500,7 +500,16 @@ def cmd_healthcheck():
     try:
         load_1, load_5, load_15 = os.getloadavg()
         checks["load_1m"] = round(load_1, 2)
-        checks["load_ok"] = load_1 < os.cpu_count() * 2
+        # Threshold: load_1 < cpu_count * factor (default 2). Override via HEALTHCHECK_LOAD_FACTOR or HEALTHCHECK_LOAD_MAX.
+        load_max = os.environ.get("HEALTHCHECK_LOAD_MAX")
+        if load_max is not None:
+            try:
+                checks["load_ok"] = load_1 < float(load_max)
+            except ValueError:
+                checks["load_ok"] = load_1 < os.cpu_count() * 2
+        else:
+            factor = float(os.environ.get("HEALTHCHECK_LOAD_FACTOR", "2"))
+            checks["load_ok"] = load_1 < os.cpu_count() * factor
     except OSError:
         checks["load_ok"] = True
 

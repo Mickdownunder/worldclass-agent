@@ -10,4 +10,11 @@ if [ "${#request}" -gt 4000 ]; then
   exit 2
 fi
 job_dir="$({ /root/operator/bin/op job new --workflow research-init --request "$request"; } )"
-exec /root/operator/bin/op run "$job_dir" --timeout 900
+/root/operator/bin/op run "$job_dir" --timeout 900
+project_id=""
+if [ -f "$job_dir/artifacts/project_id.txt" ]; then
+  project_id="$(cat "$job_dir/artifacts/project_id.txt")"
+fi
+if [ -n "$project_id" ]; then
+  echo "PROJECT_ID=$project_id"
+fi

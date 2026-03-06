@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Run a Python file in the research sandbox (safe, no network, numpy/scipy, timeout).
+# Used by ATLAS to execute thesis-validation code.
+# Usage: oc-atlas-sandbox-run-code <path_to_script.py> [timeout_seconds]
+
+set -euo pipefail
+OPERATOR_ROOT="${OPERATOR_ROOT:-/root/operator}"
+export PYTHONPATH="$OPERATOR_ROOT"
+exec python3 "$OPERATOR_ROOT/tools/run_sandbox_file.py" "$@"

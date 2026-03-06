@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
-request="${*:-telegram trigger}"
-if [ "${#request}" -gt 4000 ]; then
-  echo "request too long (max 4000 chars)" >&2
+if [ "$#" -lt 1 ]; then
+  echo "Usage: oc-research-cycle <project_id>" >&2
   exit 2
 fi
-job_dir="$({ /root/operator/bin/op job new --workflow research-cycle --request "$request"; } )"
+project_id="$1"
+if ! printf '%s' "$project_id" | grep -Eq '^proj-[A-Za-z0-9_-]+$'; then
+  echo "project_id must match proj-*" >&2
+  exit 2
+fi
+job_dir="$({ /root/operator/bin/op job new --workflow research-cycle --request "$project_id"; } )"
 exec /root/operator/bin/op run "$job_dir"
