@@ -98,6 +98,8 @@ export interface ResearchProjectSummary {
   reports_count: number;
   current_spend: number;
   domain: string;
+  parent_project_id?: string;
+  has_master_dossier?: boolean;
 }
 
 export interface QualityGateMetrics {

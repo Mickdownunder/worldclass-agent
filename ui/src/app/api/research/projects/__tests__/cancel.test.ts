@@ -60,7 +60,7 @@ describe("API research projects [id] cancel route", () => {
       question: "Q?",
       status: "active",
     } as never);
-    vi.mocked(cancelResearchProject).mockResolvedValueOnce({ killed: 1, status: "cancelled" });
+    vi.mocked(cancelResearchProject).mockResolvedValueOnce({ killed: 1, jobsReconciled: 1, status: "cancelled" });
     const { POST } = await import("@/app/api/research/projects/[id]/cancel/route");
     const res = await POST(new Request("http://x", { method: "POST" }), {
       params: Promise.resolve({ id: "proj-1" }),

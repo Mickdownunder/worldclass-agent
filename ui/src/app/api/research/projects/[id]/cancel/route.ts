@@ -1,11 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { getResearchProject, cancelResearchProject } from "@/lib/operator/research";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(
-  _request: NextRequest,
+  _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const ok = await getSession();
