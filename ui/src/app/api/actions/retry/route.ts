@@ -1,10 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { retryJob } from "@/lib/operator/actions";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   const ok = await getSession();
   if (!ok) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   try {

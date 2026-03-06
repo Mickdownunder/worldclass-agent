@@ -1,10 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
 import { authConfig } from "@/lib/auth/config";
 import { setSession, clearSession } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(request: NextRequest) {
+export async function POST(request: Request) {
   try {
     const body = await request.json();
     const password = typeof body.password === "string" ? body.password : "";

@@ -69,8 +69,9 @@ const primaryNav = [
 ];
 
 const secondaryNav = [
-  { href: "/agents",  label: "Agents",   icon: <IconBolt /> },
+  { href: "/agents", label: "Agents", icon: <IconBolt /> },
   { href: "/agents/activity", label: "Agent Activity", icon: <IconBolt /> },
+  { href: "/agents/command", label: "Command Missions", icon: <IconTerminal /> },
   { href: "/research/insights", label: "Insights", icon: <IconTerminal /> },
 ];
 

@@ -19,6 +19,10 @@
   --tron-grid: transparent;
   --tron-panel-hover: #141a24;
   --tron-border-strong: #283552;
+  /* Agent Activity — per-agent accents */
+  --agent-june: #14b8a6;
+  --agent-argus: #f59e0b;
+  --agent-atlas: #22c55e;
 }
 
 /* Light mode — clean professional */
@@ -40,6 +44,9 @@ html[data-theme="light"] {
   --tron-grid: transparent;
   --tron-panel-hover: #f7f9fc;
   --tron-border-strong: #b8c4dd;
+  --agent-june: #0d9488;
+  --agent-argus: #d97706;
+  --agent-atlas: #16a34a;
 }
 
 @theme inline {
@@ -138,6 +145,51 @@ button.tron-panel:hover {
 }
 .animate-slide-in-right {
   animation: slide-in-right 0.22s ease-out forwards;
+}
+
+/* Agent Activity — new entry highlight */
+@keyframes agent-entry-new {
+  from { opacity: 0; transform: translateY(-8px); box-shadow: 0 0 0 1px var(--tron-accent); }
+  to   { opacity: 1; transform: translateY(0); box-shadow: none; }
+}
+.animate-agent-entry-new {
+  animation: agent-entry-new 0.4s ease-out forwards;
+}
+
+/* Live indicator pulse */
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.animate-live-pulse {
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+/* Stronger live pulse (glow) for header and badges */
+@keyframes live-glow {
+  0%, 100% { opacity: 1; box-shadow: 0 0 8px 2px currentColor; }
+  50% { opacity: 0.85; box-shadow: 0 0 14px 4px currentColor; }
+}
+.animate-live-glow {
+  animation: live-glow 1.5s ease-in-out infinite;
+}
+
+/* Agent column pulse when this agent has the latest activity */
+@keyframes agent-column-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px var(--tron-border); }
+  50% { box-shadow: 0 0 0 2px var(--agent-pulse-color), 0 0 20px 2px var(--agent-pulse-glow); }
+}
+.animate-agent-column-pulse {
+  animation: agent-column-pulse 2s ease-in-out infinite;
+}
+
+/* Newest entry in feed: continuous subtle pulse */
+@keyframes newest-entry-pulse {
+  0%, 100% { border-left-color: var(--newest-pulse-color); box-shadow: inset 0 0 0 0 transparent; }
+  50% { border-left-color: var(--newest-pulse-color); box-shadow: inset 2px 0 0 0 var(--newest-pulse-color); }
+}
+.animate-newest-entry-pulse {
+  animation: newest-entry-pulse 1.2s ease-in-out infinite;
 }
 
 /* Headings — no forced uppercase */
