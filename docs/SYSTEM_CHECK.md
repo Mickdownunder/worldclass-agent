@@ -29,6 +29,8 @@ cd /root/operator
 
 **Wenn `healthy: false` oder viele `recent_failures`:** Disk/Load prüfen, fehlgeschlagene Jobs unter **Jobs** ansehen, Logs (`jobs/*/*/log.txt`) prüfen.
 
+**Load-Gate:** `load_ok` ist true wenn Load (1 min) < CPU-Anzahl × 2. Bei hoher Last (z. B. Load ~17 bei 8 CPUs) schlägt der Health-Check fehl; Agenten-Tests (ARGUS/ATLAS) starten dann nicht. Optional: `HEALTHCHECK_LOAD_FACTOR=3` (z. B. 8×3=24) oder `HEALTHCHECK_LOAD_MAX=25` setzen, um die Schwelle zu lockern. Wenn Master „Gate ignorieren“ freigibt, kann June `june-delegate-argus mini "… skip_health"` ausführen (ARGUS überspringt dann den Health-Step).
+
 ---
 
 ### 2. Research: Ein Durchlauf
@@ -82,6 +84,12 @@ cd /root/operator
 
 **Erfolg:** Nachricht kommt.  
 **Schrott:** Keine Nachricht trotz done (OpenClaw/send-telegram.sh, Token, Ziel-Chat prüfen).
+
+**Telegram/June „hängt“ (keine Antwort, lange Wartezeit):** Typische Ursachen: (1) **Streaming aus:** Wenn `channels.telegram.streaming` in `~/.openclaw/openclaw.json` auf `"off"` steht, siehst du erst die komplette Antwort – bei langen June-Läufen (Tools, Subagenten) wirkt das wie „hängt“. Abhilfe: `streaming: "progress"` (oder `"partial"`), dann Gateway neu starten. (2) **Stale-Socket:** Health-Monitor startet den Kanal neu, wenn Long-Poll lange inaktiv ist (z. B. June denkt 5+ Min); danach läuft es wieder. (3) Lange Subagent-/Tool-Läufe (z. B. ARGUS/ATLAS, `agent.wait` mehrere Minuten, Lane-Timeout) – dann wirkt die App „tot“, bis June fertig ist. Optional: `rg` (ripgrep) auf dem Server installieren, damit Exec-Tools nicht wegen „rg: command not found“ hängen; Timeouts/thinkingDefault in OpenClaw anpassen wenn gewünscht.
+
+**Telegram am PC: gleiche Antwort doppelt (Live-Stream + einmal komplett):** Am Handy kommt nur eine Nachricht, am PC erscheinen zwei – einmal der Live-Stream und einmal die komplette Antwort. Ursache: Das Gateway sendet vermutlich Stream-Updates (eine Nachricht wird bearbeitet) und danach die fertige Antwort **nochmal als neue Nachricht** statt die gleiche Nachricht nur zu bearbeiten. **Workaround:** In `~/.openclaw/openclaw.json` unter `channels.telegram` auf `"streaming": "off"` setzen und Gateway neu starten – dann kommt nur eine finale Nachricht (kein Live-Stream, dafür kein Doppel am PC). Sauberer Fix liegt im OpenClaw-Telegram-Kanal: Abschluss als **Edit** der bestehenden Nachricht, nicht als neue Nachricht senden.
+
+**June „hängt“ oder „stürzt ab“, wenn sie einen Test anlegen / Tests ausführen soll:** June delegiert an ARGUS (Subagent oder Exec `june-delegate-argus`). Wenn der **Subagent-Timeout** oder **Exec-Timeout** zu kurz ist, wird der Lauf abgebrochen (Timeout) – wirkt wie Absturz. In `~/.openclaw/openclaw.json` sollten stehen: `agents.defaults.subagents.runTimeoutSeconds: 7200` (2 h) und `tools.exec.timeoutSec: 7200`, damit research/mini/full durchlaufen können. Danach **Gateway neu starten**. Wenn June trotzdem Subagenten mit kürzerem Timeout anfordert, bleibt nur der Weg über reines Exec („Führe genau aus: june-delegate-argus mini …“) mit ausreichendem exec-timeout.
 
 ---
 
