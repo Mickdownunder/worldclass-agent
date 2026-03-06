@@ -113,6 +113,21 @@ class Memory:
     def recent_reflections(self, limit: int = 10, min_quality: float | None = None) -> list[dict]:
         return self._reflections.recent(limit, min_quality)
 
+    def recent_reflections_for_planning(
+        self,
+        limit: int = 10,
+        min_quality: float = 0.5,
+        exclude_low_signal: bool = True,
+        dedupe_outcome_prefix: int = 80,
+    ) -> list[dict]:
+        """Reflections for Think context: quality filter, no low-signal, deduped by workflow+outcome."""
+        return self._reflections.recent_for_planning(
+            limit=limit,
+            min_quality=min_quality,
+            exclude_low_signal=exclude_low_signal,
+            dedupe_outcome_prefix=dedupe_outcome_prefix,
+        )
+
     def reflection_for_job(self, job_id: str) -> dict | None:
         return self._reflections.for_job(job_id)
 

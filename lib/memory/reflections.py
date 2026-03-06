@@ -42,6 +42,40 @@ class Reflections:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def recent_for_planning(
+        self,
+        limit: int = 10,
+        min_quality: float = 0.5,
+        exclude_low_signal: bool = True,
+        dedupe_outcome_prefix: int = 80,
+    ) -> list[dict]:
+        """Recent reflections suitable for planning: quality filter, drop low-signal, dedupe by (workflow, outcome prefix)."""
+        rows = self._conn.execute(
+            "SELECT * FROM reflections WHERE quality >= ? ORDER BY quality DESC, ts DESC LIMIT ?",
+            (min_quality, limit * 6),  # fetch more for dedupe
+        ).fetchall()
+        out: list[dict] = []
+        for r in rows:
+            d = dict(r)
+            if exclude_low_signal:
+                try:
+                    meta = json.loads(d.get("metadata") or "{}")
+                    if meta.get("low_signal") is True:
+                        continue
+                except (TypeError, ValueError):
+                    pass
+            out.append(d)
+        # Dedupe: one per (workflow_id, outcome_prefix), keep highest quality
+        key_to_best: dict[tuple, dict] = {}
+        for d in out:
+            wf = ((d.get("workflow_id") or "").strip().lower()) or "unknown"
+            outcome = ((d.get("outcome") or "").strip().lower())[:dedupe_outcome_prefix]
+            key = (wf, outcome)
+            if key not in key_to_best or (d.get("quality") or 0) > (key_to_best[key].get("quality") or 0):
+                key_to_best[key] = d
+        deduped = sorted(key_to_best.values(), key=lambda x: (-(x.get("quality") or 0), x.get("ts") or ""))
+        return deduped[:limit]
+
     def for_job(self, job_id: str) -> dict | None:
         row = self._conn.execute(
             "SELECT * FROM reflections WHERE job_id=? ORDER BY ts DESC LIMIT 1", (job_id,)

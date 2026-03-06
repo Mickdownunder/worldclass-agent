@@ -3,18 +3,44 @@ Brain Context Compiler — High-signal context for the planner only.
 
 Builds a compact context from:
 - Accepted research findings only (admission_state = 'accepted')
-- Reflections with quality >= min_reflection_quality (default 0.35)
+- Reflections with quality >= min_reflection_quality, low_signal excluded, deduped by workflow+outcome
 
-Low-quality reflections are not included in planning context (telemetry only elsewhere).
+Low-quality and generic reflections are not included in planning (telemetry only elsewhere).
 - Strategic principles: causal type is prioritized over generic when injecting into think-context.
 """
 from __future__ import annotations
+
+import json
 
 # Hard budget (single source of truth for context size)
 MAX_FINDINGS_PER_PROJECT = 5
 MAX_PROJECTS = 10
 MAX_REFLECTIONS = 10
-MIN_REFLECTION_QUALITY = 0.35
+MIN_REFLECTION_QUALITY = 0.5  # was 0.35; raise so only clearly useful reflections reach Think
+DEDUPE_OUTCOME_PREFIX = 80  # same workflow + same outcome start = one representative
+
+
+def _filter_low_signal_reflections(reflections: list[dict], min_quality: float = MIN_REFLECTION_QUALITY) -> list[dict]:
+    """Drop low-quality and low_signal reflections for planning."""
+    out = []
+    for r in reflections:
+        q = r.get("quality")
+        try:
+            qv = float(q) if q is not None else 0.0
+        except (TypeError, ValueError):
+            qv = 0.0
+        if qv < float(min_quality):
+            continue
+        try:
+            meta = r.get("metadata")
+            if isinstance(meta, str):
+                meta = json.loads(meta or "{}")
+            if meta and meta.get("low_signal") is True:
+                continue
+        except (TypeError, ValueError):
+            pass
+        out.append(r)
+    return out
 
 
 def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
@@ -29,7 +55,9 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
     """
     if query and hasattr(memory, "retrieve_with_utility"):
         # Utility-ranked retrieval: two-phase semantic + utility re-rank
-        reflections = memory.retrieve_with_utility(query, "reflection", k=max_reflections, context_key=query)
+        raw_reflections = memory.retrieve_with_utility(query, "reflection", k=max_reflections, context_key=query)
+        # Exclude low-signal (generic) reflections from planning
+        reflections = _filter_low_signal_reflections(raw_reflections, min_quality=min_reflection_quality)
         findings = memory.retrieve_with_utility(query, "finding", k=20, context_key=query)
         principles = memory.retrieve_with_utility(query, "principle", k=5, context_key=query)
         memory_trace = {
@@ -89,8 +117,12 @@ def compile(memory, *, max_findings_per_project: int = MAX_FINDINGS_PER_PROJECT,
         })
     keys = list(by_project.keys())[:max_projects]
     by_project = {k: by_project[k] for k in keys}
-    recent = memory.recent_reflections(limit=max_reflections * 2)
-    high_reflections = [r for r in recent if (r.get("quality") or 0) >= min_reflection_quality][:max_reflections]
+    high_reflections = memory.recent_reflections_for_planning(
+        limit=max_reflections,
+        min_quality=min_reflection_quality,
+        exclude_low_signal=True,
+        dedupe_outcome_prefix=DEDUPE_OUTCOME_PREFIX,
+    )
 
     # Cross-workflow principles: retrieve top-scoring regardless of domain; prioritize causal
     principles = []

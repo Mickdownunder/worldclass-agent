@@ -49,6 +49,34 @@ GOVERNANCE_LEVELS = {
     3: "full_autonomous",
 }
 
+# Generic outcome/learnings patterns → mark as low_signal so planning skips them
+_REFLECTION_GENERIC_OUTCOMES = (
+    "job completed successfully",
+    "execution completed without errors",
+    "job status: done",
+)
+_REFLECTION_GENERIC_LEARNINGS_PREFIXES = ("metrik-basierte bewertung", "key takeaway for future")
+_REFLECTION_FAILURE_KEYWORDS = ("fail", "failed", "error", "timeout", "exception", "crash", "rollback")
+
+
+def _reflection_is_low_signal(outcome: str, learnings: str, quality: float) -> bool:
+    """True if reflection is generic/redundant with no actionable value for planning."""
+    out = (outcome or "").strip().lower()
+    learn = (learnings or "").strip().lower()
+    if not out:
+        return True
+
+    # Never classify explicit failure/error outcomes as low-signal.
+    if any(k in out for k in _REFLECTION_FAILURE_KEYWORDS):
+        return False
+
+    if out in _REFLECTION_GENERIC_OUTCOMES or "completed successfully" in out:
+        if len(learn) < 25 or any(learn.startswith(p) for p in _REFLECTION_GENERIC_LEARNINGS_PREFIXES):
+            return True
+    if len(learn) < 15 and 0.4 <= quality <= 0.85:
+        return True  # medium quality but no real takeaway
+    return False
+
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -262,7 +290,7 @@ class Brain:
         state["memory"] = self.memory.state_summary()
         state["memory"]["recent_reflections"] = [
             r for r in state["memory"].get("recent_reflections", [])
-            if (r.get("quality") or 0) >= 0.35
+            if (r.get("quality") or 0) >= 0.5
         ]
         # Optional query: focus context on current research topic (utility-ranked retrieval)
         goal = ""
@@ -907,16 +935,22 @@ Be honest and specific. A failed job with useful error info is more valuable tha
             }
 
         quality = float(reflection.get("quality_score", 0.5))
+        outcome_summary = (reflection.get("outcome_summary") or "").strip()
+        learnings = (reflection.get("learnings") or "").strip()
+        # Mark low-signal so planning context can exclude: generic outcome + no actionable learnings
+        low_signal = _reflection_is_low_signal(outcome_summary, learnings, quality)
+        reflection_metadata = {"low_signal": low_signal} if low_signal else None
 
         self.memory.record_reflection(
             job_id=job_id,
-            outcome=reflection.get("outcome_summary", ""),
+            outcome=outcome_summary,
             quality=quality,
             workflow_id=action_result.get("workflow"),
             goal=goal,
             went_well=reflection.get("went_well"),
             went_wrong=reflection.get("went_wrong"),
             learnings=reflection.get("learnings"),
+            metadata=reflection_metadata,
         )
 
         self.memory.record_quality(
