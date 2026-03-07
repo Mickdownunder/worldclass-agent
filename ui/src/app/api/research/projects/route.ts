@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/lib/auth/session";
 import { listResearchProjects } from "@/lib/operator/research";
-import { runWorkflow, runResearchInitAndCycleUntilDone } from "@/lib/operator/actions";
+import { submitResearchStartIntent } from "@/lib/operator/actions";
 
 export const dynamic = "force-dynamic";
 
@@ -33,29 +33,22 @@ export async function POST(request: NextRequest) {
     }
     const validModes = ["standard", "frontier", "discovery"];
     const researchMode = validModes.includes(body.research_mode) ? body.research_mode : "standard";
-    const requestPayload = JSON.stringify({ question, research_mode: researchMode });
     const runUntilDone = body.run_until_done !== false;
-    const result = runUntilDone
-      ? await runResearchInitAndCycleUntilDone(question, researchMode)
-      : await runWorkflow("research-init", requestPayload);
+    const result = await submitResearchStartIntent(question, researchMode, runUntilDone);
     if (!result.ok) {
       return NextResponse.json(
         { ok: false, error: result.error ?? "Workflow fehlgeschlagen" },
         { status: 400 }
       );
     }
-    if (runUntilDone && "projectId" in result) {
-      return NextResponse.json({
-        ok: true,
-        jobId: result.jobId,
-        projectId: result.projectId,
-        message: "Projekt angelegt. Alle Phasen laufen automatisch – Report erscheint, wenn fertig.",
-      });
-    }
     return NextResponse.json({
       ok: true,
       jobId: result.jobId,
-      message: "Research-Projekt wird erstellt (Job läuft).",
+      projectId: result.projectId,
+      requestEventId: result.requestEventId,
+      message: runUntilDone
+        ? "Projekt angelegt. Alle Phasen laufen automatisch – Report erscheint, wenn fertig."
+        : "Projekt angelegt. Weiterer Lauf erfolgt über den kanonischen Control-Plane-Pfad.",
     });
   } catch (e) {
     return NextResponse.json(

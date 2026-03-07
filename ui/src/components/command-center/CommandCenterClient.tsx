@@ -10,7 +10,7 @@ import type {
   PortfolioSummary,
 } from "@/lib/operator/command-center";
 
-type ActionName = "create" | "show" | "pause" | "resume" | "retry" | "replan";
+type ActionName = "create" | "show" | "pause" | "resume" | "retry" | "replan" | "reset_mission" | "reset_campaign" | "reset_portfolio_signals" | "archive_mission" | "unarchive_mission" | "bulk_archive_done";
 
 type CommandCenterClientProps = {
   initialData: CommandCenterData;
@@ -45,13 +45,22 @@ export function CommandCenterClient({ initialData, initialSelectedMissionId }: C
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<ActionName | null>(null);
+  const [planFilter, setPlanFilter] = useState<"all" | "status" | "mini" | "research">("all");
+  const [archivePage, setArchivePage] = useState(1);
+
+  const openMissions = useMemo(() => data.missions.filter((mission) => !mission.archived), [data.missions]);
+  const archivedMissions = useMemo(() => data.missions.filter((mission) => mission.archived), [data.missions]);
 
   const selectedMission = useMemo(
-    () => data.missions.find((mission) => mission.id === selectedMissionId) ?? data.missions[0],
-    [data.missions, selectedMissionId],
+    () => data.missions.find((mission) => mission.id === selectedMissionId) ?? openMissions[0] ?? archivedMissions[0],
+    [data.missions, openMissions, archivedMissions, selectedMissionId],
   );
 
-  const focusMission = useMemo(() => pickFocusMission(data.missions), [data.missions]);
+  const filteredOpenMissions = useMemo(() => planFilter === "all" ? openMissions : openMissions.filter((mission) => mission.plan === planFilter), [openMissions, planFilter]);
+  const pagedArchivedMissions = useMemo(() => archivedMissions.slice((archivePage - 1) * 10, archivePage * 10), [archivedMissions, archivePage]);
+  const archivePages = Math.max(1, Math.ceil(archivedMissions.length / 10));
+
+  const focusMission = useMemo(() => pickFocusMission(filteredOpenMissions), [filteredOpenMissions]);
   const blockedMissions = useMemo(() => data.missions.filter((mission) => mission.lifecycle === "blocked"), [data.missions]);
   const pushCampaigns = useMemo(() => data.campaigns.filter((campaign) => campaign.strategy?.recommended_disposition === "push"), [data.campaigns]);
   const holdCampaigns = useMemo(() => data.campaigns.filter((campaign) => campaign.strategy?.recommended_disposition === "hold"), [data.campaigns]);
@@ -72,10 +81,10 @@ export function CommandCenterClient({ initialData, initialSelectedMissionId }: C
   );
 
   useEffect(() => {
-    if (!selectedMissionId && data.missions[0]?.id) {
-      setSelectedMissionId(data.missions[0].id);
+    if (!selectedMissionId && (openMissions[0]?.id || archivedMissions[0]?.id)) {
+      setSelectedMissionId(openMissions[0]?.id ?? archivedMissions[0]?.id ?? "");
     }
-  }, [data.missions, selectedMissionId]);
+  }, [archivedMissions, openMissions, selectedMissionId]);
 
   useEffect(() => {
     const active = data.missions.some(
@@ -115,6 +124,9 @@ export function CommandCenterClient({ initialData, initialSelectedMissionId }: C
       }
       if (result.mission?.id) {
         setSelectedMissionId(result.mission.id);
+      }
+      if (action === "archive_mission" && selectedMission?.id === result.mission?.id) {
+        setSelectedMissionId((result.data as CommandCenterData | undefined)?.missions.find((mission) => !mission.archived)?.id ?? result.mission.id);
       }
       setMessage(actionMessage(action, result.mission?.id));
       if (action !== "replan") {
@@ -168,7 +180,7 @@ export function CommandCenterClient({ initialData, initialSelectedMissionId }: C
             </div>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               <SummaryCard
-                label="June arbeitet gerade an"
+                label={focusMission && focusMission.lifecycle === "active" ? "June arbeitet gerade an" : "Nächste offene Mission"}
                 value={focusMission ? focusMission.objective : "Keine aktive Mission"}
                 hint={focusMission ? describeMissionState(focusMission) : "System ist gerade idle"}
               />
@@ -327,14 +339,35 @@ export function CommandCenterClient({ initialData, initialSelectedMissionId }: C
                   Missionen im Klartext
                 </div>
                 <p className="mt-2 text-sm" style={{ color: "var(--tron-text-muted)" }}>
-                  Oben stehen die wichtigsten Missionen. IDs sind nur noch Referenzen, nicht die Hauptinformation.
+                  Oben stehen die offenen Missionen. Archiviertes liegt separat darunter.
                 </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {(["all", "status", "mini", "research"] as const).map((filter) => (
+                  <button
+                    key={filter}
+                    type="button"
+                    onClick={() => setPlanFilter(filter)}
+                    className="rounded-full px-3 py-1.5 text-xs font-semibold"
+                    style={planFilter === filter ? primaryButtonStyle : secondaryButtonStyle}
+                  >
+                    {filter === "all" ? "Alle" : filter}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => runAction("bulk_archive_done", { reason: "Bulk archive completed missions" })}
+                  className="rounded-full px-3 py-1.5 text-xs font-semibold"
+                  style={secondaryButtonStyle}
+                >
+                  Done archivieren
+                </button>
               </div>
               {selectedMission && <ToneBadge value={humanOverall(selectedMission)} kind="status" />}
             </div>
 
             <div className="mt-4 grid gap-3">
-              {data.missions.map((mission) => {
+              {filteredOpenMissions.map((mission) => {
                 const active = mission.id === selectedMission?.id;
                 return (
                   <button
@@ -369,6 +402,41 @@ export function CommandCenterClient({ initialData, initialSelectedMissionId }: C
                 );
               })}
             </div>
+            {archivedMissions.length > 0 ? (
+              <details className="mt-4 rounded-[20px] p-4" style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg)" }}>
+                <summary className="cursor-pointer list-none text-sm font-semibold" style={{ color: "var(--tron-text)" }}>
+                  Archivierte Missionen ({archivedMissions.length})
+                </summary>
+                <div className="mt-3 grid gap-3">
+                  {pagedArchivedMissions.map((mission) => (
+                    <button
+                      key={mission.id}
+                      type="button"
+                      onClick={() => setSelectedMissionId(mission.id)}
+                      className="grid gap-2 rounded-[18px] p-3 text-left transition-colors"
+                      style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg-panel)" }}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold" style={{ color: "var(--tron-text)" }}>{mission.objective}</div>
+                          <div className="mt-1 text-xs" style={{ color: "var(--tron-text-muted)" }}>
+                            Archiviert {mission.archived_at ?? ""}
+                          </div>
+                        </div>
+                        <ToneBadge value="Archiv" kind="mission" />
+                      </div>
+                    </button>
+                  ))}
+                </div>
+                {archivePages > 1 ? (
+                  <div className="mt-3 flex items-center justify-between gap-3 text-sm">
+                    <button type="button" onClick={() => setArchivePage((page) => Math.max(1, page - 1))} className="rounded-full px-3 py-1.5" style={secondaryButtonStyle}>Zurueck</button>
+                    <span style={{ color: "var(--tron-text-muted)" }}>Seite {archivePage} / {archivePages}</span>
+                    <button type="button" onClick={() => setArchivePage((page) => Math.min(archivePages, page + 1))} className="rounded-full px-3 py-1.5" style={secondaryButtonStyle}>Weiter</button>
+                  </div>
+                ) : null}
+              </details>
+            ) : null}
           </section>
         </section>
 
@@ -420,6 +488,47 @@ export function CommandCenterClient({ initialData, initialSelectedMissionId }: C
                   </div>
                 ) : null}
 
+                {selectedMission.planning ? (
+                  <div className="mt-4 rounded-[20px] p-4 text-sm leading-6" style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg)" }}>
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.22em]" style={{ color: "var(--tron-text-dim)" }}>
+                      Warum June diese Linie fährt
+                    </div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <DetailTile label="Disposition" value={humanPlanningValue(selectedMission.planning.disposition, "Keine Historie")} />
+                      <DetailTile label="Compute-Policy" value={humanPlanningValue(selectedMission.planning.computePolicy, "Standard")} />
+                      <DetailTile label="Historisches Risiko" value={humanPlanningValue(selectedMission.planning.historicalRisk, "n/a")} />
+                      <DetailTile label="Dominantes Fehlmuster" value={humanPlanningValue(selectedMission.planning.dominantFailureGenome, "Keins")} />
+                    </div>
+                    {selectedMission.planning.whyThisPlan ? (
+                      <div className="mt-3" style={{ color: "var(--tron-text)" }}>
+                        <strong>Warum dieser Plan:</strong> {selectedMission.planning.whyThisPlan}
+                      </div>
+                    ) : null}
+                    {selectedMission.planning.whyNotPreviousPlan ? (
+                      <div className="mt-2" style={{ color: "var(--tron-text)" }}>
+                        <strong>Warum nicht wie vorher:</strong> {selectedMission.planning.whyNotPreviousPlan}
+                      </div>
+                    ) : null}
+                    {selectedMission.planning.policyNote ? (
+                      <div className="mt-2" style={{ color: "var(--tron-text-muted)" }}>
+                        {selectedMission.planning.policyNote}
+                      </div>
+                    ) : null}
+                    {selectedMission.planning.memoryHighlights.length > 0 ? (
+                      <div className="mt-3">
+                        <div className="text-[11px] font-semibold uppercase tracking-[0.22em]" style={{ color: "var(--tron-text-dim)" }}>
+                          Gelernte Signale aus dem Systemgedächtnis
+                        </div>
+                        <ul className="mt-2 space-y-1" style={{ color: "var(--tron-text)" }}>
+                          {selectedMission.planning.memoryHighlights.map((item) => (
+                            <li key={item}>• {item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
                 <div className="mt-5 grid gap-2">
                   <label className="grid gap-2 text-sm">
                     <span style={{ color: "var(--tron-text-muted)" }}>Notiz / Grund für die Aktion</span>
@@ -435,8 +544,8 @@ export function CommandCenterClient({ initialData, initialSelectedMissionId }: C
                   <div className="flex flex-wrap gap-2">
                     <ActionButton label="Aktualisieren" busy={busy === "show"} onClick={() => runAction("show")} />
                     <ActionButton label="Pausieren" busy={busy === "pause"} onClick={() => runAction("pause")} />
-                    <ActionButton label="Fortsetzen" busy={busy === "resume"} onClick={() => runAction("resume")} />
-                    <ActionButton label="Erneut versuchen" busy={busy === "retry"} onClick={() => runAction("retry")} />
+                    <ActionButton label="Fortsetzen" busy={busy === "resume"} onClick={() => runAction("resume", { execute: true })} />
+                    <ActionButton label="Erneut versuchen" busy={busy === "retry"} onClick={() => runAction("retry", { execute: true })} />
                   </div>
                 </div>
 
@@ -451,7 +560,21 @@ export function CommandCenterClient({ initialData, initialSelectedMissionId }: C
                       suppressHydrationWarning
                     />
                   </label>
-                  <ActionButton label="Neu planen" busy={busy === "replan"} tone="primary" onClick={() => runAction("replan")} />
+                  <ActionButton label="Neu planen" busy={busy === "replan"} tone="primary" onClick={() => runAction("replan", { execute: true })} />
+                </div>
+
+                <div className="mt-5 grid gap-2">
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.22em]" style={{ color: "var(--tron-text-dim)" }}>Reset</div>
+                  <div className="flex flex-wrap gap-2">
+                    <ActionButton label="Mission resetten" busy={busy === "reset_mission"} onClick={() => runAction("reset_mission")} />
+                    <ActionButton label="Kampagne resetten" busy={busy === "reset_campaign"} onClick={() => runAction("reset_campaign")} />
+                    <ActionButton label="Portfolio-Signale resetten" busy={busy === "reset_portfolio_signals"} onClick={() => runAction("reset_portfolio_signals")} />
+                    {selectedMission?.archived ? (
+                      <ActionButton label="Zurückholen" busy={busy === "unarchive_mission"} onClick={() => runAction("unarchive_mission")} />
+                    ) : (
+                      <ActionButton label="Archivieren" busy={busy === "archive_mission"} onClick={() => runAction("archive_mission")} />
+                    )}
+                  </div>
                 </div>
 
                 <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[20px] p-4" style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg)" }}>
@@ -670,7 +793,9 @@ function describeMissionState(mission: CommandMissionSummary) {
     case "paused":
       return "Diese Mission ist absichtlich pausiert.";
     case "planned":
-      return "Diese Mission ist vorbereitet und wartet auf die Ausführung.";
+      return mission.decision?.next_action === "retry"
+        ? "Diese Mission ist bereit fuer einen erneuten Lauf, fuehrt aber aktuell nichts aus."
+        : "Diese Mission ist vorbereitet und wartet auf die Ausführung.";
     default:
       return "Der Zustand dieser Mission ist aktuell nicht klar klassifiziert.";
   }
@@ -753,6 +878,11 @@ function humanOverall(mission: CommandMissionSummary) {
     return "OPEN";
   }
   return mission.envelope?.overall ?? humanLifecycle(mission.lifecycle);
+}
+
+function humanPlanningValue(value: string | undefined, fallback: string): string {
+  if (!value) return fallback;
+  return value.replace(/_/g, " ");
 }
 
 function humanLifecycle(value: CommandMissionSummary["lifecycle"]) {
@@ -867,13 +997,27 @@ function actionMessage(action: ActionName, missionId?: string) {
     case "pause":
       return "Mission pausiert.";
     case "resume":
-      return "Mission fortgesetzt.";
+      return "Mission fortgesetzt und ausgeführt.";
     case "retry":
-      return "Mission zum erneuten Versuch markiert.";
+      return "Mission erneut ausgelöst.";
     case "replan":
-      return "Mission neu geplant.";
+      return "Mission neu geplant und erneut gestartet.";
     case "show":
       return "Mission aktualisiert.";
+    case "archive_mission":
+      return "Mission archiviert.";
+    case "unarchive_mission":
+      return "Mission zurückgeholt.";
+    case "bulk_archive_done":
+      return "Abgeschlossene Missionen archiviert.";
+    case "reset_mission":
+      return "Mission sauber zurückgesetzt.";
+    case "reset_campaign":
+      return "Kampagnenzustand zurückgesetzt.";
+    case "reset_portfolio_signals":
+      return "Portfolio-Signale zurückgesetzt.";
+    default:
+      return "Aktion ausgeführt.";
   }
 }
 

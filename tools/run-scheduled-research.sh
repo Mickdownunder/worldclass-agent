@@ -50,7 +50,7 @@ except Exception:
 
   echo "[$(date -Iseconds)] Run phase for $project_id (phase: $phase, status: $status)"
   job_dir=$("$OP" job new --workflow research-phase --request "$project_id")
-  "$OP" run "$job_dir" --timeout 300
+  "$OP" run "$job_dir" --timeout 1800
   echo "[$(date -Iseconds)] Phase run done for $project_id"
 done
 

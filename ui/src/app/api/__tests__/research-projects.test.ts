@@ -7,8 +7,7 @@ vi.mock("@/lib/operator/research", () => ({
   listResearchProjects: vi.fn(),
 }));
 vi.mock("@/lib/operator/actions", () => ({
-  runWorkflow: vi.fn(),
-  runResearchInitAndCycleUntilDone: vi.fn(),
+  submitResearchStartIntent: vi.fn(),
 }));
 
 describe("API research projects route", () => {
@@ -49,5 +48,31 @@ describe("API research projects route", () => {
     const json = await res.json();
     expect(json.projects).toHaveLength(1);
     expect(json.projects[0].id).toBe("proj-1");
+  });
+
+  it("POST routes research start through control-plane intent", async () => {
+    const { getSession } = await import("@/lib/auth/session");
+    const { submitResearchStartIntent } = await import("@/lib/operator/actions");
+    vi.mocked(getSession).mockResolvedValueOnce(true);
+    vi.mocked(submitResearchStartIntent).mockResolvedValueOnce({
+      ok: true,
+      jobId: "job-1",
+      projectId: "proj-1",
+      requestEventId: "evt-1",
+    });
+
+    const request = new Request("http://localhost/api/research/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ question: "Question?", research_mode: "discovery", run_until_done: false }),
+    });
+
+    const { POST } = await import("@/app/api/research/projects/route");
+    const res = await POST(request as never);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(vi.mocked(submitResearchStartIntent)).toHaveBeenCalledWith("Question?", "discovery", false);
+    expect(json.projectId).toBe("proj-1");
   });
 });

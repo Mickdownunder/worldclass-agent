@@ -10,4 +10,4 @@ if [ -z "$PROJECT_ID" ]; then
   echo "Usage: research-cycle.sh <project_id>" >&2
   exit 2
 fi
-exec bash "$OPERATOR_ROOT/tools/run-research-cycle-until-done.sh" "$PROJECT_ID"
+exec bash "$OPERATOR_ROOT/tools/run-research-single-cycle.sh" "$PROJECT_ID"

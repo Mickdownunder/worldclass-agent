@@ -46,6 +46,17 @@ export interface CommandEnvelopeSummary {
   attempt_id?: string;
 }
 
+export interface CommandMissionPlanning {
+  disposition?: string;
+  computePolicy?: string;
+  policyNote?: string;
+  historicalRisk?: string;
+  whyThisPlan?: string;
+  whyNotPreviousPlan?: string;
+  dominantFailureGenome?: string;
+  memoryHighlights: string[];
+}
+
 export interface CommandMissionSummary {
   id: string;
   objective: string;
@@ -53,6 +64,8 @@ export interface CommandMissionSummary {
   intent: string;
   status: string;
   lifecycle: "active" | "awaiting_next_test" | "done" | "paused" | "blocked" | "planned" | "unknown";
+  archived: boolean;
+  archived_at?: string;
   portfolio_id?: string;
   campaign_id?: string;
   updated_at?: string;
@@ -61,6 +74,7 @@ export interface CommandMissionSummary {
   runtime_budget_sec?: number;
   decision?: CommandDecisionSummary;
   envelope?: CommandEnvelopeSummary;
+  planning?: CommandMissionPlanning;
   tasks: CommandMissionTask[];
 }
 
@@ -111,7 +125,7 @@ export interface CommandCenterData {
 }
 
 export interface CommandCenterActionInput {
-  action: "create" | "show" | "pause" | "resume" | "retry" | "replan";
+  action: "create" | "show" | "pause" | "resume" | "retry" | "replan" | "reset_mission" | "reset_campaign" | "reset_portfolio_signals" | "archive_mission" | "unarchive_mission" | "bulk_archive_done";
   missionId?: string;
   objective?: string;
   requestText?: string;
@@ -141,7 +155,7 @@ export async function listCommandCenter(): Promise<CommandCenterData> {
     campaigns,
     stats: {
       totalMissions: missions.length,
-      activeMissions: missions.filter((mission) => mission.status === "running" || mission.status === "planned").length,
+      activeMissions: missions.filter((mission) => !mission.archived && (mission.status === "running" || mission.status === "planned")).length,
       passCampaigns: campaigns.filter((campaign) => campaign.latest?.overall === "PASS").length,
       portfolios: portfolios.length,
       pushCampaigns: campaigns.filter((campaign) => campaign.strategy?.recommended_disposition === "push").length,
@@ -162,6 +176,23 @@ export async function executeCommandCenterAction(input: CommandCenterActionInput
       mission,
       data: await listCommandCenter(),
       command: [JUNE_COMMAND_RUN, "--mission-id", input.missionId, "--show"],
+    };
+  }
+
+  if (input.action === "bulk_archive_done") {
+    const data = await listCommandCenter();
+    const candidates = data.missions.filter((mission) => !mission.archived && mission.lifecycle === "done");
+    for (const mission of candidates) {
+      await exec(JUNE_COMMAND_RUN, ["--mission-id", mission.id, "--archive-mission", "--reason", input.reason?.trim() || "Bulk archive done missions"], {
+        timeout: 30_000,
+        env: { ...process.env },
+      });
+    }
+    return {
+      ok: true,
+      data: await listCommandCenter(),
+      rawOutput: `archived=${candidates.length}`,
+      command: [JUNE_COMMAND_RUN, "--archive-mission", "<bulk>"]
     };
   }
 
@@ -222,12 +253,18 @@ async function readMission(missionId: string): Promise<CommandMissionSummary> {
   const tasks = Array.isArray(graphData.nodes) ? graphData.nodes : [];
   const metadata = asObject(missionData.metadata);
 
+  const portfolioPolicy = asObject(metadata.portfolio_policy);
+  const strategyContext = asObject(metadata.strategy_context);
+  const operatorMemory = asObject(metadata.operator_memory);
+
   return {
     id: String(missionData.mission_id ?? missionId),
     objective: String(missionData.objective ?? ""),
     plan: String(missionData.plan ?? "unknown"),
     intent: String(missionData.intent ?? "unknown"),
     status: String(missionData.status ?? decision.mission_status ?? "unknown"),
+    archived: Boolean(metadata.archived_at),
+    archived_at: asOptionalString(metadata.archived_at),
     lifecycle: classifyLifecycle(
       String(missionData.status ?? decision.mission_status ?? "unknown"),
       envelope.overall,
@@ -247,6 +284,19 @@ async function readMission(missionId: string): Promise<CommandMissionSummary> {
     runtime_budget_sec: asOptionalNumber(asObject(missionData.resource_profile).runtime_budget_sec),
     decision,
     envelope,
+    planning: {
+      disposition: asOptionalString(portfolioPolicy.existing_disposition),
+      computePolicy: asOptionalString(portfolioPolicy.compute_policy),
+      policyNote: asOptionalString(portfolioPolicy.note),
+      historicalRisk: asOptionalString(strategyContext.historical_risk),
+      whyThisPlan: asOptionalString(strategyContext.why_this_plan),
+      whyNotPreviousPlan: asOptionalString(strategyContext.why_not_previous_plan),
+      dominantFailureGenome: asOptionalString(strategyContext.dominant_failure_genome),
+      memoryHighlights: [
+        ...asStringArray(operatorMemory.known_failure_patterns),
+        ...asObjectArray(operatorMemory.relevant_principles).map((item) => asOptionalString(asObject(item).description)).filter(Boolean) as string[],
+      ].slice(0, 3),
+    },
     tasks,
   };
 }
@@ -316,13 +366,21 @@ function buildArgs(input: CommandCenterActionInput): string[] {
     }
     case "pause":
     case "resume":
-    case "retry": {
+    case "retry":
+    case "reset_mission":
+    case "reset_campaign":
+    case "reset_portfolio_signals":
+    case "archive_mission":
+    case "unarchive_mission": {
       if (!input.missionId) {
         throw new Error("missionId is required");
       }
-      const args = ["--mission-id", input.missionId, `--${input.action}`];
+      const args = ["--mission-id", input.missionId, `--${input.action.replace(/_/g, "-")}`];
       if (input.reason?.trim()) {
         args.push("--reason", input.reason.trim());
+      }
+      if ((input.action === "resume" || input.action === "retry") && input.execute !== false) {
+        args.push("--execute");
       }
       return args;
     }
@@ -340,10 +398,15 @@ function buildArgs(input: CommandCenterActionInput): string[] {
       if (input.reason?.trim()) {
         args.push("--reason", input.reason.trim());
       }
+      if (input.execute !== false) {
+        args.push("--execute");
+      }
       return args;
     }
     case "show":
       throw new Error("show is handled without shell execution");
+    case "bulk_archive_done":
+      throw new Error("bulk_archive_done is handled without direct shell execution");
   }
 }
 
@@ -358,6 +421,14 @@ function asObject(value: unknown): Record<string, unknown> {
 
 function asOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function asObjectArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value) ? value.map((item) => asObject(item)) : [];
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((item) => String(item)).filter(Boolean) : [];
 }
 
 function asOptionalNumber(value: unknown): number | undefined {

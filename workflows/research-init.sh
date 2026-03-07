@@ -31,6 +31,8 @@ p = Path(proj_dir)
 # Request can be JSON {"question": "...", "research_mode": "standard"|"frontier"} or plain question string
 question = request_raw.strip()
 research_mode = "standard"
+hypothesis = ""
+parent_project_id = ""
 if question.startswith("{"):
     try:
         payload = json.loads(question)
@@ -38,7 +40,8 @@ if question.startswith("{"):
         research_mode = (payload.get("research_mode") or "standard").strip().lower()
         if research_mode not in ("standard", "frontier", "discovery"):
             research_mode = "standard"
-        hypothesis = payload.get("hypothesis_to_test", "").strip()
+        hypothesis = (payload.get("hypothesis_to_test") or "").strip()
+        parent_project_id = (payload.get("parent_project_id") or "").strip()
     except Exception:
         pass
 project = {
@@ -51,8 +54,19 @@ project = {
   "domain": "general",
   "config": {"max_sources": 15, "max_findings": 50, "research_mode": research_mode}
 }
-if 'hypothesis' in locals() and hypothesis:
+if hypothesis:
     project["hypothesis_to_test"] = hypothesis
+if parent_project_id:
+    project["parent_project_id"] = parent_project_id
+    parent_project_path = p.parent / parent_project_id / "project.json"
+    if parent_project_path.is_file():
+        try:
+            parent_data = json.loads(parent_project_path.read_text(encoding="utf-8"))
+            parent_domain = (parent_data.get("domain") or "").strip()
+            if parent_domain:
+                project["domain"] = parent_domain
+        except Exception:
+            pass
 (p / "project.json").write_text(json.dumps(project, indent=2))
 (p / "questions.json").write_text(json.dumps({"open": [question], "answered": []}, indent=2))
 (p / "thesis.json").write_text(json.dumps({"current": "", "confidence": 0.0, "evidence": []}, indent=2))

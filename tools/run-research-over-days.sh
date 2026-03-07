@@ -5,7 +5,7 @@
 set -euo pipefail
 
 OPERATOR_ROOT="${OPERATOR_ROOT:-/root/operator}"
-OP="$OPERATOR_ROOT/bin/op"
+JUNE_HANDOFF_CLIENT="$OPERATOR_ROOT/tools/june_handoff_client.py"
 PROJECT_ID="${1:-}"
 SLEEP_HOURS="${2:-6}"
 MAX_DAYS="${3:-14}"
@@ -54,10 +54,12 @@ while true; do
   fi
 
   run=$((run + 1))
-  log "[Run $run] Phase: $phase — starting cycle..."
-  job_dir=$($OP job new --workflow research-phase --request "$PROJECT_ID")
-  $OP run "$job_dir" --timeout 300
-  log "[Run $run] Phase run done. Next run in ${SLEEP_HOURS}h."
+  log "[Run $run] Phase: $phase — requesting one June-governed cycle..."
+  python3 "$JUNE_HANDOFF_CLIENT" research-continue \
+    --project-id "$PROJECT_ID" \
+    --source-command "run-research-over-days" \
+    --max-cycles 1 >/dev/null
+  log "[Run $run] Cycle request dispatched. Next run in ${SLEEP_HOURS}h."
 
   sleep $((SLEEP_HOURS * 3600))
 done

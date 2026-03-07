@@ -1,7 +1,7 @@
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 import path from "path";
-import { appendFile, mkdir, readFile, writeFile } from "fs/promises";
+import { appendFile, mkdir, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { OPERATOR_ROOT } from "./config";
@@ -11,7 +11,19 @@ const OP_BIN = path.join(OPERATOR_ROOT, "bin", "op");
 const BRAIN_BIN = path.join(OPERATOR_ROOT, "bin", "brain");
 const AUDIT_LOG = path.join(OPERATOR_ROOT, "logs", "ui-audit.log");
 const SEND_TELEGRAM = path.join(OPERATOR_ROOT, "tools", "send-telegram.sh");
-const RUN_UNTIL_DONE = path.join(OPERATOR_ROOT, "tools", "run-research-cycle-until-done.sh");
+const CONTROL_PLANE_INTAKE = path.join(OPERATOR_ROOT, "tools", "control_plane_intake.py");
+
+export type ResearchMode = "standard" | "frontier" | "discovery";
+
+export interface WorkflowResult {
+  ok: boolean;
+  jobId?: string;
+  projectId?: string;
+  requestEventId?: string;
+  error?: string;
+}
+
+const VALID_RESEARCH_MODES = new Set<ResearchMode>(["standard", "frontier", "discovery"]);
 
 /** Workflows allowed to be triggered from the UI (no factory/queue/opportunity) */
 export const ALLOWED_WORKFLOWS = new Set([
@@ -37,35 +49,119 @@ async function audit(action: string, params: Record<string, unknown>, result: { 
   }
 }
 
-async function spawnResearchCycleUntilDone(projectId: string): Promise<{ ok: boolean; jobId?: string; error?: string }> {
+async function runControlPlaneIntake(args: string[], timeout = 150_000): Promise<Record<string, unknown>> {
+  try {
+    const result = await exec("python3", [CONTROL_PLANE_INTAKE, ...args], {
+      timeout,
+      env: { ...process.env, OPERATOR_ROOT },
+    });
+    const stdout = typeof result === "string" ? result : result.stdout;
+    return JSON.parse((stdout || "{}").trim() || "{}");
+  } catch (e) {
+    const stdout = typeof (e as { stdout?: string }).stdout === "string" ? (e as { stdout?: string }).stdout?.trim() : "";
+    if (stdout) {
+      try {
+        return JSON.parse(stdout);
+      } catch {
+        // fall through
+      }
+    }
+    throw e;
+  }
+}
+
+function normalizeWorkflowResult(payload: Record<string, unknown>): WorkflowResult {
+  return {
+    ok: payload.ok === true,
+    jobId: typeof payload.jobId === "string" ? payload.jobId : undefined,
+    projectId: typeof payload.projectId === "string" ? payload.projectId : undefined,
+    requestEventId: typeof payload.requestEventId === "string" ? payload.requestEventId : undefined,
+    error: typeof payload.error === "string" ? payload.error : undefined,
+  };
+}
+
+async function submitResearchContinueIntent(projectId: string): Promise<WorkflowResult> {
   if (!/^proj-[a-zA-Z0-9_-]+$/.test(projectId)) {
     return { ok: false, error: "Ungültige projectId" };
   }
   try {
-    spawn("bash", [RUN_UNTIL_DONE, projectId], {
-      cwd: OPERATOR_ROOT,
-      env: process.env,
-      stdio: "ignore",
-      detached: true,
-    }).unref();
-    await audit("run-research-cycle-until-done", { projectId }, { ok: true });
-    await notifyTelegram(`[UI] Research cycle started: ${projectId} – all phases run automatically.`);
-    return { ok: true, jobId: projectId };
+    const payload = await runControlPlaneIntake(["ui-research-continue", "--project-id", projectId]);
+    const result = normalizeWorkflowResult(payload);
+    await audit(
+      "control-plane-research-continue",
+      { projectId, requestEventId: result.requestEventId },
+      { ok: result.ok, message: result.error }
+    );
+    if (result.ok) {
+      await notifyTelegram(`[UI] Research cycle submitted to control plane: ${projectId}`);
+    }
+    return result;
   } catch (e) {
     const err = String((e as Error).message);
-    await audit("run-research-cycle-until-done", { projectId }, { ok: false, message: err });
+    await audit("control-plane-research-continue", { projectId }, { ok: false, message: err });
     return { ok: false, error: err };
   }
 }
 
-export async function runWorkflow(workflowId: string, request = ""): Promise<{ ok: boolean; jobId?: string; error?: string }> {
+export async function submitResearchStartIntent(
+  question: string,
+  researchMode: ResearchMode = "standard",
+  runUntilDone = true
+): Promise<WorkflowResult> {
+  const cleanQuestion = question.trim();
+  if (!cleanQuestion) {
+    return { ok: false, error: "question ist erforderlich" };
+  }
+  const mode = VALID_RESEARCH_MODES.has(researchMode) ? researchMode : "standard";
+  try {
+    const payload = await runControlPlaneIntake(
+      [
+        "ui-research-start",
+        "--question",
+        cleanQuestion,
+        "--research-mode",
+        mode,
+        "--run-until-done",
+        runUntilDone ? "1" : "0",
+      ],
+      150_000
+    );
+    const result = normalizeWorkflowResult(payload);
+    await audit(
+      "control-plane-research-start",
+      {
+        question: cleanQuestion.slice(0, 160),
+        researchMode: mode,
+        runUntilDone,
+        projectId: result.projectId,
+        requestEventId: result.requestEventId,
+      },
+      { ok: result.ok, message: result.error }
+    );
+    if (result.ok) {
+      const suffix = runUntilDone ? " – alle Phasen laufen automatisch." : ".";
+      await notifyTelegram(`[UI] Research gestartet: ${result.projectId ?? "pending"}${suffix}`);
+    }
+    return result;
+  } catch (e) {
+    const err = String((e as Error).message);
+    await audit(
+      "control-plane-research-start",
+      { question: cleanQuestion.slice(0, 160), researchMode: mode, runUntilDone },
+      { ok: false, message: err }
+    );
+    return { ok: false, error: err };
+  }
+}
+
+export async function runWorkflow(workflowId: string, request = ""): Promise<WorkflowResult> {
   if (!ALLOWED_WORKFLOWS.has(workflowId)) {
     await audit("run-workflow", { workflowId, request }, { ok: false, message: "workflow not allowed" });
     return { ok: false, error: "Workflow not allowed" };
   }
   try {
     if (workflowId === "research-cycle") {
-      return await spawnResearchCycleUntilDone(request.trim());
+      return await submitResearchContinueIntent(request.trim());
     }
     const { stdout: jobDir } = await exec(OP_BIN, ["job", "new", "--workflow", workflowId, "--request", request || "ui-trigger"], {
       timeout: 5000,
@@ -97,51 +193,11 @@ export async function retryJob(jobId: string): Promise<{ ok: boolean; error?: st
   }
 }
 
-/**
- * Run research-init (wait for completion), read project_id, then spawn run-research-cycle-until-done.sh
- * so all phases run automatically without clicking "Nächste Phase".
- */
 export async function runResearchInitAndCycleUntilDone(
   question: string,
-  researchMode: "standard" | "frontier" = "standard"
-): Promise<{ ok: boolean; jobId?: string; projectId?: string; error?: string }> {
-  try {
-    const requestPayload = JSON.stringify({ question: question || "ui-trigger", research_mode: researchMode });
-    const { stdout: jobDirRaw } = await exec(OP_BIN, ["job", "new", "--workflow", "research-init", "--request", requestPayload], {
-      timeout: 5000,
-      env: { ...process.env },
-    });
-    const jobDir = jobDirRaw.trim();
-    const jobId = jobDir.split("/").pop() ?? jobDir;
-    await exec(OP_BIN, ["run", jobDir, "--timeout", "120"], {
-      timeout: 130_000,
-      env: { ...process.env },
-    });
-    const projectIdPath = path.join(jobDir, "artifacts", "project_id.txt");
-    let projectId: string | undefined;
-    try {
-      const raw = await readFile(projectIdPath, "utf-8");
-      projectId = raw.trim();
-    } catch {
-      await audit("research-init-and-cycle", { question, jobId }, { ok: false, message: "no project_id in artifacts" });
-      return { ok: false, jobId, error: "Init-Job lief, aber project_id nicht gefunden." };
-    }
-    if (!projectId) {
-      return { ok: false, jobId, error: "project_id leer." };
-    }
-    const cycleResult = await spawnResearchCycleUntilDone(projectId);
-    if (!cycleResult.ok) {
-      await audit("research-init-and-cycle", { question, jobId, projectId }, { ok: false, message: cycleResult.error ?? "failed to spawn cycle runner" });
-      return { ok: false, jobId, projectId, error: cycleResult.error ?? "Cycle runner konnte nicht gestartet werden." };
-    }
-    await audit("research-init-and-cycle", { question, jobId, projectId }, { ok: true });
-    await notifyTelegram(`[UI] Research gestartet: ${projectId} – alle Phasen laufen automatisch.`);
-    return { ok: true, jobId, projectId };
-  } catch (e) {
-    const err = String((e as Error).message);
-    await audit("research-init-and-cycle", { question }, { ok: false, message: err });
-    return { ok: false, error: err };
-  }
+  researchMode: ResearchMode = "standard"
+): Promise<WorkflowResult> {
+  return submitResearchStartIntent(question, researchMode, true);
 }
 
 async function notifyTelegram(message: string): Promise<void> {

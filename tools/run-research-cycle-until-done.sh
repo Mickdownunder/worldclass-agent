@@ -5,7 +5,9 @@
 set -euo pipefail
 
 OPERATOR_ROOT="${OPERATOR_ROOT:-/root/operator}"
-OP="$OPERATOR_ROOT/bin/op"
+# Discovery: do not fail run when experiment sandbox crashes/times out; treat as valid outcome and continue to done
+export RESEARCH_STRICT_EXPERIMENT_GATE="${RESEARCH_STRICT_EXPERIMENT_GATE:-0}"
+RUN_SINGLE_CYCLE="$OPERATOR_ROOT/tools/run-research-single-cycle.sh"
 PROJECT_ID="${1:-}"
 
 if [ -z "$PROJECT_ID" ]; then
@@ -19,8 +21,9 @@ if [ ! -d "$OPERATOR_ROOT/research/$PROJECT_ID" ]; then
   exit 1
 fi
 
-MAX_RUNS=10
+MAX_RUNS=25
 # Allow 3 runs in same phase so conductor can do one extra round and we still advance (phase-by-phase stabilization)
+# 25: follow-ups with many conductor overrides (explore/focus/connect repeats) need >10 runs to reach done
 MAX_SAME_PHASE=3
 run=0
 last_phase=""
@@ -76,10 +79,9 @@ if prog.exists():
   last_phase="$phase"
 
   run=$((run + 1))
-  echo "[Run $run] Phase: $phase, Status: $status — starting cycle job..."
-  job_dir=$($OP job new --workflow research-phase --request "$PROJECT_ID")
+  echo "[Run $run] Phase: $phase, Status: $status — starting single cycle..."
   run_exit=0
-  $OP run "$job_dir" || run_exit=$?
+  bash "$RUN_SINGLE_CYCLE" "$PROJECT_ID" || run_exit=$?
   # Exit 2 = skipped (e.g. lock held by another cycle). Do not count toward stuck-phase.
   if [ "$run_exit" -eq 2 ]; then
     echo "[Run $run] Skipped (another cycle running). Not counting toward stuck." >&2

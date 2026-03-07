@@ -7,15 +7,14 @@ Env: RESEARCH_AUTO_FOLLOWUP=1 to enable (caller checks), RESEARCH_MAX_FOLLOWUPS=
 import json
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 OPERATOR_ROOT = Path(os.environ.get("OPERATOR_ROOT", "/root/operator"))
 sys.path.insert(0, str(OPERATOR_ROOT))
-OP = OPERATOR_ROOT / "bin" / "op"
+from tools.june_handoff_client import submit_research_start
+
 RESEARCH = OPERATOR_ROOT / "research"
-RUN_UNTIL_DONE = OPERATOR_ROOT / "tools" / "run-research-cycle-until-done.sh"
 MAX_FOLLOWUPS = int(os.environ.get("RESEARCH_MAX_FOLLOWUPS", "3"))
 
 
@@ -28,6 +27,10 @@ def main():
     if not proj_dir.is_dir():
         print(f"Project not found: {parent_project_id}", file=sys.stderr)
         sys.exit(1)
+    parent_project = json.loads((proj_dir / "project.json").read_text(encoding="utf-8"))
+    parent_research_mode = str((parent_project.get("config") or {}).get("research_mode") or "standard").strip().lower()
+    if parent_research_mode not in {"standard", "frontier", "discovery"}:
+        parent_research_mode = "standard"
     reports_dir = proj_dir / "reports"
     if not reports_dir.is_dir():
         print("No reports dir", file=sys.stderr)
@@ -93,61 +96,17 @@ Report excerpt:
         if not q or len(q) < 10:
             continue
         try:
-            out = subprocess.check_output(
-                [str(OP), "job", "new", "--workflow", "research-init", "--request", q],
-                text=True,
-                timeout=10,
-                cwd=str(OPERATOR_ROOT),
-                env={**os.environ},
-            ).strip()
-            job_dir = out.split("\n")[-1].strip() if out else ""
-            if not job_dir:
-                print("No job dir returned", file=sys.stderr)
-                continue
-            # Wait for init to finish (like "Forschung starten" in the UI)
-            subprocess.run(
-                [str(OP), "run", job_dir, "--timeout", "120"],
-                cwd=str(OPERATOR_ROOT),
-                env=os.environ,
-                timeout=130,
-                capture_output=True,
+            payload = submit_research_start(
+                q,
+                source_command="research_auto_followup",
+                research_mode=parent_research_mode,
+                run_until_done=True,
+                parent_project_id=parent_project_id,
             )
-            project_id_file = Path(job_dir) / "artifacts" / "project_id.txt"
-            if not project_id_file.is_file():
-                print(f"No project_id after init for: {q[:50]}...", file=sys.stderr)
-                continue
-            new_project_id = project_id_file.read_text(encoding="utf-8").strip()
+            new_project_id = str(payload.get("projectId") or "").strip()
             if not new_project_id:
                 continue
-            # Link this follow-up to the parent and inherit domain so Memory/strategies stay on theme
-            try:
-                proj_json = RESEARCH / new_project_id / "project.json"
-                if proj_json.is_file():
-                    data = json.loads(proj_json.read_text(encoding="utf-8"))
-                    data["parent_project_id"] = parent_project_id
-                    parent_json = RESEARCH / parent_project_id / "project.json"
-                    if parent_json.is_file():
-                        parent_data = json.loads(parent_json.read_text(encoding="utf-8"))
-                        parent_domain = (parent_data.get("domain") or "").strip()
-                        if parent_domain and parent_domain != "general":
-                            data["domain"] = parent_domain
-                    proj_json.write_text(json.dumps(data, indent=2), encoding="utf-8")
-            except Exception as e:
-                print(f"Could not set parent_project_id/domain: {e}", file=sys.stderr)
-            # Start full research cycle (explore → … → done), same as "Forschung starten"
-            subprocess.Popen(
-                ["bash", str(RUN_UNTIL_DONE), new_project_id],
-                cwd=str(OPERATOR_ROOT),
-                env=os.environ,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
             print(f"Started full run: {new_project_id} (Follow-up von {parent_project_id}) — {q[:60]}...")
-        except subprocess.CalledProcessError as e:
-            print(f"Failed to create job for: {q[:50]}... ({e})", file=sys.stderr)
-        except subprocess.TimeoutExpired:
-            print(f"Init timeout for: {q[:50]}...", file=sys.stderr)
         except Exception as e:
             print(f"Error: {e}", file=sys.stderr)
     print("Auto-follow-up done.")

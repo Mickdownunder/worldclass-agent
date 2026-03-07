@@ -16,9 +16,9 @@ from pathlib import Path
 
 OPERATOR_ROOT = Path(os.environ.get("OPERATOR_ROOT", "/root/operator"))
 sys.path.insert(0, str(OPERATOR_ROOT))
+from tools.june_handoff_client import submit_research_start
+
 RESEARCH = OPERATOR_ROOT / "research"
-OP = OPERATOR_ROOT / "bin" / "op"
-RUN_UNTIL_DONE = OPERATOR_ROOT / "tools" / "run-research-cycle-until-done.sh"
 TOOLS = OPERATOR_ROOT / "tools"
 MAX_RESEARCH = int(os.environ.get("RESEARCH_ORCHESTRATOR_MAX_RESEARCH", "3"))
 MAX_SANDBOX = int(os.environ.get("RESEARCH_ORCHESTRATOR_MAX_SANDBOX", "2"))
@@ -151,42 +151,19 @@ Rules:
 
 
 def start_research_question(question: str, dry_run: bool) -> str | None:
-    """Create research-init job, run init, then start run-research-cycle-until-done in background. Returns new project_id or None."""
+    """Start research through June-owned control plane. Returns new project_id or None."""
     if dry_run:
         print(f"[dry-run] Would start research: {question[:60]}...", file=sys.stderr)
         return None
     try:
-        out = subprocess.check_output(
-            [str(OP), "job", "new", "--workflow", "research-init", "--request", question],
-            text=True,
-            timeout=10,
-            cwd=str(OPERATOR_ROOT),
-            env=os.environ,
-        ).strip()
-        job_dir = out.split("\n")[-1].strip() if out else ""
-        if not job_dir:
-            return None
-        subprocess.run(
-            [str(OP), "run", job_dir, "--timeout", "120"],
-            cwd=str(OPERATOR_ROOT),
-            env=os.environ,
-            timeout=130,
-            capture_output=True,
+        payload = submit_research_start(
+            question,
+            source_command="research_orchestrator",
+            run_until_done=True,
         )
-        pid_file = Path(job_dir) / "artifacts" / "project_id.txt"
-        if not pid_file.is_file():
-            return None
-        new_project_id = pid_file.read_text(encoding="utf-8").strip()
+        new_project_id = str(payload.get("projectId") or "").strip()
         if not new_project_id:
             return None
-        subprocess.Popen(
-            ["bash", str(RUN_UNTIL_DONE), new_project_id],
-            cwd=str(OPERATOR_ROOT),
-            env=os.environ,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
         print(f"Started research: {new_project_id} — {question[:50]}...", file=sys.stderr)
         return new_project_id
     except Exception as e:

@@ -25,6 +25,8 @@ Ein Befehl startet alles, danach läuft es ohne weiteres Zutun:
 
 - **Telegram:** `/research-go "Frage"`  
   → Projekt wird angelegt, dann läuft `run-research-over-days.sh`: **alle 6h ein Cycle**, bis Phase **done** oder **14 Tage**.
+- **Telegram:** `/research-cycle <project_id>`  
+  → Startet **alle Phasen bis done/failed im Hintergrund** (kein Timeout mehr). Status: `/research-status <project_id>`.
 - Du musst nicht „Nächste Phase starten“ klicken; Status prüfen mit `/research-status <project_id>`.
 
 ---
@@ -133,7 +135,7 @@ export RESEARCH_MAX_FOLLOWUPS=3
 
 **Ping bei Run-Ende:** Wenn ein research-cycle fertig ist, wird June automatisch benachrichtigt:
 
-- `research-cycle.sh` schreibt `knowledge/last_research_complete.json` (project_id, phase, ts) und startet im Hintergrund einen Brain-Zyklus mit Ziel „Research run completed … Read report if done; otherwise advance or wait for Council.“
+- `research-phase.sh` emittiert nach Run-Ende ein strukturiertes `research_cycle_completed`-Event in die Control-Plane-Logs. Der Brain kann dieses Event wahrnehmen, wird aber nicht mehr direkt von der Phase als zweiter globaler Orchestrator gestartet.
 - June kann so den Report lesen und den nächsten Schritt wählen (weiteres research-cycle vorschlagen oder warten).
 
 **Council-Wartezeit:** Wenn der **Research Council** weitere Läufe gestartet hat (Follow-up-Projekte), sieht June das im State:
@@ -203,7 +205,7 @@ Optional per Cron (z. B. nachts):
 - **Council:** Wird nur ausgelöst, wenn das Parent-Projekt **done** ist (nicht bei `failed_quality_gate` o. ä.). Siehe `tools/trigger_council.py` und `workflows/research-cycle.sh` (TRIGGER_COUNCIL nur bei `status=done` für Discovery).
 - **Synthesize:** Bei Fehler oder leerem Report wird ein **Fallback-Report** aus `discovery_analysis.json`, Claim-Ledger und Verify-Metriken erzeugt; der Lauf endet trotzdem mit Report.
 - **Critic:** Bei Discovery und bestandenem Evidence Gate ist der Critic **advisory** (niedriger Score → `quality_gate_status=advisory_low_score`, Projekt wird trotzdem als `done` abgeschlossen).
-- **Experiment (strict gate):** Nach Synthesize läuft der Sandbox-Experiment-Loop. In Discovery ist standardmäßig `RESEARCH_STRICT_EXPERIMENT_GATE=1`: Es wird nur dann `failed_experiment_gate` gesetzt, wenn die Sandbox abgestürzt ist (crash/timeout). Läuft der Code durch, geht der Lauf auf `done`—egal ob Hypothese bestätigt, widerlegt oder unklar; negative Ergebnisse sind gültige Entdeckungen.
+- **Experiment (strict gate):** Nach Synthesize läuft der Sandbox-Experiment-Loop. In Discovery: Wenn `RESEARCH_STRICT_EXPERIMENT_GATE=1` (z. B. bei manuellem Einzelzyklus), wird nur bei Sandbox-Crash/Timeout `failed_experiment_gate` gesetzt; läuft der Code durch → `done`. **`run-research-cycle-until-done.sh` setzt standardmäßig `RESEARCH_STRICT_EXPERIMENT_GATE=0`**, damit autonome Discovery-Läufe bei Sandbox-Crash/Timeout nicht auf `failed_experiment_gate` enden, sondern mit Report auf `done` gehen. Mit `RESEARCH_STRICT_EXPERIMENT_GATE=1` (export vor Aufruf) bleibt striktes Gate auch im Cycle-Runner aktiv.
 
 ---
 

@@ -14,6 +14,7 @@ from pathlib import Path
 
 OPERATOR_ROOT = Path(os.environ.get("OPERATOR_ROOT", "/root/operator"))
 sys.path.insert(0, str(OPERATOR_ROOT))
+from tools.june_handoff_client import submit_research_start
 from tools.research_common import llm_call, model_for_lane
 from lib.memory import Memory
 
@@ -35,62 +36,29 @@ def load_json(path: Path):
         return {}
 
 def spawn_followups(parent_id: str, missions: list):
-    """Spawns follow-up agents asynchronously and links them to the parent."""
+    """Spawns follow-up agents through June-owned control plane."""
     for mission in missions:
         q = mission.get("question", "").strip()
         h = mission.get("hypothesis_to_test", "").strip()
         if not q: continue
         
         print(f"Spawning follow-up: {q[:60]}...")
-        # Discovery gate: no verified_claim_count requirement (research often can't verify claims)
-        req = json.dumps({"question": q, "hypothesis_to_test": h, "research_mode": "discovery"})
-        
-        # 1. Create and run init job (synchronously, it's fast)
-        cmd_init = ["python3", str(OPERATOR_ROOT/"bin"/"op"), "job", "new", "--workflow", "research-init", "--request", req]
-        r1 = subprocess.run(cmd_init, capture_output=True, text=True, cwd=str(OPERATOR_ROOT))
-        if r1.returncode != 0:
-            print(f"Init failed: {r1.stderr}")
+        try:
+            payload = submit_research_start(
+                q,
+                source_command="research_council",
+                research_mode="discovery",
+                run_until_done=True,
+                parent_project_id=parent_id,
+                hypothesis_to_test=h,
+            )
+        except Exception as exc:
+            print(f"Init failed: {exc}")
             continue
-            
-        job_init_dir = Path(r1.stdout.strip().split("\n")[-1])
-        env = os.environ.copy()
-        subprocess.run(["python3", str(OPERATOR_ROOT/"bin"/"op"), "run", str(job_init_dir)], env=env, cwd=str(OPERATOR_ROOT), capture_output=True)
-        
-        # Get project ID
-        pid_file = job_init_dir / "artifacts" / "project_id.txt"
-        if not pid_file.exists():
+        child_id = str(payload.get("projectId") or "").strip()
+        if not child_id:
             print("Failed to read project_id from follow-up init.")
             continue
-            
-        child_id = pid_file.read_text().strip()
-        
-        # 2. Link child to parent
-        c_json_path = RESEARCH / child_id / "project.json"
-        if c_json_path.exists():
-            try:
-                c_data = json.loads(c_json_path.read_text())
-                c_data["parent_project_id"] = parent_id
-                c_json_path.write_text(json.dumps(c_data, indent=2))
-            except:
-                pass
-                
-        # 3. Run the complete cycle asynchronously
-        run_until_done_script = OPERATOR_ROOT / "tools" / "run-research-cycle-until-done.sh"
-        if run_until_done_script.exists():
-            subprocess.Popen(
-                ["nohup", "bash", str(run_until_done_script), child_id],
-                cwd=str(OPERATOR_ROOT), start_new_session=True,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-        else:
-            # Fallback to single run if script is missing
-            cmd_cycle = ["python3", str(OPERATOR_ROOT/"bin"/"op"), "job", "new", "--workflow", "research-cycle", "--request", child_id]
-            r2 = subprocess.run(cmd_cycle, capture_output=True, text=True, cwd=str(OPERATOR_ROOT))
-            if r2.returncode == 0:
-                job_cycle_dir = r2.stdout.strip().split("\n")[-1]
-                subprocess.Popen(["nohup", "python3", str(OPERATOR_ROOT/"bin"/"op"), "run", job_cycle_dir], 
-                                 cwd=str(OPERATOR_ROOT), start_new_session=True, 
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         print(f"-> Dispatched agent {child_id}")
 
 def main():

@@ -1,13 +1,23 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { OPERATOR_ROOT, runOp, readFileSafe } from "../runner";
+import { OPERATOR_ROOT } from "../runner";
 
 const researchProjectIdRe = /^proj-[a-zA-Z0-9-]+$/;
+const JUNE_HANDOFF = "/root/agent/workspace/bin/june-control-plane-handoff";
 
 function validateProjectId(id: string): string | null {
   const s = (id || "").trim().split(/\s+/)[0];
   return s && researchProjectIdRe.test(s) ? s : null;
+}
+
+function runJuneHandoff(args: string[], timeoutMs = 180_000): Record<string, unknown> {
+  const raw = execFileSync("python3", [JUNE_HANDOFF, ...args], {
+    encoding: "utf8",
+    timeout: timeoutMs,
+    env: { ...process.env, OPERATOR_ROOT },
+  }).trim();
+  return raw ? JSON.parse(raw) as Record<string, unknown> : {};
 }
 
 export function registerResearch(api: { registerCommand: (c: unknown) => void }) {
@@ -51,10 +61,17 @@ export function registerResearch(api: { registerCommand: (c: unknown) => void })
       const question = (ctx.args || "").trim();
       if (!question) return { text: "Usage: /research-start <Frage>\nBeispiel: /research-start Wie ist der Stand bei Feststoffbatterien?" };
       try {
-        const jobDir = runOp(["job", "new", "--workflow", "research-init", "--request", question], 10_000);
-        runOp(["run", jobDir], 120_000);
-        const projectId = readFileSafe(join(jobDir, "artifacts", "project_id.txt")).trim();
-        if (!projectId) throw new Error("Keine project_id in artifacts.");
+        const payload = runJuneHandoff([
+          "ui-research-start",
+          "--question",
+          question,
+          "--research-mode",
+          "standard",
+          "--run-until-done",
+          "0",
+        ]);
+        const projectId = typeof payload.projectId === "string" ? payload.projectId : "";
+        if (!projectId) throw new Error("Keine project_id von June-Handoff erhalten.");
         return {
           text: `Projekt angelegt: ${projectId}\n\nNächster Schritt: /research-cycle ${projectId}\n(mehrmals ausführen bis Phase „done“, oder /research-go nutzen)`,
         };
@@ -66,33 +83,19 @@ export function registerResearch(api: { registerCommand: (c: unknown) => void })
 
   api.registerCommand({
     name: "research-cycle",
-    description: "Run one research cycle for a project. Usage: /research-cycle <project_id>",
+    description: "Run research cycle for a project (all phases until done, in background). Usage: /research-cycle <project_id>",
     acceptsArgs: true,
     requireAuth: true,
     handler: async (ctx: { args?: string }) => {
       const projectId = validateProjectId(ctx.args || "");
       if (!projectId) return { text: "Usage: /research-cycle <project_id>\nBeispiel: /research-cycle proj-20260225-654f85b2" };
       try {
-        const jobDir = runOp(["job", "new", "--workflow", "research-cycle", "--request", projectId], 10_000);
-        runOp(["run", jobDir], 300_000);
-        const projectPath = join(OPERATOR_ROOT, "research", projectId, "project.json");
-        let phase = "?";
-        if (existsSync(projectPath)) {
-          try {
-            const data = JSON.parse(readFileSync(projectPath, "utf8")) as { phase?: string; status?: string };
-            phase = data.phase || "?";
-            const status = data.status || "?";
-            if (phase === "done") {
-              return { text: `Forschung abgeschlossen (${projectId}). Report in research/${projectId}/reports/` };
-            }
-            return { text: `Phase: ${phase} (Status: ${status}). Nächster Lauf: /research-cycle ${projectId}` };
-          } catch {
-            // ignore
-          }
-        }
-        return { text: `Cycle ausgeführt. Projekt: ${projectId}, Phase: ${phase}.` };
+        runJuneHandoff(["ui-research-continue", "--project-id", projectId], 30_000);
+        return {
+          text: `Research-Cycle gestartet (läuft im Hintergrund bis done/failed).\nProjekt: ${projectId}\nStatus: /research-status ${projectId}`,
+        };
       } catch (e: unknown) {
-        return { text: `Research-Cycle fehlgeschlagen: ${(e as Error).message}` };
+        return { text: `Research-Cycle starten fehlgeschlagen: ${(e as Error).message}` };
       }
     },
   });
@@ -106,9 +109,18 @@ export function registerResearch(api: { registerCommand: (c: unknown) => void })
       const question = (ctx.args || "").trim();
       if (!question) return { text: "Usage: /research-go <Frage>\nBeispiel: /research-go Wie ist der Stand bei Feststoffbatterien?" };
       try {
-        const jobDir = runOp(["job", "new", "--workflow", "research-init", "--request", question], 10_000);
-        runOp(["run", jobDir], 120_000);
-        const projectId = readFileSafe(join(jobDir, "artifacts", "project_id.txt")).trim();
+        const payload = runJuneHandoff([
+          "research-start",
+          "--question",
+          question,
+          "--research-mode",
+          "standard",
+          "--run-until-done",
+          "0",
+          "--source-command",
+          "research-go",
+        ]);
+        const projectId = typeof payload.projectId === "string" ? payload.projectId.trim() : "";
         if (!projectId) throw new Error("Keine project_id in artifacts.");
         const { spawn } = await import("node:child_process");
         const script = join(OPERATOR_ROOT, "tools", "run-research-over-days.sh");
