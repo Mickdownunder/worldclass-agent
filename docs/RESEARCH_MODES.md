@@ -56,7 +56,8 @@ Die Research-Pipeline unterstützt drei Modi (`project.json` → `config.researc
   Zusatz im System-Prompt: „DISCOVERY MODE: Prioritize BREADTH over DEPTH. Prefer search_more over read_more. Only verify if findings_count >= 30. Synthesize when 8+ domains and 20+ findings.“
 
 - **Conductor Gate (deterministisch):**  
-  Bei `research_mode == "discovery"` und proposed_next == "synthesize": nur durchlassen wenn `findings_count >= RESEARCH_DISCOVERY_SYNTHESIZE_MIN_FINDINGS` und `source_count >= RESEARCH_DISCOVERY_SYNTHESIZE_MIN_SOURCES`. Defaults: 15 und 8. Env-Variablen: `RESEARCH_DISCOVERY_SYNTHESIZE_MIN_FINDINGS`, `RESEARCH_DISCOVERY_SYNTHESIZE_MIN_SOURCES`.
+  Bei `research_mode == "discovery"` und proposed_next == "synthesize": nur durchlassen wenn `findings_count >= RESEARCH_DISCOVERY_SYNTHESIZE_MIN_FINDINGS` und `source_count >= RESEARCH_DISCOVERY_SYNTHESIZE_MIN_SOURCES`. Defaults: 15 und 8. Env-Variablen: `RESEARCH_DISCOVERY_SYNTHESIZE_MIN_FINDINGS`, `RESEARCH_DISCOVERY_SYNTHESIZE_MIN_SOURCES`.  
+  **Discovery explore→focus:** Conductor lässt advance zu Focus zu, sobald findings ≥ 6 und sources ≥ 4 (kein Zurückschicken zu Explore). Bash-Guard in `helpers.sh` blockiert focus→explore-Override im Discovery-Modus bei gleicher Schwelle.
 
 ---
 
@@ -150,3 +151,23 @@ Wird beim Erstellen eines Projekts nicht automatisch gesetzt; die UI übergibt d
 1. **Memory-Dichte:** Transitive Muster und Cross-Domain brauchen ein initial gefülltes Memory (Entity-Relations und cross_links). Beim allerersten Discovery-Projekt ist dieses Signal naturgemäß schwächer.
 
 **Kurz:** Das System **ist maximal ausgestattet**, um intelligente, novel Entdeckungen zu **machen** und das Memory-System voll auszureizen (inkl. analogem Querdenken und Graph-Analysen).
+
+---
+
+## 11. Discovery-Pipeline: Verdrahtung für das aktuelle System (Check)
+
+Damit Discovery von UI bis Report durchläuft, müssen Trigger, Init, Phasen und Gate konsistent `config.research_mode === "discovery"` nutzen. Stand: **ja, korrekt verdrahtet.**
+
+| Stelle | Erwartung | Aktueller Stand (Code-Pfad) |
+|--------|-----------|-----------------------------|
+| **UI Trigger** | Eigene Route, fest `research_mode: "discovery"` | `/research/discovery` → `DiscoveryProjectForm` → `POST /api/research/projects` mit `research_mode: "discovery"`. Nav: „Discovery Research“. |
+| **API** | Modus akzeptieren und an Init durchreichen | `route.ts`: `validModes` inkl. `"discovery"`, `runResearchInitAndCycleUntilDone(question, researchMode)`. |
+| **Init** | `project.json` mit `config.research_mode: "discovery"` | `research-init.sh`: Request als JSON mit `research_mode`; Werte `standard` \| `frontier` \| `discovery` → in `config` geschrieben. |
+| **Conductor Gate** | explore→focus bei 6/4 erlauben, focus→explore blockieren bei 6/4, synthesize bei min findings/sources | `research_conductor.py`: discovery explore→focus, synthesize-Minima; `helpers.sh`: Bash-Guard focus→explore bei 6/4. |
+| **Evidence Gate** | Discovery: Pass ohne verified_claim, nach Findings/Sources | `research_quality_gate.py`: `_decide_gate_discovery()` (findings/sources); Run nutzt research_mode aus project. |
+| **Nach Verify (Gate pass)** | Discovery Analysis ausführen | `verify.sh`: `FM=discovery` → `research_discovery_analysis.py` → `discovery_analysis.json`. |
+| **Synthesize** | discovery_brief einbauen, Fallback-Report bei Fehler | `research_synthesize.py`: liest `discovery_analysis.json`, discovery_brief in Sektionen/Conclusions; `synthesize.sh`: Fallback aus discovery_analysis. |
+| **Council** | Nur bei done (nie bei failed) | `research-phase.sh` / `trigger_council.py`: Discovery nur wenn `status === "done"`. |
+| **Projekt-Detail UI** | Discovery Insights anzeigen | `page.tsx`: bei `config.research_mode === "discovery"` und `discovery_analysis.discovery_brief` → Block Novel Connections, Emerging Concepts, Research Frontier, Key Hypothesis. |
+
+Bei Änderungen an Init, API, Conductor, Gate oder Verify/Synthesize: diese Tabelle und die genannten Dateien abgleichen (siehe docs-sync-with-code).
