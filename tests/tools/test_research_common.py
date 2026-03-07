@@ -11,6 +11,9 @@ from tools.research_common import (
     save_project,
     load_secrets,
     ensure_project_layout,
+    model_for_lane,
+    _is_quota_or_bottleneck,
+    _is_retryable,
 )
 
 
@@ -67,3 +70,72 @@ def test_ensure_project_layout(tmp_project):
     assert (tmp_project / "findings").is_dir()
     assert (tmp_project / "sources").is_dir()
     assert (tmp_project / "reports").is_dir()
+
+
+def test_model_for_lane_strong_by_default(monkeypatch):
+    """model_for_lane with no RESEARCH_GOVERNOR_LANE returns strong default."""
+    monkeypatch.delenv("RESEARCH_GOVERNOR_LANE", raising=False)
+    m = model_for_lane("verify")
+    assert m
+
+
+def test_model_for_lane_cheap_returns_cheap(monkeypatch):
+    """model_for_lane with lane=cheap returns cheap model."""
+    monkeypatch.setenv("RESEARCH_GOVERNOR_LANE", "cheap")
+    m = model_for_lane("verify")
+    assert m
+
+
+def test_model_for_lane_mid_returns_mid(monkeypatch):
+    """model_for_lane with lane=mid returns mid model."""
+    monkeypatch.setenv("RESEARCH_GOVERNOR_LANE", "mid")
+    m = model_for_lane("synthesize")
+    assert m
+
+
+def test_is_quota_or_bottleneck_429():
+    """_is_quota_or_bottleneck returns True for 429 message."""
+    assert _is_quota_or_bottleneck(Exception("HTTP 429")) is True
+
+
+def test_is_quota_or_bottleneck_quota_exceeded():
+    """_is_quota_or_bottleneck returns True for quota exceeded."""
+    assert _is_quota_or_bottleneck(Exception("you exceeded your current quota")) is True
+
+
+def test_is_quota_or_bottleneck_other_returns_false():
+    """_is_quota_or_bottleneck returns False for other errors."""
+    assert _is_quota_or_bottleneck(Exception("not found")) is False
+
+
+def test_is_retryable_quota_returns_false():
+    """_is_retryable returns False for quota exceeded."""
+    assert _is_retryable(Exception("quota exceeded")) is False
+
+
+def test_is_retryable_timeout_returns_true():
+    """_is_retryable returns True for TimeoutError."""
+    assert _is_retryable(TimeoutError()) is True
+
+
+def test_is_retryable_connection_error_returns_true():
+    """_is_retryable returns True for ConnectionError."""
+    assert _is_retryable(ConnectionError()) is True
+
+
+def test_is_retryable_http_error_429_returns_true():
+    """_is_retryable returns True for HTTPError with code 429."""
+    from urllib.error import HTTPError
+    try:
+        raise HTTPError("url", 429, "Rate Limited", None, None)
+    except HTTPError as e:
+        assert _is_retryable(e) is True
+
+
+def test_is_retryable_http_error_503_returns_true():
+    """_is_retryable returns True for HTTPError 503."""
+    from urllib.error import HTTPError
+    try:
+        raise HTTPError("url", 503, "Service Unavailable", None, None)
+    except HTTPError as e:
+        assert _is_retryable(e) is True

@@ -68,3 +68,28 @@ def test_memory_failure_returns_none():
     with patch("lib.memory.Memory", side_effect=RuntimeError("DB unavailable")):
         result = get_calibrated_thresholds()
     assert result is None
+
+
+def test_invalid_gate_metrics_json_skipped():
+    """Outcomes with invalid gate_metrics_json: exception caught, that outcome skipped; result from valid only."""
+    mock_mem = MagicMock()
+    # 10 valid + 1 invalid: invalid is skipped, 10 valid yield a result
+    mock_mem.get_successful_outcomes.return_value = [
+        {"gate_metrics_json": json.dumps({"findings_count": 10, "unique_source_count": 5, "verified_claim_count": 2, "claim_support_rate": 0.5, "high_reliability_source_ratio": 0.5})}
+        for _ in range(10)
+    ] + [{"gate_metrics_json": "{ invalid }"}]
+    with patch("lib.memory.Memory", return_value=mock_mem):
+        result = get_calibrated_thresholds()
+    assert result is not None
+    assert "findings_count_min" in result
+
+
+def test_no_metrics_in_outcomes_returns_none():
+    """10+ outcomes but no metric keys in any gate_metrics_json: out stays empty, return None."""
+    mock_mem = MagicMock()
+    mock_mem.get_successful_outcomes.return_value = [
+        {"gate_metrics_json": "{}"} for _ in range(10)
+    ]
+    with patch("lib.memory.Memory", return_value=mock_mem):
+        result = get_calibrated_thresholds()
+    assert result is None

@@ -334,6 +334,10 @@ def gate_check(project_id: str, proposed_next: str) -> str:
         min_sources = max(1, int(os.environ.get("RESEARCH_DISCOVERY_SYNTHESIZE_MIN_SOURCES", "8")))
         if state.findings_count >= min_findings and state.source_count >= min_sources:
             return proposed_next
+    # Discovery: allow explore->focus with low bar (breadth over depth); avoid Conductor sending back to explore
+    if research_mode == "discovery" and current_phase == "explore" and proposed_next == "focus":
+        if state.findings_count >= 6 and state.source_count >= 4:
+            return proposed_next
     # Strong satisfaction: avoid endless explore/focus loops
     if current_phase in ("explore", "focus", "connect") and state.coverage_score >= 0.8 and state.findings_count >= 30:
         return proposed_next

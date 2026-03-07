@@ -33,6 +33,30 @@ def test_reason_accepted():
     assert "reliability" in reason({}, "accepted").lower() or "passed" in reason({}, "accepted").lower()
 
 
+def test_reason_rejected_unverified():
+    """reason() for rejected with verification_status=unverified."""
+    r = reason({"verification_status": "unverified"}, "rejected")
+    assert "unverified" in r.lower()
+
+
+def test_reason_rejected_low_reliability():
+    """reason() for rejected due to reliability below 0.3."""
+    r = reason({"reliability_score": 0.2, "importance_score": 0.5}, "rejected")
+    assert "reliability" in r.lower() or "threshold" in r.lower()
+
+
+def test_reason_rejected_other():
+    """reason() for rejected for other reasons (failed minimum thresholds)."""
+    r = reason({"reliability_score": 0.5, "importance_score": 0.4}, "rejected")
+    assert "threshold" in r.lower() or "minimum" in r.lower()
+
+
+def test_reason_quarantined():
+    """reason() for quarantined."""
+    r = reason({"reliability_score": 0.7, "importance_score": 0.3}, "quarantined")
+    assert "quarantined" in r.lower() or "threshold" in r.lower()
+
+
 def test_thresholds_defined():
     """THRESHOLDS dict is defined."""
     assert THRESHOLDS["reliability_min"] >= 0

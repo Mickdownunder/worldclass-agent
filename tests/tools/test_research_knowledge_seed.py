@@ -12,8 +12,9 @@ from tools.research_knowledge_seed import main
 def test_project_without_findings_writes_empty_prior_knowledge(tmp_project, mock_operator_root):
     """Project exists; Memory returns empty principles/findings: prior_knowledge.json with empty lists."""
     mock_mem = MagicMock()
-    mock_mem.retrieve_with_utility.side_effect = lambda q, t, k: []
-    mock_mem.record_retrieval.return_value = None
+    # retrieve_with_utility(question, type, k=..., context_key=..., domain=...) in research_knowledge_seed
+    mock_mem.retrieve_with_utility.side_effect = lambda q, t, k, context_key=None, domain=None: []
+    mock_mem.record_memory_decision.return_value = None
     mock_mem.close.return_value = None
     with patch("lib.memory.Memory", return_value=mock_mem), patch("tools.research_knowledge_seed.ROOT", mock_operator_root), patch("tools.research_knowledge_seed.sys.exit"):
         sys.argv = ["", tmp_project.name]

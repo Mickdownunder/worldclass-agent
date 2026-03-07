@@ -58,23 +58,21 @@ def test_load_strategy_context_logs_fallback_no_strategy(monkeypatch, tmp_path):
     )
 
 
-def test_persist_strategy_context_contains_mode_fields(tmp_path):
+def test_persist_strategy_context_contains_mode_fields(tmp_path, monkeypatch):
     root = tmp_path / "operator"
     proj = root / "research" / "proj-y"
     proj.mkdir(parents=True)
+    monkeypatch.setenv("OPERATOR_ROOT", str(root))
+    import tools.research_common as research_common
+    monkeypatch.setattr(research_common, "research_root", lambda: root / "research")
     data = {
         "mode": "v2_fallback",
         "fallback_reason": "low_confidence",
         "confidence_drivers": {"strategy_score": 0.4},
         "similar_episode_count": 1,
     }
-    old_root = planner.research_root
-    planner.research_root = lambda: root / "research"
-    try:
-        planner._persist_strategy_context("proj-y", data)
-        saved = json.loads((proj / "memory_strategy.json").read_text())
-    finally:
-        planner.research_root = old_root
+    planner._persist_strategy_context("proj-y", data)
+    saved = json.loads((proj / "memory_strategy.json").read_text())
     assert saved["mode"] == "v2_fallback"
     assert saved["fallback_reason"] == "low_confidence"
     assert saved["similar_episode_count"] == 1

@@ -38,3 +38,15 @@ def test_schema_validate_invalid_doc(tmp_path):
         assert code == 1
     finally:
         sys.argv = old_argv
+
+
+def test_schema_validate_wrong_arg_count_returns_2():
+    """len(sys.argv) != 3: main() returns 2."""
+    import sys
+    old_argv = sys.argv
+    sys.argv = ["schema_validate.py", "only_one_arg"]
+    try:
+        code = schema_validate_main()
+        assert code == 2
+    finally:
+        sys.argv = old_argv
