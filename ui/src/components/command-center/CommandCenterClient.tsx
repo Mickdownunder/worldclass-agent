@@ -53,6 +53,15 @@ export function CommandCenterClient({ initialData, initialSelectedMissionId }: C
 
   const focusMission = useMemo(() => pickFocusMission(data.missions), [data.missions]);
   const blockedMissions = useMemo(() => data.missions.filter((mission) => mission.lifecycle === "blocked"), [data.missions]);
+  const pushCampaigns = useMemo(() => data.campaigns.filter((campaign) => campaign.strategy?.recommended_disposition === "push"), [data.campaigns]);
+  const holdCampaigns = useMemo(() => data.campaigns.filter((campaign) => campaign.strategy?.recommended_disposition === "hold"), [data.campaigns]);
+  const stopCampaigns = useMemo(() => data.campaigns.filter((campaign) => campaign.strategy?.recommended_disposition === "stop"), [data.campaigns]);
+  const topPriorityCampaigns = useMemo(() => {
+    const topIds = data.portfolios.flatMap((portfolio) => portfolio.strategy?.top_priority_campaigns ?? []);
+    return topIds
+      .map((campaignId) => data.campaigns.find((campaign) => campaign.id === campaignId))
+      .filter((campaign): campaign is CampaignSummary => Boolean(campaign));
+  }, [data.portfolios, data.campaigns]);
   const decisionMissions = useMemo(
     () => data.missions.filter((mission) => mission.lifecycle === "awaiting_next_test" || mission.lifecycle === "blocked"),
     [data.missions],
@@ -267,6 +276,54 @@ export function CommandCenterClient({ initialData, initialSelectedMissionId }: C
             <div className="flex items-center justify-between gap-4">
               <div>
                 <div className="text-[11px] font-semibold uppercase tracking-[0.28em]" style={{ color: "var(--tron-text-dim)" }}>
+                  Strategische Prioritäten
+                </div>
+                <p className="mt-2 text-sm" style={{ color: "var(--tron-text-muted)" }}>
+                  Hier siehst du, welche Kampagnen June aktuell pushen, halten oder stoppen sollte.
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <SummaryCard
+                label="Push"
+                value={pushCampaigns[0]?.objective ?? "Keine Priorität"}
+                hint={pushCampaigns[0] ? describeDisposition(pushCampaigns[0]) : "Aktuell keine Linie mit aktivem Push-Signal"}
+              />
+              <SummaryCard
+                label="Hold"
+                value={holdCampaigns[0]?.objective ?? "Nichts auf Hold"}
+                hint={holdCampaigns[0] ? describeDisposition(holdCampaigns[0]) : "Keine Linie wartet auf mehr Evidenz"}
+              />
+              <SummaryCard
+                label="Stop"
+                value={stopCampaigns[0]?.objective ?? "Kein Stop-Signal"}
+                hint={stopCampaigns[0] ? describeDisposition(stopCampaigns[0]) : "Aktuell keine Linie mit Stop-Empfehlung"}
+              />
+            </div>
+            {topPriorityCampaigns.length > 0 ? (
+              <div className="mt-4 rounded-[20px] p-4" style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg)" }}>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.22em]" style={{ color: "var(--tron-text-dim)" }}>
+                  Top-Prioritätskampagnen
+                </div>
+                <div className="mt-3 space-y-2">
+                  {topPriorityCampaigns.slice(0, 3).map((campaign) => (
+                    <div key={campaign.id} className="flex items-start justify-between gap-3 text-sm">
+                      <div>
+                        <div style={{ color: "var(--tron-text)" }}>{campaign.objective}</div>
+                        <div style={{ color: "var(--tron-text-muted)" }}>{describeDisposition(campaign)}</div>
+                      </div>
+                      <ToneBadge value={humanDisposition(campaign.strategy?.recommended_disposition)} kind="mission" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </section>
+
+          <section className="rounded-[24px] p-5 md:p-6" style={panelStyle}>
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-[0.28em]" style={{ color: "var(--tron-text-dim)" }}>
                   Missionen im Klartext
                 </div>
                 <p className="mt-2 text-sm" style={{ color: "var(--tron-text-muted)" }}>
@@ -343,9 +400,25 @@ export function CommandCenterClient({ initialData, initialSelectedMissionId }: C
                 <div className="mt-5 grid gap-3 sm:grid-cols-2">
                   <DetailTile label="June sagt" value={describeMissionState(selectedMission)} />
                   <DetailTile label="Nächster Schritt" value={describeNextStep(selectedMission)} />
+                  <DetailTile label="Frage-Status" value={describeQuestionStatus(selectedMission)} />
+                  <DetailTile label="Evidenzfortschritt" value={describeEvidenceDelta(selectedMission)} />
+                  <DetailTile label="Gegencheck" value={describeCountercheckStatus(selectedMission)} />
+                  <DetailTile label="Nächster bester Test" value={selectedMission.decision?.next_best_test ?? "Noch keine konkrete Empfehlung"} />
                   <DetailTile label="Letzter Lauf" value={selectedMission.envelope?.overall ?? "noch kein Ergebnis"} />
                   <DetailTile label="Atlas" value={selectedMission.envelope?.atlas_overall ?? "n/a"} />
                 </div>
+
+                {selectedMission.decision?.why_not_done ? (
+                  <div
+                    className="mt-4 rounded-[20px] p-4 text-sm leading-6"
+                    style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg)" }}
+                  >
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.22em]" style={{ color: "var(--tron-text-dim)" }}>
+                      Warum noch nicht fertig
+                    </div>
+                    <div className="mt-2" style={{ color: "var(--tron-text)" }}>{selectedMission.decision.why_not_done}</div>
+                  </div>
+                ) : null}
 
                 <div className="mt-5 grid gap-2">
                   <label className="grid gap-2 text-sm">
@@ -476,6 +549,9 @@ function CompactPortfolioPanel({ portfolios }: { portfolios: PortfolioSummary[] 
         <div key={portfolio.id} className="rounded-[20px] p-4" style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg)" }}>
           <div className="text-sm font-semibold" style={{ color: "var(--tron-text)" }}>{friendlyPortfolio(portfolio.id)}</div>
           <div className="mt-1 text-xs" style={{ color: "var(--tron-text-muted)" }}>{portfolio.campaigns} Campaigns</div>
+          <div className="mt-2 text-xs" style={{ color: "var(--tron-text-muted)" }}>
+            push {portfolio.strategy?.active_count ?? 0} · hold {portfolio.strategy?.hold_count ?? 0} · stop {portfolio.strategy?.stop_count ?? 0}
+          </div>
         </div>
       ))}
     </div>
@@ -487,8 +563,14 @@ function CompactCampaignPanel({ campaigns }: { campaigns: CampaignSummary[] }) {
     <div className="space-y-3">
       {campaigns.slice(0, 4).map((campaign) => (
         <div key={campaign.id} className="rounded-[20px] p-4" style={{ border: "1px solid var(--tron-border)", background: "var(--tron-bg)" }}>
-          <div className="text-sm font-semibold" style={{ color: "var(--tron-text)" }}>{campaign.objective}</div>
-          <div className="mt-1 text-xs" style={{ color: "var(--tron-text-muted)" }}>{friendlyPlan(campaign.plan)} · {campaign.latest?.next_action ?? "n/a"}</div>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold" style={{ color: "var(--tron-text)" }}>{campaign.objective}</div>
+              <div className="mt-1 text-xs" style={{ color: "var(--tron-text-muted)" }}>{friendlyPlan(campaign.plan)} · {campaign.latest?.next_action ?? "n/a"}</div>
+              <div className="mt-1 text-xs" style={{ color: "var(--tron-text-muted)" }}>{describeDisposition(campaign)}</div>
+            </div>
+            <ToneBadge value={humanDisposition(campaign.strategy?.recommended_disposition)} kind="mission" />
+          </div>
         </div>
       ))}
     </div>
@@ -617,6 +699,55 @@ function describeMissionForHuman(mission: CommandMissionSummary) {
   return `${describeMissionState(mission)} ${run} ${describeNextStep(mission)}.`;
 }
 
+function describeQuestionStatus(mission: CommandMissionSummary) {
+  switch (mission.decision?.question_status) {
+    case "answered":
+      return "Die Kernfrage ist aktuell beantwortet.";
+    case "partially_answered":
+      return "Die Frage ist teilweise beantwortet, aber noch nicht belastbar genug.";
+    case "weakly_supported":
+      return "Die Hauptthese hat erste Stützung, aber noch keine harte Absicherung.";
+    case "not_answered":
+      return "Die Kernfrage ist noch nicht beantwortet.";
+    default:
+      return "Noch kein belastbarer Fragenstatus.";
+  }
+}
+
+function describeEvidenceDelta(mission: CommandMissionSummary) {
+  switch (mission.decision?.evidence_delta) {
+    case "strong":
+      return "Starke neue Evidenz";
+    case "moderate":
+      return "Solide neue Evidenz";
+    case "partial":
+      return "Teilweise neue Evidenz";
+    case "weak":
+      return "Bisher nur schwache Evidenz";
+    case "negative":
+      return "Negative Evidenz / Fehlpfad";
+    case "none":
+      return "Noch keine neue Evidenz";
+    default:
+      return "Noch keine Einordnung";
+  }
+}
+
+function describeCountercheckStatus(mission: CommandMissionSummary) {
+  switch (mission.decision?.countercheck_status) {
+    case "complete":
+      return "Gegencheck vorhanden";
+    case "present_but_unfair":
+      return "Gegencheck da, aber Vergleich noch unfair";
+    case "missing":
+      return "Gegencheck fehlt noch";
+    case "failed_scope":
+      return "Gegencheck- oder Scope-Blocker vorhanden";
+    default:
+      return "Noch kein Gegencheck-Status";
+  }
+}
+
 function humanOverall(mission: CommandMissionSummary) {
   if (mission.envelope?.overall === "PASS" && mission.lifecycle === "awaiting_next_test") {
     return "OPEN";
@@ -655,6 +786,32 @@ function friendlyPlan(plan: string) {
       return "Vollständiger Lauf";
     default:
       return plan;
+  }
+}
+
+function describeDisposition(campaign: CampaignSummary) {
+  const disposition = campaign.strategy?.recommended_disposition ?? "hold";
+  const avgScore = campaign.strategy?.avg_score;
+  const genome = campaign.strategy?.latest_failure_genome;
+  const avgText = typeof avgScore === "number" ? `score ${avgScore.toFixed(2)}` : "noch ohne Score";
+  switch (disposition) {
+    case "push":
+      return `June sollte diese Linie aktiv weiterverfolgen (${avgText}).`;
+    case "stop":
+      return `June sollte diese Linie stoppen oder nur mit neuem Beweis wieder aufnehmen (${genome ?? "kein Signal"}).`;
+    default:
+      return `Diese Linie sollte gehalten werden, bis mehr Evidenz da ist (${genome ?? avgText}).`;
+  }
+}
+
+function humanDisposition(disposition?: string) {
+  switch (disposition) {
+    case "push":
+      return "push";
+    case "stop":
+      return "stop";
+    default:
+      return "hold";
   }
 }
 

@@ -28,6 +28,12 @@ export interface CommandDecisionSummary {
   rationale?: string;
   decided_at?: string;
   attempt_id?: string;
+  substance_stage?: string;
+  question_status?: string;
+  evidence_delta?: string;
+  countercheck_status?: string;
+  why_not_done?: string;
+  next_best_test?: string;
 }
 
 export interface CommandEnvelopeSummary {
@@ -63,6 +69,13 @@ export interface PortfolioSummary {
   class: string;
   owner: string;
   campaigns: number;
+  strategy?: {
+    active_count?: number;
+    hold_count?: number;
+    stop_count?: number;
+    top_priority_campaigns?: string[];
+    last_reviewed_mission?: string;
+  };
 }
 
 export interface CampaignSummary {
@@ -72,6 +85,13 @@ export interface CampaignSummary {
   latest?: {
     overall?: string;
     next_action?: string;
+  };
+  strategy?: {
+    avg_score?: number;
+    review_count?: number;
+    latest_failure_genome?: string;
+    latest_question_status?: string;
+    recommended_disposition?: string;
   };
 }
 
@@ -84,6 +104,9 @@ export interface CommandCenterData {
     activeMissions: number;
     passCampaigns: number;
     portfolios: number;
+    pushCampaigns: number;
+    holdCampaigns: number;
+    stopCampaigns: number;
   };
 }
 
@@ -121,6 +144,9 @@ export async function listCommandCenter(): Promise<CommandCenterData> {
       activeMissions: missions.filter((mission) => mission.status === "running" || mission.status === "planned").length,
       passCampaigns: campaigns.filter((campaign) => campaign.latest?.overall === "PASS").length,
       portfolios: portfolios.length,
+      pushCampaigns: campaigns.filter((campaign) => campaign.strategy?.recommended_disposition === "push").length,
+      holdCampaigns: campaigns.filter((campaign) => campaign.strategy?.recommended_disposition === "hold").length,
+      stopCampaigns: campaigns.filter((campaign) => campaign.strategy?.recommended_disposition === "stop").length,
     },
   };
 }
@@ -237,6 +263,7 @@ async function listPortfolios(): Promise<PortfolioSummary[]> {
           class: data.portfolio.class,
           owner: data.portfolio.owner,
           campaigns: Object.keys(data.campaigns ?? {}).length,
+          strategy: data.strategy_summary,
         } satisfies PortfolioSummary;
       }),
   );
@@ -255,6 +282,7 @@ async function listCampaigns(): Promise<CampaignSummary[]> {
           plan: data.campaign.plan,
           objective: data.campaign.objective,
           latest: data.latest,
+          strategy: data.strategy,
         } satisfies CampaignSummary;
       }),
   );

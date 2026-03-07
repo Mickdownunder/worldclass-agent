@@ -40,7 +40,8 @@ const WORKFLOW_LABELS: Record<string, { name: string; desc: string }> = {
   "product-skeleton": { name: "Product Skeleton", desc: "Erstellt Produkt-Grundgerüst" },
   "product-feature-jobs": { name: "Product Feature Jobs", desc: "Feature-Jobs für Produkt" },
   "research-init": { name: "Research Init", desc: "Legt neues Research-Projekt an" },
-  "research-cycle": { name: "Research Cycle", desc: "Führt eine Research-Phase aus (explore→…→synthesize)" },
+  "research-phase": { name: "Research Phase", desc: "Interne Ein-Phasen-Primitive für periodische oder manuelle Spezialpfade" },
+  "research-cycle": { name: "Research Cycle", desc: "Führt einen vollständigen Research-Lauf bis zu einem terminalen Zustand aus" },
 };
 
 export async function listAgents(): Promise<AgentInfo[]> {

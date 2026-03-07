@@ -227,10 +227,10 @@ export default async function AgentsPage() {
           Du entscheidest nicht – das System entscheidet
         </h2>
         <p className="mt-2 text-sm leading-relaxed" style={{ color: "var(--tron-text)" }}>
-          Du gibst nur die <strong>Forschungsfrage</strong> oder das <strong>Ziel</strong> ein. Welcher Workflow wann läuft, entscheidet der <strong>Brain</strong>: Er sieht offene Research-Projekte, nutzt Memory und Principles und startet von sich aus <em>research-cycle</em>, <em>planner</em> oder was gerade passt. Du klickst nicht auf einzelne Workflows – du startest Research (eine Frage) oder einen Brain Cycle (Brain wählt die nächste Aktion).
+          Du gibst nur die <strong>Forschungsfrage</strong> oder das <strong>Ziel</strong> ein. Welcher Workflow wann läuft, entscheidet der <strong>Brain</strong>: Er sieht offene Research-Projekte, nutzt Memory und Principles und startet von sich aus den öffentlichen <em>research-cycle</em>-Pfad (kompletter Lauf bis terminal), <em>planner</em> oder was gerade passt. Du klickst nicht auf einzelne Workflows – du startest Research (eine Frage) oder einen Brain Cycle (Brain wählt die nächste Aktion).
         </p>
         <ul className="mt-3 space-y-1 text-sm" style={{ color: "var(--tron-text-muted)" }}>
-          <li><strong className="text-tron-text">Research:</strong> Frage eingeben → System legt Projekt an und führt alle Phasen bis zum Report (oder du lässt den Brain research-cycle für offene Projekte wählen).</li>
+          <li><strong className="text-tron-text">Research:</strong> Frage eingeben → System legt Projekt an und führt alle Phasen bis zum Report (oder du lässt den Brain denselben terminalen research-cycle für offene Projekte wählen).</li>
           <li><strong className="text-tron-text">Alles andere:</strong> Brain Cycle starten → Brain nutzt State + Memory, entscheidet die nächste Aktion und startet den passenden Workflow. Du musst nicht wissen, welcher das ist.</li>
         </ul>
       </div>
