@@ -228,8 +228,12 @@ class Brain:
                 pass
 
         # Research projects (phase, question, status; not done first)
+        # Include council_status and council_children_running so June knows when Council has spawned runs (report in days).
         research_projects = []
         if RESEARCH.exists():
+            def _terminal(s: str) -> bool:
+                return s in ("done", "cancelled", "abandoned", "aem_blocked") or (s or "").startswith("failed")
+
             for proj_dir in sorted(RESEARCH.iterdir(), reverse=True):
                 if not proj_dir.is_dir() or not proj_dir.name.startswith("proj-"):
                     continue
@@ -238,12 +242,29 @@ class Brain:
                     continue
                 try:
                     d = json.loads(proj_json.read_text())
+                    pid = d.get("id", proj_dir.name)
+                    parent_id = d.get("parent_project_id")
+                    council_status = d.get("council_status") or ""
+                    # For parents: count children that are not yet terminal (Council will reconvene when all are done).
+                    council_children_running = 0
+                    if not parent_id and council_status in ("active", "waiting"):
+                        for other in RESEARCH.iterdir():
+                            if not other.is_dir() or not other.name.startswith("proj-"):
+                                continue
+                            try:
+                                o = json.loads((other / "project.json").read_text())
+                                if o.get("parent_project_id") == pid and not _terminal(o.get("status", "")):
+                                    council_children_running += 1
+                            except (json.JSONDecodeError, OSError):
+                                pass
                     research_projects.append({
-                        "id": d.get("id", proj_dir.name),
+                        "id": pid,
                         "question": (d.get("question", "") or "")[:150],
                         "phase": d.get("phase", "?"),
                         "status": d.get("status", "?"),
                         "last_phase_at": d.get("last_phase_at", d.get("created_at", "")),
+                        "council_status": council_status,
+                        "council_children_running": council_children_running,
                     })
                 except (json.JSONDecodeError, OSError):
                     pass
@@ -254,6 +275,14 @@ class Brain:
             state["research_projects"] = research_projects[:25]
         else:
             state["research_projects"] = []
+
+        # Signal that a research run just completed (so June can read report and continue).
+        last_complete = BASE / "knowledge" / "last_research_complete.json"
+        if last_complete.exists():
+            try:
+                state["last_research_complete"] = json.loads(last_complete.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass
 
         # Research playbooks: merge file-based + DB-learned playbooks
         research_playbooks = []
@@ -516,6 +545,8 @@ If memory shows past failures, account for them.
 If playbooks exist for relevant domains, follow their strategies.
 
 Research: If state contains "research_projects" with projects where status != "done" and phase is not "done", consider suggesting "research-cycle" as an action with the project id as reason/context (e.g. action "research-cycle", reason "advance project <project_id>"). Prefer one research-cycle per plan step. Use the workflow id "research-cycle" and the request must be the project id. Research playbooks in state (research_playbooks) describe strategies for different research domains; use them when planning research-related actions.
+COUNCIL WAITING: If a project has council_status in ["active","waiting"] and council_children_running > 0, do NOT suggest "research-cycle" for that project — the Research Council has started follow-up runs (children); it will reconvene only when all children are done, which can take days. June will be notified when the Council reports back. Suggest research-cycle only for projects that are not in this council-waiting state (or for child projects that are still advancing).
+When state.last_research_complete is set, a research run just finished; consider reading the report (if phase was done) and deciding the next action (e.g. advance another project or wait for Council).
 Do NOT suggest "research-init". The Brain is not allowed to start new research projects; only advance existing ones via "research-cycle". New research runs are started only via UI/Telegram or other explicit triggers.
 
 SELF-HEALING (Plumber): If you observe repeated job failures (2+ failures in the same workflow), suggest action "plumber:diagnose-and-fix" with reason describing the failing workflow (e.g. "research-cycle repeated failures, likely script error"). The Plumber can:
