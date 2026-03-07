@@ -30,16 +30,19 @@ while [ $run -lt $MAX_RUNS ]; do
   phase=$(python3 -c "import json; d=json.load(open('$OPERATOR_ROOT/research/$PROJECT_ID/project.json')); print(d.get('phase',''), end='')")
   status=$(python3 -c "import json; d=json.load(open('$OPERATOR_ROOT/research/$PROJECT_ID/project.json')); print(d.get('status',''), end='')")
 
-  if [ "$phase" = "done" ]; then
-    echo "Project $PROJECT_ID is done."
-    ls -la "$OPERATOR_ROOT/research/$PROJECT_ID/reports/" 2>/dev/null || true
-    exit 0
-  fi
-
   case "$status" in
-    failed*|cancelled|error|abandoned|aem_blocked|pending_review)
-      echo "Project $PROJECT_ID reached terminal status: $status (phase: $phase). Stopping."
+    done)
+      echo "Project $PROJECT_ID is done."
+      ls -la "$OPERATOR_ROOT/research/$PROJECT_ID/reports/" 2>/dev/null || true
       exit 0
+      ;;
+    pending_review)
+      echo "Project $PROJECT_ID reached manual review gate: $status (phase: $phase). Stopping."
+      exit 0
+      ;;
+    failed*|cancelled|error|abandoned|aem_blocked)
+      echo "Project $PROJECT_ID reached terminal failure status: $status (phase: $phase). Stopping." >&2
+      exit 1
       ;;
   esac
 
@@ -65,7 +68,7 @@ if prog.exists():
     d['alive'] = False
     prog.write_text(json.dumps(d, indent=2))
 " 2>/dev/null || true
-      exit 0
+      exit 1
     fi
   else
     same_phase_count=0
@@ -74,7 +77,7 @@ if prog.exists():
 
   run=$((run + 1))
   echo "[Run $run] Phase: $phase, Status: $status — starting cycle job..."
-  job_dir=$($OP job new --workflow research-cycle --request "$PROJECT_ID")
+  job_dir=$($OP job new --workflow research-phase --request "$PROJECT_ID")
   run_exit=0
   $OP run "$job_dir" || run_exit=$?
   # Exit 2 = skipped (e.g. lock held by another cycle). Do not count toward stuck-phase.
@@ -92,5 +95,5 @@ if prog.exists():
   fi
 done
 
-echo "Stopped after $MAX_RUNS runs. Check project: $OPERATOR_ROOT/research/$PROJECT_ID/project.json"
-exit 0
+echo "Stopped after $MAX_RUNS runs without terminal completion. Check project: $OPERATOR_ROOT/research/$PROJECT_ID/project.json" >&2
+exit 1
