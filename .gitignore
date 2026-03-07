@@ -28,6 +28,10 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
+# Coverage
+.coverage
+coverage.xml
+htmlcov/
 
 # Node (openclaw-bridge + ui)
 openclaw-bridge/node_modules/

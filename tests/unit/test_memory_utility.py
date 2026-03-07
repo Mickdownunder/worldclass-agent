@@ -82,3 +82,23 @@ def test_contextual_utility_rows(memory_conn):
     row2 = u.get("principle", "pid-ctx", context_key="medical trial safety")
     assert row2 is not None
     assert row2["helpful_count"] == 1
+
+
+def test_get_top_utility_with_memory_type(memory_conn):
+    """get_top_utility(memory_type=X) returns only that type, ordered by utility_score."""
+    u = UtilityTracker(memory_conn)
+    u.record_retrieval("principle", "p1")
+    u.record_retrieval("reflection", "r1")
+    u.record_retrieval("principle", "p2")
+    rows = u.get_top_utility(memory_type="principle", limit=10)
+    assert len(rows) == 2
+    assert all(r["memory_type"] == "principle" for r in rows)
+
+
+def test_get_top_utility_without_memory_type(memory_conn):
+    """get_top_utility(memory_type=None) returns all types."""
+    u = UtilityTracker(memory_conn)
+    u.record_retrieval("principle", "p1")
+    u.record_retrieval("reflection", "r1")
+    rows = u.get_top_utility(memory_type=None, limit=10)
+    assert len(rows) == 2

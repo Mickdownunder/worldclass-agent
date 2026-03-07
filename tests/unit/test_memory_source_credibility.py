@@ -40,3 +40,28 @@ def test_get_returns_row_after_update(memory_conn):
     assert "verified_count" in row
     assert row["times_used"] == 1
     assert row["verified_count"] == 1
+
+
+def test_list_all_empty_returns_empty_list(memory_conn):
+    """list_all(conn, limit=50) on empty table returns []."""
+    rows = sc.list_all(memory_conn, limit=50)
+    assert rows == []
+
+
+def test_list_all_returns_inserted_domains_ordered(memory_conn):
+    """After update(domain1) and update(domain2), list_all returns both rows."""
+    sc.update(memory_conn, "domain_a", 1, 1, 0)
+    sc.update(memory_conn, "domain_b", 2, 1, 0)
+    rows = sc.list_all(memory_conn, limit=10)
+    assert len(rows) >= 2
+    domains = {r["domain"] for r in rows}
+    assert "domain_a" in domains
+    assert "domain_b" in domains
+
+
+def test_list_all_respects_limit(memory_conn):
+    """list_all(conn, limit=1) returns at most 1 row."""
+    sc.update(memory_conn, "d1", 1, 1, 0)
+    sc.update(memory_conn, "d2", 1, 1, 0)
+    rows = sc.list_all(memory_conn, limit=1)
+    assert len(rows) <= 1

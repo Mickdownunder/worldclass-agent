@@ -138,6 +138,8 @@ def cmd_job_new(args: list[str]):
         timeout = int(args[args.index("--timeout") + 1])
     elif workflow == "research-cycle":
         timeout = None  # no limit — let explore/read phases finish
+    elif workflow == "research-phase":
+        timeout = None  # synthesize/critic/experiment can take 30+ min; no hard kill
     elif workflow == "research-init":
         timeout = 900
 

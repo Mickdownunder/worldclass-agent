@@ -30,35 +30,11 @@ from .memory_v2 import MemoryV2
 
 import json as _json
 import os as _os
+
+from .embedding import embed_query as _embed_query, EMBEDDING_MODEL, EMBEDDING_DIM
+from .retrieval import retrieve_with_utility_impl
+
 DB_PATH = Path(_os.environ.get("OPERATOR_ROOT", str(Path.home() / "operator"))) / "memory" / "operator.db"
-EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIM = 1536
-
-
-def _embed_query(text: str) -> list[float] | None:
-    """Return query embedding vector or None if disabled/failed. Used for hybrid semantic retrieval."""
-    if not (text or "").strip() or _os.environ.get("RESEARCH_MEMORY_SEMANTIC", "1") == "0":
-        return None
-    try:
-        api_key = _os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            conf = Path(_os.environ.get("OPERATOR_ROOT", str(Path.home() / "operator"))) / "conf" / "secrets.env"
-            if conf.exists():
-                for line in conf.read_text().splitlines():
-                    line = line.strip()
-                    if line.startswith("OPENAI_API_KEY=") and "=" in line:
-                        api_key = line.split("=", 1)[1].strip().strip('"\'')
-                        break
-        if not api_key:
-            return None
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key)
-        r = client.embeddings.create(input=(text or "")[:8000], model=EMBEDDING_MODEL)
-        if r.data and len(r.data) > 0:
-            return list(r.data[0].embedding)
-    except Exception:
-        pass
-    return None
 
 
 class Memory:
@@ -252,81 +228,8 @@ class Memory:
         context_key: str | None = None,
         domain: str | None = None,
     ) -> list[dict]:
-        """Phase 1: semantic/keyword candidates. Phase 2: utility re-rank.
-        Findings are filtered by query (keyword match) so discovery and standard runs
-        only get topic-relevant prior knowledge. When RESEARCH_MEMORY_SEMANTIC=1 and
-        OPENAI_API_KEY is set, principles/findings with embedding_json use cosine similarity.
-        Optional (flagged): RESEARCH_MEMORY_PRINCIPLE_DOMAIN_FILTER=1 enables a domain-first
-        principle retrieval with global fallback to preserve recall."""
-        ctx = (context_key or query or "").strip().lower()[:180]
-        try:
-            lam = float(_os.environ.get("RESEARCH_MEMORY_UTILITY_LAMBDA", "0.6"))
-        except Exception:
-            lam = 0.6
-        lam = max(0.1, min(0.9, lam))
-        principle_domain_filter_enabled = _os.environ.get("RESEARCH_MEMORY_PRINCIPLE_DOMAIN_FILTER", "0") == "1"
-        normalized_domain = (domain or "").strip().lower()
-        query_embedding = _embed_query(query or "")
-        if memory_type == "principle":
-            if principle_domain_filter_enabled and normalized_domain:
-                scoped_limit = max(k * 4, k + 2)
-                candidates = self._principles.search(
-                    query,
-                    limit=scoped_limit,
-                    domain=normalized_domain,
-                    query_embedding=query_embedding,
-                )
-                min_scoped = max(2, min(k, 4))
-                if len(candidates) < min_scoped:
-                    global_candidates = self._principles.search(
-                        query,
-                        limit=max(k * 5, k + 6),
-                        query_embedding=query_embedding,
-                    )
-                    seen_ids = {c.get("id") for c in candidates if c.get("id")}
-                    for gc in global_candidates:
-                        gid = gc.get("id")
-                        if gid and gid in seen_ids:
-                            continue
-                        candidates.append(gc)
-                        if len(candidates) >= (k * 5):
-                            break
-            else:
-                candidates = self._principles.search(query, limit=k * 5, query_embedding=query_embedding)
-        elif memory_type == "reflection":
-            candidates = search_module.search_reflections(self._conn, query, limit=k * 5)
-        elif memory_type == "finding":
-            candidates = self._research.search_by_query(query, limit=k * 5, query_embedding=query_embedding)
-        else:
-            return []
-
-        for c in candidates:
-            mid = c.get("id")
-            if not mid:
-                continue
-            util_row = self._utility.get(memory_type, mid, context_key=ctx or None)
-            util_score = util_row["utility_score"] if util_row else 0.5
-            c["utility_score"] = util_score
-            similarity = c.get("similarity_score", c.get("relevance_score", c.get("relevance", 0.5)))
-            if not isinstance(similarity, (int, float)):
-                similarity = 0.5
-            c["similarity_score"] = float(similarity)
-            combined = (1.0 - lam) * float(similarity) + lam * float(util_score)
-            if memory_type == "principle" and principle_domain_filter_enabled and normalized_domain:
-                domain_val = str(c.get("domain") or "").strip().lower()
-                if domain_val == normalized_domain:
-                    # Small boost to prioritize same-domain principles, with global fallback retained.
-                    combined += 0.05
-            c["combined_score"] = round(min(1.0, combined), 6)
-
-        candidates.sort(key=lambda x: x.get("combined_score", 0), reverse=True)
-        selected = candidates[:k]
-        # Record retrieval for every memory actually selected into context.
-        for c in selected:
-            mid = c.get("id")
-            if mid:
-                self._utility.record_retrieval(memory_type, str(mid), context_key=ctx or None)
-        return selected
+        """Phase 1: semantic/keyword candidates. Phase 2: utility re-rank. See retrieval.retrieve_with_utility_impl."""
+        return retrieve_with_utility_impl(self, query, memory_type, k, context_key, domain)
 
     def update_utilities_from_outcome(
         self,
@@ -637,92 +540,11 @@ class Memory:
         return rows
 
     # ------------------------------------------------------------------
-    # State summary
+    # State summary (aggregation in .summary)
     # ------------------------------------------------------------------
     def state_summary(self) -> dict:
-        total_episodes = self._conn.execute("SELECT COUNT(*) as c FROM episodes").fetchone()["c"]
-        total_decisions = self._conn.execute("SELECT COUNT(*) as c FROM decisions").fetchone()["c"]
-        total_reflections = self._conn.execute("SELECT COUNT(*) as c FROM reflections").fetchone()["c"]
-        avg_q = self.avg_quality()
-        recent_eps = self.recent_episodes(limit=5)
-        recent_refs = self.recent_reflections(limit=3)
-        playbooks = self.all_playbooks()
-        recent_failures = self._conn.execute(
-            "SELECT * FROM reflections WHERE quality < 0.4 ORDER BY ts DESC LIMIT 3"
-        ).fetchall()
-        total_principles = self._conn.execute("SELECT COUNT(*) as c FROM strategic_principles").fetchone()["c"]
-        total_outcomes = self.count_project_outcomes()
-        try:
-            total_run_episodes = self._conn.execute("SELECT COUNT(*) as c FROM run_episodes").fetchone()["c"]
-        except Exception:
-            total_run_episodes = 0
-        memory_value = self._v2.get_memory_value_score()
-        try:
-            recent_run_rows = self._conn.execute(
-                """SELECT id, project_id, question, domain, status, critic_score,
-                          what_helped_json, what_hurt_json, strategy_profile_id, run_index, created_at, memory_mode
-                   FROM run_episodes ORDER BY created_at DESC LIMIT 20"""
-            ).fetchall()
-        except Exception:
-            recent_run_rows = []
-        def _run_episode_row(r) -> dict:
-            q = (r["question"] or "")[:100]
-            helped_raw = r["what_helped_json"] or "[]"
-            hurt_raw = r["what_hurt_json"] or "[]"
-            try:
-                helped = _json.loads(helped_raw) if isinstance(helped_raw, str) else helped_raw
-                hurt = _json.loads(hurt_raw) if isinstance(hurt_raw, str) else hurt_raw
-            except Exception:
-                helped, hurt = [], []
-            helped_preview = ", ".join(str(x)[:40] for x in (helped[:2] if isinstance(helped, list) else [])) or "—"
-            hurt_preview = ", ".join(str(x)[:40] for x in (hurt[:2] if isinstance(hurt, list) else [])) or "—"
-            return {
-                "id": r["id"],
-                "project_id": r["project_id"],
-                "question": q,
-                "domain": r["domain"] or "—",
-                "status": r["status"],
-                "critic_score": round(r["critic_score"], 3) if r["critic_score"] is not None else None,
-                "what_helped": helped_preview,
-                "what_hurt": hurt_preview,
-                "strategy_profile_id": r["strategy_profile_id"],
-                "run_index": r["run_index"],
-                "created_at": r["created_at"],
-                "memory_mode": r["memory_mode"],
-            }
-        recent_run_episodes = [_run_episode_row(dict(r)) for r in recent_run_rows]
-        consolidation = None
-        try:
-            cpath = self._path.parent / "consolidation_last.json"
-            if cpath.exists():
-                consolidation = _json.loads(cpath.read_text())
-        except Exception:
-            pass
-
-        return {
-            "totals": {
-                "episodes": total_episodes,
-                "decisions": total_decisions,
-                "reflections": total_reflections,
-                "avg_quality": round(avg_q, 3),
-                "principles": total_principles,
-                "outcomes": total_outcomes,
-                "run_episodes": total_run_episodes,
-                "memory_value": memory_value,
-            },
-            "recent_episodes": [{"kind": e["kind"], "content": e["content"][:120], "ts": e["ts"]} for e in recent_eps],
-            "recent_run_episodes": recent_run_episodes,
-            "consolidation": consolidation,
-            "recent_reflections": [
-                {"job_id": r["job_id"], "quality": r["quality"], "learnings": (r["learnings"] or "")[:150], "ts": r["ts"]}
-                for r in recent_refs
-            ],
-            "recent_failures": [
-                {"job_id": dict(r)["job_id"], "went_wrong": (dict(r)["went_wrong"] or "")[:150], "ts": dict(r)["ts"]}
-                for r in recent_failures
-            ],
-            "playbooks": [{"domain": p["domain"], "strategy": p["strategy"][:150], "success_rate": p["success_rate"]} for p in playbooks],
-        }
+        from .summary import build_state_summary
+        return build_state_summary(self)
 
     def close(self):
         self._conn.close()

@@ -12,6 +12,9 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 
+CANONICAL_TEST_PROJECT_ID = "proj-test"
+
+
 def pytest_configure(config):
     """Run before collection so lib/tools are importable when test modules load."""
     if str(_ROOT) not in sys.path:
@@ -41,7 +44,7 @@ def tmp_project(mock_operator_root, tmp_path):
     """A temp research project under mock_operator_root with project.json and dirs."""
     root = mock_operator_root
     research = root / "research"
-    pid = "test-proj"
+    pid = CANONICAL_TEST_PROJECT_ID
     proj = research / pid
     proj.mkdir(parents=True)
     (proj / "findings").mkdir()
@@ -62,7 +65,7 @@ def tmp_project(mock_operator_root, tmp_path):
 @pytest.fixture
 def mock_env(monkeypatch):
     """Minimal env for tests that need RESEARCH_* or API keys (no real keys)."""
-    monkeypatch.setenv("RESEARCH_PROJECT_ID", "test-proj", prepend=False)
+    monkeypatch.setenv("RESEARCH_PROJECT_ID", CANONICAL_TEST_PROJECT_ID, prepend=False)
     # Optional: monkeypatch.setenv("OPENAI_API_KEY", "sk-test") to avoid missing-key errors in code paths that only check presence
 
 

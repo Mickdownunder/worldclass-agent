@@ -1,0 +1,84 @@
+# Coverage.py / pytest-cov configuration.
+# See: https://coverage.readthedocs.io/
+
+[run]
+source = lib, tools
+omit =
+    */tests/*
+    */.venv/*
+    */__pycache__/*
+    */sandbox/*
+    */plumber/patches/*
+    # LLM/script entry points or pure CLI / heavy I/O without testable library surface
+    lib/brain.py
+    lib/plumber.py
+    lib/plumber/__init__.py
+    lib/plumber/fix.py
+    lib/plumber/diagnose.py
+    lib/plumber/run.py
+    lib/plumber/llm_fix.py
+    lib/plumber/fingerprints.py
+    lib/plumber/constants.py
+    tools/research_conductor.py
+    tools/research_orchestrator.py
+    tools/research_pdf_report.py
+    tools/research_experience_distiller.py
+    tools/research_synthesize.py
+    tools/research_planner.py
+    tools/research_relevance_gate.py
+    tools/research_reopen_protocol.py
+    tools/research_source_credibility.py
+    tools/research_supervisor.py
+    tools/research_saturation_check.py
+    tools/research_tool_registry.py
+    tools/research_utility_update.py
+    tools/research_watch.py
+    tools/research_coverage.py
+    tools/research_context_manager.py
+    tools/research_council_sandbox.py
+    tools/research_critic.py
+    tools/research_cross_domain.py
+    tools/research_deep_extract.py
+    tools/research_deep_read.py
+    tools/research_discovery_analysis.py
+    tools/research_dynamic_outline.py
+    tools/research_embed.py
+    tools/research_eval.py
+    tools/research_parallel_reader.py
+    tools/research_pdf_master.py
+    tools/research_preflight.py
+    tools/run_sandbox_file.py
+    tools/memory_consolidate.py
+    tools/prompt_manager.py
+    tools/inject_council_principles_from_dossier.py
+    tools/research_academic.py
+    tools/research_auto_followup.py
+    tools/research_council.py
+    tools/research_reason.py
+    tools/research_verify.py
+    tools/research_experiment.py
+    tools/research_entity_extract.py
+    tools/research_web_reader.py
+    tools/research_web_search.py
+    tools/research_pdf_reader.py
+    tools/trigger_council.py
+    tools/research_watchdog.py
+    tools/research_quality_gate.py
+    tools/research_question_graph.py
+    tools/research_progress.py
+    tools/research_synthesize_postprocess.py
+branch = false
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+show_missing = true
+skip_covered = false
+
+[html]
+directory = htmlcov

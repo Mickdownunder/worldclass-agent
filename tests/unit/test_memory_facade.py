@@ -123,3 +123,131 @@ def test_list_memory_decisions_v2(memory_db_path):
     assert rows
     assert rows[0]["decision_type"] == "v2_mode"
     assert rows[0]["details"]["mode"] == "v2_disabled"
+
+
+def test_record_episode_and_recent_episodes(memory_db_path):
+    """record_episode then recent_episodes returns the recorded row."""
+    mem = Memory(db_path=str(memory_db_path))
+    eid = mem.record_episode("test", "content here", job_id="j1")
+    rows = mem.recent_episodes(limit=5)
+    mem.close()
+    assert eid
+    assert len(rows) == 1
+    assert rows[0]["content"] == "content here"
+    assert rows[0]["kind"] == "test"
+
+
+def test_record_decision_and_get_trace(memory_db_path):
+    """record_decision with trace_id then get_trace returns the decision."""
+    mem = Memory(db_path=str(memory_db_path))
+    tid = "trace-abc"
+    did = mem.record_decision("think", {"x": 1}, "reasoning", "do X", trace_id=tid)
+    trace = mem.get_trace(tid)
+    mem.close()
+    assert did
+    assert len(trace) == 1
+    assert trace[0]["decision"] == "do X"
+
+
+def test_record_reflection_and_recent_reflections(memory_db_path):
+    """record_reflection then recent_reflections returns the row."""
+    mem = Memory(db_path=str(memory_db_path))
+    rid = mem.record_reflection("j1", "outcome", 0.8, learnings="learned")
+    rows = mem.recent_reflections(limit=5)
+    mem.close()
+    assert rid
+    assert len(rows) == 1
+    assert rows[0]["outcome"] == "outcome"
+    assert rows[0]["quality"] == 0.8
+
+
+def test_upsert_playbook_and_get_playbook(memory_db_path):
+    """upsert_playbook then get_playbook returns the strategy."""
+    mem = Memory(db_path=str(memory_db_path))
+    mem.upsert_playbook("domain1", "strategy text", evidence=["e1"])
+    row = mem.get_playbook("domain1")
+    mem.close()
+    assert row is not None
+    assert row["strategy"] == "strategy text"
+
+
+def test_record_quality_and_trend_and_avg(memory_db_path):
+    """record_quality then quality_trend and avg_quality return the score."""
+    mem = Memory(db_path=str(memory_db_path))
+    mem.record_quality("j1", 0.85, workflow_id="wf1")
+    trend = mem.quality_trend("wf1", limit=5)
+    avg = mem.avg_quality("wf1")
+    mem.close()
+    assert len(trend) == 1
+    assert trend[0]["score"] == 0.85
+    assert abs(avg - 0.85) < 1e-9
+
+
+def test_state_summary_returns_dict(memory_db_path):
+    """state_summary returns dict with totals and recent_* keys."""
+    mem = Memory(db_path=str(memory_db_path))
+    mem.record_episode("test", "x")
+    summary = mem.state_summary()
+    mem.close()
+    assert "totals" in summary
+    assert "recent_episodes" in summary
+    assert summary["totals"]["episodes"] >= 1
+
+
+def test_search_episodes_and_search_reflections(memory_db_path):
+    """search_episodes and search_reflections return matching rows."""
+    mem = Memory(db_path=str(memory_db_path))
+    mem.record_episode("test", "docker and kubernetes")
+    mem.record_reflection("j1", "deployment succeeded", 0.8, learnings="kubernetes best practices")
+    ep = mem.search_episodes("docker", limit=5)
+    ref = mem.search_reflections("kubernetes", limit=5)
+    mem.close()
+    assert len(ep) >= 1
+    assert len(ref) >= 1
+    assert "similarity_score" in ep[0]
+    assert "similarity_score" in ref[0]
+
+
+def test_insert_research_finding_and_get_accepted(memory_db_path):
+    """insert_research_finding with admission_state=accepted then get_research_findings_accepted returns it."""
+    mem = Memory(db_path=str(memory_db_path))
+    fid = mem.insert_research_finding("p1", "key1", "preview", admission_state="accepted")
+    rows = mem.get_research_findings_accepted(project_id="p1", limit=10)
+    mem.close()
+    assert fid
+    assert len(rows) >= 1
+    assert rows[0]["finding_key"] == "key1"
+
+
+def test_record_project_outcome_and_count_and_list(memory_db_path):
+    """record_project_outcome then count_project_outcomes and list_project_outcomes."""
+    mem = Memory(db_path=str(memory_db_path))
+    mem.record_project_outcome("proj-1", domain="health", critic_score=0.9)
+    n = mem.count_project_outcomes()
+    rows = mem.list_project_outcomes(limit=10)
+    mem.close()
+    assert n >= 1
+    assert len(rows) >= 1
+    assert rows[0]["project_id"] == "proj-1"
+    assert rows[0]["critic_score"] == 0.9
+
+
+def test_get_source_credibility_and_update(memory_db_path):
+    """update_source_credibility then get_source_credibility returns the row."""
+    mem = Memory(db_path=str(memory_db_path))
+    mem.update_source_credibility("domain1", times_used=2, verified_count=1, failed_verification_count=0)
+    row = mem.get_source_credibility("domain1")
+    mem.close()
+    assert row is not None
+    assert row["times_used"] >= 2
+    assert "learned_credibility" in row
+
+
+def test_recent_reflections_for_planning(memory_db_path):
+    """record_reflection then recent_reflections_for_planning returns high-quality ones."""
+    mem = Memory(db_path=str(memory_db_path))
+    mem.record_reflection("j1", "outcome", 0.9, learnings="takeaway")
+    rows = mem.recent_reflections_for_planning(limit=5, min_quality=0.5)
+    mem.close()
+    assert len(rows) >= 1
+    assert rows[0]["quality"] >= 0.5
