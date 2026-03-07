@@ -129,6 +129,20 @@ export RESEARCH_MAX_FOLLOWUPS=3
 
 ---
 
+## June (Brain) und Research
+
+**Ping bei Run-Ende:** Wenn ein research-cycle fertig ist, wird June automatisch benachrichtigt:
+
+- `research-cycle.sh` schreibt `knowledge/last_research_complete.json` (project_id, phase, ts) und startet im Hintergrund einen Brain-Zyklus mit Ziel „Research run completed … Read report if done; otherwise advance or wait for Council.“
+- June kann so den Report lesen und den nächsten Schritt wählen (weiteres research-cycle vorschlagen oder warten).
+
+**Council-Wartezeit:** Wenn der **Research Council** weitere Läufe gestartet hat (Follow-up-Projekte), sieht June das im State:
+
+- Jedes Projekt hat `council_status` (z. B. `active`, `waiting`, `done`) und bei Eltern `council_children_running` (Anzahl noch laufender Kinder).
+- Wenn `council_status` in [active, waiting] und `council_children_running` > 0, schlägt June **kein** research-cycle für dieses Parent-Projekt vor – der Council meldet sich erst wieder, wenn alle Kinder fertig sind (kann Tage dauern).
+
+---
+
 ## Proxy / Umgebung
 
 Wenn in der Umgebung **HTTP_PROXY/HTTPS_PROXY** gesetzt ist (z. B. Cursor/IDE), können OpenAI-Calls mit **403 Forbidden** fehlschlagen. Das Workflow-Skript **research-cycle.sh** setzt daher zu Beginn **NO_PROXY** für `api.openai.com` und `generativelanguage.googleapis.com`, sodass LLM-Traffic nicht über den Proxy läuft. Bei weiterhin 403: Proxy-Anbieter prüfen oder NO_PROXY vor dem Start setzen.
