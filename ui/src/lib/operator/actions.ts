@@ -37,12 +37,36 @@ async function audit(action: string, params: Record<string, unknown>, result: { 
   }
 }
 
+async function spawnResearchCycleUntilDone(projectId: string): Promise<{ ok: boolean; jobId?: string; error?: string }> {
+  if (!/^proj-[a-zA-Z0-9_-]+$/.test(projectId)) {
+    return { ok: false, error: "Ungültige projectId" };
+  }
+  try {
+    spawn("bash", [RUN_UNTIL_DONE, projectId], {
+      cwd: OPERATOR_ROOT,
+      env: process.env,
+      stdio: "ignore",
+      detached: true,
+    }).unref();
+    await audit("run-research-cycle-until-done", { projectId }, { ok: true });
+    await notifyTelegram(`[UI] Research cycle started: ${projectId} – all phases run automatically.`);
+    return { ok: true, jobId: projectId };
+  } catch (e) {
+    const err = String((e as Error).message);
+    await audit("run-research-cycle-until-done", { projectId }, { ok: false, message: err });
+    return { ok: false, error: err };
+  }
+}
+
 export async function runWorkflow(workflowId: string, request = ""): Promise<{ ok: boolean; jobId?: string; error?: string }> {
   if (!ALLOWED_WORKFLOWS.has(workflowId)) {
     await audit("run-workflow", { workflowId, request }, { ok: false, message: "workflow not allowed" });
     return { ok: false, error: "Workflow not allowed" };
   }
   try {
+    if (workflowId === "research-cycle") {
+      return await spawnResearchCycleUntilDone(request.trim());
+    }
     const { stdout: jobDir } = await exec(OP_BIN, ["job", "new", "--workflow", workflowId, "--request", request || "ui-trigger"], {
       timeout: 5000,
       env: { ...process.env },
@@ -105,12 +129,11 @@ export async function runResearchInitAndCycleUntilDone(
     if (!projectId) {
       return { ok: false, jobId, error: "project_id leer." };
     }
-    spawn("bash", [RUN_UNTIL_DONE, projectId], {
-      cwd: OPERATOR_ROOT,
-      env: process.env,
-      stdio: "ignore",
-      detached: true,
-    }).unref();
+    const cycleResult = await spawnResearchCycleUntilDone(projectId);
+    if (!cycleResult.ok) {
+      await audit("research-init-and-cycle", { question, jobId, projectId }, { ok: false, message: cycleResult.error ?? "failed to spawn cycle runner" });
+      return { ok: false, jobId, projectId, error: cycleResult.error ?? "Cycle runner konnte nicht gestartet werden." };
+    }
     await audit("research-init-and-cycle", { question, jobId, projectId }, { ok: true });
     await notifyTelegram(`[UI] Research gestartet: ${projectId} – alle Phasen laufen automatisch.`);
     return { ok: true, jobId, projectId };

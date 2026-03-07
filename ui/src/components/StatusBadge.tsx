@@ -17,6 +17,7 @@ type StatusVariant =
   | "running"
   | "pending"
   | "pending_review"
+  | "waiting_next_cycle"
   | "cancelled"
   | "unknown";
 
@@ -29,6 +30,7 @@ const variantStyles: Record<StatusVariant, { bg: string; text: string; border: s
   failed_conductor_tool_errors: { bg: "bg-rose-500/10",   text: "text-rose-400",   border: "border-rose-500/25" },
   aem_blocked:                 { bg: "bg-amber-500/10",  text: "text-amber-400",  border: "border-amber-500/25" },
   pending_review:              { bg: "bg-amber-500/10",  text: "text-amber-400",  border: "border-amber-500/25", dot: "bg-amber-400" },
+  waiting_next_cycle:          { bg: "bg-sky-500/10",    text: "text-sky-400",    border: "border-sky-500/25",    dot: "bg-sky-400" },
   verifying:                   { bg: "bg-amber-500/10",  text: "text-amber-400",  border: "border-amber-500/25", dot: "bg-amber-400" },
   verify:                      { bg: "bg-amber-500/10",  text: "text-amber-400",  border: "border-amber-500/25", dot: "bg-amber-400" },
   running:                     { bg: "bg-blue-500/10",   text: "text-blue-400",   border: "border-blue-500/25",  dot: "bg-blue-400" },
@@ -41,7 +43,7 @@ const variantStyles: Record<StatusVariant, { bg: string; text: string; border: s
   unknown:                     { bg: "bg-slate-500/10",  text: "text-slate-500",  border: "border-slate-700/30" },
 };
 
-const ACTIVE_STATUSES = new Set(["active", "running", "explore", "focus", "connect", "verify", "verifying", "synthesize", "pending_review"]);
+const ACTIVE_STATUSES = new Set(["active", "running", "explore", "focus", "connect", "verify", "verifying", "synthesize", "pending_review", "waiting_next_cycle"]);
 
 const DISPLAY_LABELS: Record<string, string> = {
   failed_insufficient_evidence: "FAILED · INSUFF. EVIDENCE",
@@ -49,6 +51,7 @@ const DISPLAY_LABELS: Record<string, string> = {
   failed_conductor_tool_errors: "FAILED · CONDUCTOR TOOL ERRORS",
   aem_blocked: "AEM BLOCKED",
   pending_review: "PENDING REVIEW",
+  waiting_next_cycle: "WAITING NEXT CYCLE",
   verifying: "VERIFYING",
   synthesize: "SYNTHESIZE",
   explore: "EXPLORE",
@@ -76,6 +79,7 @@ function toVariant(value: string): StatusVariant {
   if (lower.includes("done") || lower.includes("completed") || lower.includes("success"))
     return "done";
   if (lower.includes("run") || lower.includes("active")) return "running";
+  if (lower.includes("waiting_next_cycle")) return "waiting_next_cycle";
   if (lower.includes("pending_review")) return "pending_review";
   if (lower.includes("pending")) return "pending";
   if (lower.includes("cancelled")) return "cancelled";
