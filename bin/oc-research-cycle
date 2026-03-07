@@ -9,5 +9,4 @@ if ! printf '%s' "$project_id" | grep -Eq '^proj-[A-Za-z0-9_-]+$'; then
   echo "project_id must match proj-*" >&2
   exit 2
 fi
-job_dir="$({ /root/operator/bin/op job new --workflow research-cycle --request "$project_id"; } )"
-exec /root/operator/bin/op run "$job_dir"
+exec bash /root/operator/tools/run-research-cycle-until-done.sh "$project_id"
