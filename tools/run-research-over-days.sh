@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run one research cycle every N hours until phase is "done" or MAX_DAYS reached.
+# Run one internal research phase every N hours until the project reaches a terminal state.
 # Usage: run-research-over-days.sh <project_id> [sleep_hours] [max_days]
 # Example: ./run-research-over-days.sh proj-20260225-654f85b2 6 14
 set -euo pipefail
@@ -30,11 +30,22 @@ log() { echo "[$(date -Iseconds)] $*" | tee -a "$LOG"; }
 
 while true; do
   phase=$(python3 -c "import json; d=json.load(open('$OPERATOR_ROOT/research/$PROJECT_ID/project.json')); print(d.get('phase',''), end='')" 2>/dev/null || echo "")
-  if [ "$phase" = "done" ]; then
-    log "Project $PROJECT_ID is done."
-    ls -la "$OPERATOR_ROOT/research/$PROJECT_ID/reports/" 2>/dev/null || true
-    exit 0
-  fi
+  status=$(python3 -c "import json; d=json.load(open('$OPERATOR_ROOT/research/$PROJECT_ID/project.json')); print(d.get('status',''), end='')" 2>/dev/null || echo "")
+  case "$status" in
+    done)
+      log "Project $PROJECT_ID is done."
+      ls -la "$OPERATOR_ROOT/research/$PROJECT_ID/reports/" 2>/dev/null || true
+      exit 0
+      ;;
+    pending_review)
+      log "Project $PROJECT_ID reached pending_review and stops here by design."
+      exit 0
+      ;;
+    failed*|cancelled|error|abandoned|aem_blocked)
+      log "Project $PROJECT_ID reached terminal failure status: $status"
+      exit 1
+      ;;
+  esac
 
   now=$(date +%s)
   if [ "$now" -ge "$MAX_TS" ]; then
@@ -44,9 +55,9 @@ while true; do
 
   run=$((run + 1))
   log "[Run $run] Phase: $phase — starting cycle..."
-  job_dir=$($OP job new --workflow research-cycle --request "$PROJECT_ID")
+  job_dir=$($OP job new --workflow research-phase --request "$PROJECT_ID")
   $OP run "$job_dir" --timeout 300
-  log "[Run $run] Done. Next run in ${SLEEP_HOURS}h."
+  log "[Run $run] Phase run done. Next run in ${SLEEP_HOURS}h."
 
   sleep $((SLEEP_HOURS * 3600))
 done

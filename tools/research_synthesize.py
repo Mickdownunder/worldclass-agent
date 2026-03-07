@@ -790,7 +790,14 @@ If alternative hypotheses are provided, include a short 'Alternative hypotheses'
         if "```" in text:
             text = re.sub(r"^```(?:json)?\s*", "", text).split("```")[0].strip()
         out = json.loads(text)
-        return out.get("conclusions", ""), out.get("next_steps", "")
+        concl = out.get("conclusions", "")
+        next_steps = out.get("next_steps", "")
+        # LLM may return list instead of markdown string; normalize to str so join(parts) never sees a list
+        if isinstance(concl, list):
+            concl = "\n".join(str(x) for x in concl)
+        if isinstance(next_steps, list):
+            next_steps = "\n".join(str(x) for x in next_steps)
+        return str(concl), str(next_steps)
     except Exception:
         return thesis.get("current", ""), "1. [HIGH] Run additional verification.\n2. [MEDIUM] Expand source set."
 
@@ -837,7 +844,7 @@ One line per item, bold the number. Only include verified or clearly sourced dat
         out = json.loads(text)
         nums = out.get("key_numbers", [])
         if isinstance(nums, list):
-            return "\n".join(nums[:10])
+            return "\n".join(str(x) for x in nums[:10])
     except Exception:
         pass
     return "**—** | Key numbers to be filled from findings."
@@ -1355,7 +1362,8 @@ def run_synthesis(project_id: str) -> str:
 
     # Executive Summary: one-pager after KEY NUMBERS, before Executive Decision Synthesis
     _clear_checkpoint(proj_path)
-    full_so_far = "\n".join(parts)
+    # Defensive: ensure every part is str (LLM sometimes returns list for conclusions/next_steps)
+    full_so_far = "\n".join(str(p) for p in parts)
     exec_summary = _synthesize_exec_summary(full_so_far, question, project_id, epistemic_profile=epistemic_profile)
     idx_after_key = full_so_far.find("\n\n---\n\n")
     if idx_after_key >= 0:
