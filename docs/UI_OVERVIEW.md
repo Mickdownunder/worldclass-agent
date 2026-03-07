@@ -60,15 +60,15 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 - **Infobox:** Frage, Status-Badge, **Research-Modus-Badge** (Standard / Frontier / Discovery), Phase, Anzahl Findings/Reports/Feedback, **Fortschrittsbalken** (explore → focus → connect → verify → synthesize). Mögliche Status u. a.: done, failed (Evidence Gate / Critic), **failed_conductor_tool_errors** (Conductor run_cycle nach mehreren Tool-Fehlern abgebrochen), **aem_blocked** (AEM enforce/strict blockiert Synthese). **Discovery:** Critic ist advisory (bei bestandenem Evidence Gate kein `failed_quality_gate`); Council wird nur bei `done` getriggert; bei Synthese-Fehler Fallback-Report.
 - **Evidence Gate (nach Verify):** Im Projekt-Detail wird bei vorhandenem Gate die Metrik **„Read Success (Explore + Focus)“** angezeigt; der Wert ist die **kumulierte** Read-Statistik aus `explore/read_stats.json` und `focus/read_stats.json` (wie vom Evidence Gate berechnet).
 - **Research Intelligence (neu):** Auf der Projekt-Detailseite wird ein Panel **„Research Intelligence“** angezeigt, sobald Daten vorliegen: **Token Governor** (Lane: cheap/mid/strong für Verify/Synthesize/Critic), **Thesis** (Connect-Phase), **Contradictions** (Anzahl + Vorschau), **Fact-Check** (confirmed/disputed/unverifiable), **Claim Ledger** (verified/authoritative/unverified/in_contradiction). Quelle: `project.json`, `thesis.json`, `contradictions.json`, `governor_lane.json`, `verify/fact_check.json`, `verify/claim_ledger.json` (über `getResearchProject`).
-- **Button „Nächste Phase starten“:** Nur sichtbar, wenn Status ≠ done. Startet **einen** research-cycle-Job für dieses Projekt.
+- **Button „Research fortsetzen“:** Nur sichtbar, wenn Status ≠ done. Startet den öffentlichen `research-cycle`-Pfad für dieses Projekt und läuft bis zu einem terminalen Zustand weiter.
 
-**„Nächste Phase starten“:**
+**„Research fortsetzen“:**
 
 1. UI sendet `POST /api/research/projects/[id]/cycle`.
 2. Backend prüft: Projekt vorhanden, nicht „done“. Prüft **Projekt-Level-Lock** (progress.json `alive` oder bereits laufender Cycle): wenn ein Cycle für dieses Projekt läuft → **409 Conflict** mit Meldung „Ein Cycle läuft bereits für dieses Projekt.“
-3. Sonst: `runWorkflow("research-cycle", projectId)` → `op job new` + `op run`. In `research-cycle.sh` hält ein **flock** auf `research/proj-…/.cycle.lock` den zweiten gleichzeitigen Cycle für dasselbe Projekt ab (sofortiger Exit 0).
-4. Antwort: „Nächste Phase wird gestartet (Job läuft).“
-5. Nach Refresh siehst du ggf. neue Phase, mehr Findings, neuen Report.
+3. Sonst: `runWorkflow("research-cycle", projectId)` startet den öffentlichen Terminal-Runner. Intern laufen mehrere `research-phase`-Schritte, bis `done`, `failed*` oder `pending_review` erreicht ist. Ein **flock** auf `research/proj-…/.cycle.lock` verhindert konkurrierende Phase-Läufe.
+4. Antwort: „Research läuft jetzt automatisch bis zu einem terminalen Zustand weiter.“
+5. Nach Refresh siehst du neue Phase, mehr Findings oder den finalen Zustand.
 
 **Tabs: Report | Critique | Findings | Sources | History | Audit**
 
@@ -117,7 +117,7 @@ Die UI ist das **Dashboard** für den Operator. Du loggst dich ein, siehst Statu
 | Login | Session-Cookie | — |
 | Command Center laden | — | Liest Health, listet `research/proj-*/project.json` |
 | „Forschung starten“ | POST /api/research/projects | Default: runResearchInitAndCycleUntilDone → init + run-research-cycle-until-done.sh; optional run_until_done: false → nur research-init |
-| „Nächste Phase starten“ | POST /api/research/projects/[id]/cycle | runWorkflow("research-cycle", id) → op job new + op run |
+| „Research fortsetzen“ | POST /api/research/projects/[id]/cycle | runWorkflow("research-cycle", id) → terminaler Research-Lauf bis `done`/`failed*`/`pending_review` |
 | Projekt-Detail | GET project, report, findings, sources, reports | Liest research/proj-…/project.json, findings/, reports/, etc. |
 | Explainability (Memory Applied) | GET project detail | Liest `research/proj-…/memory_strategy.json` und rendert Strategy/Regeln |
 | Live-Fortschritt / Status | GET /api/research/projects/[id]/progress | Liest progress.json + events.jsonl, berechnet state (RUNNING/IDLE/STUCK/ERROR_LOOP/FAILED/DONE) |
