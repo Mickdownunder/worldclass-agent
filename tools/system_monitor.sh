@@ -12,8 +12,8 @@ DISK_THRESHOLD=90
 
 ALERT_MSG=""
 
-# Bash string to float comparison
-if $(echo "$LOAD > $LOAD_THRESHOLD" | bc -l 2>/dev/null || awk -v l="$LOAD" -v t="$LOAD_THRESHOLD" 'BEGIN { if (l > t) exit 0; else exit 1 }'); then
+# Load above threshold? Use exit code only (never run numeric output as command).
+if awk -v l="$LOAD" -v t="$LOAD_THRESHOLD" 'BEGIN { exit (l > t) ? 0 : 1 }'; then
     ALERT_MSG="🚨 *High Server Load*\nLoad Average (1m): $LOAD\n"
 fi
 
