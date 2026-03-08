@@ -10,6 +10,7 @@ VALID_CONTROL_PLANE_EVENTS = {
     "research_continue_requested",
     "research_continue_dispatched",
     "research_start_requested",
+    "research_project_initialized",
 }
 VALID_INTAKE_COMMANDS = {"ui-research-start", "ui-research-continue"}
 VALID_AUTHORITY_SCOPES = {"external_ingress", "canonical_intake", "operator_local"}
@@ -126,6 +127,27 @@ def _validate_event_payload(event_type: str, payload: dict[str, Any]) -> dict[st
         )
         if (source_command := _optional_string(payload, "source_command")) is not None:
             validated["source_command"] = source_command
+        if (mission_id := _optional_string(payload, "mission_id")) is not None:
+            validated["mission_id"] = mission_id
+        if (parent_project_id := _optional_project_id(payload, "parent_project_id")) is not None:
+            validated["parent_project_id"] = parent_project_id
+        if (hypothesis_to_test := _optional_string(payload, "hypothesis_to_test")) is not None:
+            validated["hypothesis_to_test"] = hypothesis_to_test
+        return validated
+
+    if event_type == "research_project_initialized":
+        validated.update(
+            {
+                "control_plane_owner": _require_choice(payload, "control_plane_owner", VALID_CONTROL_PLANE_OWNERS),
+                "request_event_id": _require_string(payload, "request_event_id"),
+                "question": _require_string(payload, "question"),
+                "research_mode": _require_choice(payload, "research_mode", VALID_RESEARCH_MODES),
+            }
+        )
+        if (source_command := _optional_string(payload, "source_command")) is not None:
+            validated["source_command"] = source_command
+        if (mission_id := _optional_string(payload, "mission_id")) is not None:
+            validated["mission_id"] = mission_id
         if (parent_project_id := _optional_project_id(payload, "parent_project_id")) is not None:
             validated["parent_project_id"] = parent_project_id
         if (hypothesis_to_test := _optional_string(payload, "hypothesis_to_test")) is not None:

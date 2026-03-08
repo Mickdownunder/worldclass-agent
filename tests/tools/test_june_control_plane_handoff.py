@@ -143,7 +143,12 @@ def test_june_handoff_start_initializes_project_and_runs_continue_loop(tmp_path)
         "projectId": "proj-123",
         "runUntilDone": True,
     }
-    assert json.loads(init_log.read_text()) == {"question": "Question?", "research_mode": "discovery"}
+    assert json.loads(init_log.read_text()) == {
+        "question": "Question?",
+        "research_mode": "discovery",
+        "control_plane_owner": "june",
+        "source_command": "ui-research-start",
+    }
     assert cycle_log.read_text().strip().splitlines() == ["proj-123", "proj-123"]
     events = [json.loads(line) for line in event_log.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert [event["event_type"] for event in events] == [
@@ -290,6 +295,8 @@ def test_june_handoff_generic_start_preserves_parent_and_hypothesis(tmp_path):
             "evt-3",
             "--source-command",
             "research_council",
+            "--mission-id",
+            "mis-123",
             "--parent-project-id",
             "proj-parent",
             "--hypothesis-to-test",
@@ -311,6 +318,9 @@ def test_june_handoff_generic_start_preserves_parent_and_hypothesis(tmp_path):
     assert json.loads(init_log.read_text()) == {
         "question": "Question?",
         "research_mode": "discovery",
+        "control_plane_owner": "june",
+        "source_command": "research_council",
+        "mission_id": "mis-123",
         "parent_project_id": "proj-parent",
         "hypothesis_to_test": "Hypothesis",
     }
@@ -320,6 +330,15 @@ def test_june_handoff_generic_start_preserves_parent_and_hypothesis(tmp_path):
         "control_plane_handoff_project_initialized",
     ]
     assert events[0]["source_command"] == "research_council"
+    assert events[1]["mission_id"] == "mis-123"
+    operator_events = [
+        json.loads(line)
+        for line in (operator_root / "research" / "proj-789" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert operator_events[-1]["event"] == "research_project_initialized"
+    assert operator_events[-1]["mission_id"] == "mis-123"
+    assert operator_events[-1]["source_command"] == "research_council"
 
 
 def test_june_handoff_generic_continue_respects_max_cycles(tmp_path):

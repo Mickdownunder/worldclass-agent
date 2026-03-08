@@ -33,6 +33,9 @@ question = request_raw.strip()
 research_mode = "standard"
 hypothesis = ""
 parent_project_id = ""
+mission_id = ""
+control_plane_owner = ""
+source_command = ""
 if question.startswith("{"):
     try:
         payload = json.loads(question)
@@ -42,6 +45,9 @@ if question.startswith("{"):
             research_mode = "standard"
         hypothesis = (payload.get("hypothesis_to_test") or "").strip()
         parent_project_id = (payload.get("parent_project_id") or "").strip()
+        mission_id = (payload.get("mission_id") or "").strip()
+        control_plane_owner = (payload.get("control_plane_owner") or "").strip()
+        source_command = (payload.get("source_command") or "").strip()
     except Exception:
         pass
 project = {
@@ -67,6 +73,12 @@ if parent_project_id:
                 project["domain"] = parent_domain
         except Exception:
             pass
+if mission_id:
+    project["mission_id"] = mission_id
+if control_plane_owner:
+    project["control_plane_owner"] = control_plane_owner
+if source_command:
+    project["source_command"] = source_command
 (p / "project.json").write_text(json.dumps(project, indent=2))
 (p / "questions.json").write_text(json.dumps({"open": [question], "answered": []}, indent=2))
 (p / "thesis.json").write_text(json.dumps({"current": "", "confidence": 0.0, "evidence": []}, indent=2))

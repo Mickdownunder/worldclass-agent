@@ -101,6 +101,37 @@ def emit_research_cycle_completed(
     )
 
 
+def emit_research_project_initialized(
+    *,
+    project_id: str,
+    request_event_id: str,
+    question: str,
+    research_mode: str,
+    source: str = "june-control-plane-handoff",
+    source_command: str = "",
+    mission_id: str = "",
+    parent_project_id: str = "",
+    hypothesis_to_test: str = "",
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "source": source,
+        "authority_scope": "canonical_intake",
+        "control_plane_owner": "june",
+        "request_event_id": request_event_id,
+        "question": question,
+        "research_mode": research_mode,
+    }
+    if source_command:
+        payload["source_command"] = source_command
+    if mission_id:
+        payload["mission_id"] = mission_id
+    if parent_project_id:
+        payload["parent_project_id"] = parent_project_id
+    if hypothesis_to_test:
+        payload["hypothesis_to_test"] = hypothesis_to_test
+    return emit_event(project_id, "research_project_initialized", payload)
+
+
 def _load_last_control_plane_event_from_path(path: Path, *, event_types: tuple[str, ...] | None = None) -> dict[str, Any] | None:
     if not path.exists():
         return None

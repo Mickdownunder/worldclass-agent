@@ -31,6 +31,9 @@ def test_research_init_persists_parent_hypothesis_and_inherits_domain(tmp_path):
             "research_mode": "discovery",
             "parent_project_id": parent_id,
             "hypothesis_to_test": "Child hypothesis",
+            "mission_id": "mis-123",
+            "control_plane_owner": "june",
+            "source_command": "mission-executor-prebind",
         }
     )
 
@@ -50,5 +53,8 @@ def test_research_init_persists_parent_hypothesis_and_inherits_domain(tmp_path):
     assert project["question"] == "Child question?"
     assert project["parent_project_id"] == parent_id
     assert project["hypothesis_to_test"] == "Child hypothesis"
+    assert project["mission_id"] == "mis-123"
+    assert project["control_plane_owner"] == "june"
+    assert project["source_command"] == "mission-executor-prebind"
     assert project["domain"] == "biotech"
     assert project["config"]["research_mode"] == "discovery"
